@@ -626,21 +626,55 @@
             </div>
             
             <!-- Experience Section -->
-            <div class="section">
-                <div class="section-title">
-                    <i class="fas fa-briefcase"></i>Professional Experience
-                </div>
-                <div class="experience-grid">
-                  
-                    
-                  
-                    <div class="experience-item">
-                        {% if user.occupation %}
-                               <div class="job-title">{{ user.occupation }}</div>
-                        {% endif %}                       
+           <div class="section">
+    <div class="section-title">
+        <i class="fas fa-briefcase"></i> Professional Experience
+    </div>
+    <div class="experience-grid">
+        {% if user.work_experiences %}
+            {% for work in user.work_experiences %}
+                <div class="experience-item">
+                    <div class="institution">{{ work.company_name }}</div>
+                    <div class="degree">{{ work.city }}, {{ work.country }}</div>
+
+                    <div class="date">
+                        {# Start Date #}
+                        {% if work.start_date %}
+                            {% set parts = work.start_date.split('-') %}
+                            {% if parts|length >= 2 %}
+                                {% set month = parts[1]|int %}
+                                {% set year = parts[0] %}
+                                {% set month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+                                {{ month_names[month-1] }} {{ year }}
+                            {% else %}
+                                {{ work.start_date }}
+                            {% endif %}
+                        {% else %}
+                            ''
+                        {% endif %}
+
+                        -
+                        {# End Date #}
+                        {% if work.end_date %}
+                            {% set parts = work.end_date.split('-') %}
+                            {% if parts|length >= 2 %}
+                                {% set month = parts[1]|int %}
+                                {% set year = parts[0] %}
+                                {% set month_names = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'] %}
+                                {{ month_names[month-1] }} {{ year }}
+                            {% else %}
+                                {{ work.end_date }}
+                            {% endif %}
+                        {% else %}
+                            Present
+                        {% endif %}
                     </div>
                 </div>
-            </div>
+            {% endfor %}
+        {% endif %}
+    </div>
+</div>
+
             
             <!-- Education Section -->
             <div class="section">
@@ -656,6 +690,13 @@
                        
                            {% if user.education.highest_level %}
                                 <div class="degree"> {{ user.education.highest_level.replace("_", "").title() }}</div>
+                        {% endif %}
+
+                          {% if user.education.country %}
+                                <div class="date"> {{ user.education.country }}</div>
+                        {% endif %}
+                          {% if user.education.city %}
+                                <div class="date"> {{ user.education.city }}</div>
                         {% endif %}
                       
                     </div>
