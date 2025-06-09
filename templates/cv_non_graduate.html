@@ -483,12 +483,7 @@
             </div>
         </div>
 
-
-
-      
-
-        
-        <!-- Content Section -->
+              <!-- Content Section -->
         <div class="content-section">
             <!-- Description Section -->
             <div class="section">
@@ -682,43 +677,52 @@
             </div>
             
             <!-- Footer Section -->
- <div class="section">
+            <div class="section">
                 <div class="footer">
-                    
-                    </div>
-                    
+                   
                     <div class="contacts-section">
                         <div class="section-title">
                             <i class="fas fa-address-book"></i>Contact Information
                         </div>
                         <div class="contact-item">
                             <span class="contact-icon"><i class="fas fa-envelope"></i></span>
-                             {% if user.email %}
+                               {% if user.email %}
                                      <span>{{user.email}}</span> 
                                 {% endif %}
+
+                           
                         </div>
                         <div class="contact-item">
                             <span class="contact-icon"><i class="fab fa-linkedin"></i></span>
-                            {% if user.x %}
+                                {% if user.x %}
                                  <span>{{user.x}}</span>
                                 {% endif %}
+                           
                         </div>
-                        <div class="contact-item">
+                         <div class="contact-item">
                             <span class="contact-icon"><i class="fab fa-linkedin"></i></span>
-                            {% if user.telegram %}
-                                 <span>{{user.telegram}}</span>
+                               {% if user.telegram %}
+                                     <span> {{user.telegram}}</span>   
                                 {% endif %}
+                           
                         </div>
-                        <div class="contact-item">
-                            <span class="contact-icon"><i class="fas fa-phone"></i></span>
+                         <div class="contact-item">
+                            <span class="contact-icon"><i class="fab fa-linkedin"></i></span>
                                {% if user.x %}
                                      <span>{{user.x}}</span>
                                 {% endif %}
+                          
+                        </div>
+                        <div class="contact-item">
+                            <span class="contact-icon"><i class="fas fa-phone"></i></span>
+                               {% if user.phone_number %}
+                                  <span>{{user.phone_number}}</span>
+                               {% endif %}
                             
                         </div>
                     </div>
-                    
-                   <div class="languages-section">
+             
+              <div class="languages-section">
                        <div class="flex flex-col space-y-2">
     <h1 class="font-bold text-xl print:text-sm" style="color: #65b3cb; font-size: 12px;">Languages</h1>
     {% for lang in additional_languages %}
@@ -790,3 +794,5 @@
     </div>
 </body>
 </html>
+
+      
