@@ -609,25 +609,25 @@
                                 {% endif %}
                            
                         </div>
-                        <div class="detail-item">
+                         <div class="detail-item">
                           
 
-                              {% if user.passport_date_issued %}
-                                <span class="detail-label">Date Issued</span>
-                                <span class="detail-value"> {{ user.passport_date_issued }}</span>
-                                {% endif %}
+                              {% if user.place_issued %}
+                             <span class="detail-label">Date of Issue</span>
+                            <span class="detail-value">{{ user.place_issued}}</span>
+                            {% endif %}
                         </div>
                         <div class="detail-item">
-                             {% if user.passport_date_expired %}
-                                 <span class="detail-label">Place Issued</span>
-                                <span class="detail-value"> {{ user.passport_date_expired }}</span>
+                             {% if user.date_issued %}
+                                 <span class="detail-label">Date Issued</span>
+                                <span class="detail-value"> {{ user.date_issued.replace("T21:00:00.000Z", "") }}</span>
                             {% endif %}
                            
                         </div>
                         <div class="detail-item">
-                            {% if user.passport_date_place_issued %}
-                             <span class="detail-label">Date of Issue</span>
-                            <span class="detail-value">{{ user.passport_place_issued}}</span>
+                            {% if user.date_of_expiry %}
+                             <span class="detail-label">Date Expired</span>
+                            <span class="detail-value">{{ user.date_of_expiry.replace("T21:00:00.000Z", "") }}</span>
                             {% endif %}
                            
                         </div>
