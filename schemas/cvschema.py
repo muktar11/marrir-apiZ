@@ -80,6 +80,9 @@ class CVBaseSchema(BaseProps):
     skills_four: Optional[str] = None
     skills_five: Optional[str] = None
     skills_six: Optional[str] = None
+    date_issued: Optional[str] = None
+    place_issued: Optional[str] = None
+    date_of_expiry: Optional[str] = None
 
 
 EntityBaseSchema = TypeVar("EntityBaseSchema", bound=CVBaseSchema)
