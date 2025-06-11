@@ -342,7 +342,69 @@
             text-align: center;
             padding: 10px 0;
         }
-        
+       
+             .info-layouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  justify-content: space-between;
+  align-items: flex-start;
+}
+
+.personal-infos,
+.language-proficiencys {
+  flex: 1 1 300px;
+  padding: 1rem;
+  border-radius: 0.5rem;
+  min-width: 280px;
+}
+
+.section-titles {
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  color: #8f3e8d;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.info-items {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 14px;
+  color: #444;
+}
+
+.contact-icons {
+  color:#8f3e8d;
+  font-size: 14px;
+  min-width: 18px;
+  text-align: center;
+}
+
+.language-entrys {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.language-labels {
+  color:#8f3e8d;
+  font-size: 13px;
+  font-weight: 500;
+  width: 120px; /* Align stars */
+  flex-shrink: 0;
+}
+
+.starss {
+  display: flex;
+  gap: 4px;
+}
+
         /* Responsive design */
         @media (max-width: 768px) {
             .top-section {
@@ -716,61 +778,111 @@
                    
                 </div>
             </div>
+           
+            <div class="sections">
+  <div class="info-layouts">
+    <!-- Left: Personal Information -->
+    <div class="personal-infos">
+      <div class="section-titles">
+        <i class="fas fa-id-card"></i> Personal Information
+      </div>
+
+      {% if user.email %}
+      <div class="info-items">
+        <i class="fas fa-envelope contact-icon"></i>
+        <span>{{ user.email }}</span>
+      </div>
+      {% endif %}
+
+      {% if user.x %}
+       <div class="info-items">
+    <i class="fa-brands fa-twitter" style="color: #8f3e8d;"></i>
+    <span  style="padding-left: 12px">{{ user.x }}</span>
+  </div>
+      {% endif %}
+
+      {% if user.telegram %}
+      <div class="info-items">
+        <i class="fab fa-telegram contact-icon"></i>
+        <span>{{ user.telegram }}</span>
+      </div>
+      {% endif %}
+
+      {% if user.phone_number %}
+      <div class="info-items">
+        <i class="fas fa-phone contact-icon"></i>
+        <span>{{ user.phone_number }}</span>
+      </div>
+      {% endif %}
+    </div>
+
+    <!-- Right: Language Proficiency -->
+    <div class="language-proficiencys">
+      <div class="section-titles">
+        <i class="fas fa-language"></i> Language Proficiency
+      </div>
+
+      {% for lang in additional_languages %}
+      <div class="language-entrys">
+        <div class="language-labels">{{ lang.language }}</div>
+        <div class="starss">
+          {% set proficiency = lang.proficiency %}
+          {% set rate = 5 if proficiency == "fluent" else 3.5 if proficiency == "intermediate" else 1 %}
+          {% set full_stars = rate | int %}
+          {% set has_half_star = (rate - full_stars) >= 0.5 %}
+          {% set empty_stars = 5 - full_stars - (1 if has_half_star else 0) %}
+
+          {% for _ in range(full_stars) %}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#FFD700">
+            <path
+              d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77l-6.18 3.23L7 14.14l-5-4.87 6.91-1.01z" />
+          </svg>
+          {% endfor %}
+
+          {% if has_half_star %}
+          <svg width="14" height="14" viewBox="0 0 24 24">
+            <defs>
+              <linearGradient id="halfStarGradient{{ loop.index }}" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="50%" stop-color="#FFD700" />
+                <stop offset="50%" stop-color="#9CAFA3" />
+              </linearGradient>
+            </defs>
+            <path fill="url(#halfStarGradient{{ loop.index }})"
+              d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77l-6.18 3.23L7 14.14l-5-4.87 6.91-1.01z" />
+          </svg>
+          {% endif %}
+
+          {% for _ in range(empty_stars) %}
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="#9CAFA3">
+            <path
+              d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77l-6.18 3.23L7 14.14l-5-4.87 6.91-1.01z" />
+          </svg>
+          {% endfor %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+</div>
+
             
             <!-- Footer Section -->
             <div class="section">
                 <div class="footer">
                    
-                    <div class="contacts-section">
-                        <div class="section-title">
-                            <i class="fas fa-address-book"></i>Contact Information
-                        </div>
-                        <div class="contact-item">
-                            <span class="contact-icon"><i class="fas fa-envelope"></i></span>
-                               {% if user.email %}
-                                     <span>{{user.email}}</span> 
-                                {% endif %}
-
-                           
-                        </div>
-                        <div class="contact-item">
-                            <span class="contact-icon"><i class="fab fa-linkedin"></i></span>
-                                {% if user.x %}
-                                 <span>{{user.x}}</span>
-                                {% endif %}
-                           
-                        </div>
-                         <div class="contact-item">
-                            <span class="contact-icon"><i class="fab fa-linkedin"></i></span>
-                               {% if user.telegram %}
-                                     <span> {{user.telegram}}</span>   
-                                {% endif %}
-                           
-                        </div>
-                         <div class="contact-item">
-                            <span class="contact-icon"><i class="fab fa-linkedin"></i></span>
-                               {% if user.x %}
-                                     <span>{{user.x}}</span>
-                                {% endif %}
-                          
-                        </div>
-                        <div class="contact-item">
-                            <span class="contact-icon"><i class="fas fa-phone"></i></span>
-                               {% if user.phone_number %}
-                                  <span>{{user.phone_number}}</span>
-                               {% endif %}
-                            
-                        </div>
-                    </div>
+                    
              
-              <div class="languages-section">
+                    <!--
+                        <div class="languages-section">
                        <div class="flex flex-col space-y-2">
-    <h1 class="font-bold text-xl print:text-sm" style="color: #65b3cb; font-size: 12px;">Languages</h1>
+    <div class="section-title">
+                            <i class="fas fa-address-book"></i>Language Proficiency
+                        </div>
     {% for lang in additional_languages %}
     <div class="bg-blue-50 flex justify-between p-3 rounded">
         <h1 class="print:text-sm" style="color: #65b3cb; font-size: 12px;">{{ lang.language }}</h1>
 
-        <div class="rating flex flex-col gap-y-1 items-start">
+        <div class="rating flex flex-row gap-x-[2px] items-start">
             {% set proficiency = lang.proficiency %}
             {% set rate = 5 if proficiency == "fluent" else 3.5 if proficiency == "intermediate" else 1 %}
 
@@ -778,14 +890,14 @@
             {% set has_half_star = (rate - full_stars) >= 0.5 %}
             {% set empty_stars = 5 - full_stars - (1 if has_half_star else 0) %}
 
-            <!-- Full Stars -->
+          
             {% for _ in range(full_stars) %}
             <svg class="stars" width="11" height="11" viewBox="0 0 24 24" fill="currentColor">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77l-6.18 3.23L7 14.14l-5-4.87 6.91-1.01z"/>
             </svg>
             {% endfor %}
 
-            <!-- Half Star -->
+            
             {% if has_half_star %}
             <svg class="stars" width="11" height="11" viewBox="0 0 24 24">
                 <defs>
@@ -799,7 +911,7 @@
             </svg>
             {% endif %}
 
-            <!-- Empty Stars -->
+            
             {% for _ in range(empty_stars) %}
             <svg class="stars" width="11" height="11" viewBox="0 0 24 24" fill="#9CAFA3">
                 <path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.86L12 17.77l-6.18 3.23L7 14.14l-5-4.87 6.91-1.01z"/>
@@ -810,12 +922,12 @@
     {% endfor %}
 </div>
 
-                    </div>      
-                  
-                    
+                    -->
 
-        
-     
+
+                    
+    
+         
 
 
                 </div>
@@ -835,5 +947,3 @@
     </div>
 </body>
 </html>
-
-      
