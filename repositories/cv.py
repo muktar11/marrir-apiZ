@@ -476,6 +476,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             print("=====================\n")
 
             # Check for duplicate passport number
+            '''
             passport_number = cv_data.get("passport_number")
             if passport_number:
                 exists = db.query(CVModel).filter_by(passport_number=passport_number).first()
@@ -488,7 +489,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                         )
                     )
                     return None
-
+                '''
             try:
                 # Convert to schema
                 obj_in = CVUpsertSchema(**cv_data)
