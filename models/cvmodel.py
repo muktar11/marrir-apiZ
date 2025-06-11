@@ -80,6 +80,26 @@ class CVModel(Base, EntityBaseModel):
         lazy="select",
     )
     expected_salary: Mapped[float] = mapped_column(String, nullable=True)
+    passport_number: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    date_issued: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    place_issued: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    date_of_expiry: Mapped[str] = mapped_column(
+        String(255), unique=True, nullable=True
+    )
+    '''
+    ALTER TABLE public.table_cvs
+ADD COLUMN passport_number VARCHAR(255) UNIQUE,
+ADD COLUMN date_issued VARCHAR(255) UNIQUE,
+ADD COLUMN place_issued VARCHAR(255) UNIQUE,
+ADD COLUMN date_of_expiry VARCHAR(255) UNIQUE;
+
+    '''
     skills_one: Mapped[float] = mapped_column(String, nullable=True)
     skills_two: Mapped[float] = mapped_column(String, nullable=True)
     skills_three: Mapped[float] = mapped_column(String, nullable=True)
