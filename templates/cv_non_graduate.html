@@ -342,6 +342,13 @@
             text-align: center;
             padding: 10px 0;
         }
+        .position {
+            font-size: 16px;
+            font-weight: bold;
+            margin-bottom: 10px;
+            text-align: center;
+            color: #8f3e8d;
+        }
        
              .info-layouts {
   display: flex;
@@ -497,8 +504,10 @@
                     <img src="data:image/png;base64,{{img_base64}}" alt="QR Code">
                 </div>
                 <div class="pathsin-info">
-                    <div>PathSin #1231231</div>
-                   
+                  
+                       {% if user.occupation %}
+                                <div class="position">{{ user.occupation }}</div>    
+                            {% endif %}
                 
                 <div class="represented">
 
@@ -778,51 +787,80 @@
                    
                 </div>
             </div>
-           
-            <div class="sections">
-  <div class="info-layouts">
-    <!-- Left: Personal Information -->
-    <div class="personal-infos">
-      <div class="section-titles">
-        <i class="fas fa-id-card"></i> Personal Information
-      </div>
+           <div class="sections">
+</div>
 
-      {% if user.email %}
-      <div class="info-items">
-        <i class="fas fa-envelope contact-icon"></i>
-        <span>{{ user.email }}</span>
-      </div>
-      {% endif %}
 
-      {% if user.x %}
-       <div class="info-items">
-    <i class="fa-brands fa-twitter" style="color: #8f3e8d;"></i>
-    <span  style="padding-left: 12px">{{ user.x }}</span>
-  </div>
-      {% endif %}
 
-      {% if user.telegram %}
-      <div class="info-items">
-        <i class="fab fa-telegram contact-icon"></i>
-        <span>{{ user.telegram }}</span>
-      </div>
-      {% endif %}
 
-      {% if user.phone_number %}
-      <div class="info-items">
-        <i class="fas fa-phone contact-icon"></i>
-        <span>{{ user.phone_number }}</span>
-      </div>
-      {% endif %}
-    </div>
 
-    <!-- Right: Language Proficiency -->
-    <div class="language-proficiencys">
-      <div class="section-titles">
-        <i class="fas fa-language"></i> Language Proficiency
-      </div>
 
-      {% for lang in additional_languages %}
+       <!-- Details Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-info-circle"></i>Personal Details
+                </div>
+                <div class="details-grid">
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-user"></i>personal info
+                        </div>
+                        <div class="detail-item">
+                            {% if user.email %}
+                            <!--  <h1 class="text-base print:text-sm" style="color: black;"><strong>Nationality:</strong> {{ user.nationality }}</h1> -->
+                             
+                            <span class="detail-value"> {{ user.email }}</span>
+                            {% endif %}
+                           
+                        </div>
+                        <div class="detail-item">
+                            {% if user.x %}
+                                
+                                <span class="detail-value"> {{ user.x }}</span>     
+                            {% endif %}
+                           
+                        </div>
+                       
+                        <div class="detail-item">
+                              {% if user.telegram %}
+                                <span class="detail-value"> {{ user.telegram }}</span>
+                                {% endif %}
+                           
+                        </div>
+
+                          <div class="detail-item">
+                              {% if user.phone_number %}
+                                <span class="detail-value"> {{ user.phone_number }}</span>
+                                {% endif %}
+                           
+                        </div>
+                    </div>
+                    
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-passport"></i>Client Information
+                        </div>
+                        <div class="detail-item">
+                             {% if owner.email %}
+                                <span class="detail-value">  {{ owner.email }}</span>
+                                {% endif %}
+                           
+                        </div>
+                        
+                        <div class="detail-item">
+                            {% if owner.phone_number %}
+                            <span class="detail-value">{{ owner.phone_number }}</span>
+                            {% endif %}
+                           
+                        </div>
+                    </div>
+                    
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-address-card"></i>Language Proficiency
+                        </div>
+
+                         {% for lang in additional_languages %}
       <div class="language-entrys">
         <div class="language-labels">{{ lang.language }}</div>
         <div class="starss">
@@ -861,9 +899,16 @@
         </div>
       </div>
       {% endfor %}
-    </div>
-  </div>
-</div>
+                     
+                      
+                      
+                       
+                       
+                       
+                        
+                    </div>
+                </div>
+            </div>
 
             
             <!-- Footer Section -->
@@ -934,6 +979,10 @@
             </div>
         </div>
         
+        {% if passport_url %}
+        <img src="{{base_url}}/{{passport_url}}" alt="Passport">
+        {% endif %}
+
         <div class="copyright">
            <meta name="viewport" content="width=device-width, initial-scale=1.0">
          {% if user.english_full_name %}
@@ -946,4 +995,5 @@
         </div>
     </div>
 </body>
-</html>
+</html> 
+          
