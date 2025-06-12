@@ -640,7 +640,7 @@
                 <div class="pathsin-info">
                 
                    
-                <div>PathSin #1231231</div>
+                <div>marrir #1231231</div>
                 <div class="represented">
      
                     <div class="rating" style="display: flex; flex-direction: column; font-size: 11px; gap: 4px;">
@@ -952,35 +952,34 @@
                         <div class="detail-group-title">
                             <i class="fas fa-user"></i>personal info
                         </div>
-                        <div class="detail-item">
+                       <div class="detail-item">
                             {% if user.email %}
-                            <!--  <h1 class="text-base print:text-sm" style="color: black;"><strong>Nationality:</strong> {{ user.nationality }}</h1> -->
-                             
-                            <span class="detail-value"> {{ user.email }}</span>
+                                <span class="contact-icon"><i class="fas fa-envelope"></i></span>
+                                <span class="detail-value">{{ user.email }}</span>
                             {% endif %}
-                           
-                        </div>
-                        <div class="detail-item">
-                            {% if user.x %}
-                                
-                                <span class="detail-value"> {{ user.x }}</span>     
-                            {% endif %}
-                           
-                        </div>
-                       
-                        <div class="detail-item">
-                              {% if user.telegram %}
-                                <span class="detail-value"> {{ user.telegram }}</span>
-                                {% endif %}
-                           
                         </div>
 
-                          <div class="detail-item">
-                              {% if user.phone_number %}
-                                <span class="detail-value"> {{ user.phone_number }}</span>
-                                {% endif %}
-                           
+                        <div class="detail-item">
+                            {% if user.x %}
+                                <span class="contact-icon"><i class="fab fa-twitter"></i></span> <!-- Assuming "x" refers to X (formerly Twitter) -->
+                                <span class="detail-value">{{ user.x }}</span>
+                            {% endif %}
                         </div>
+
+                        <div class="detail-item">
+                            {% if user.telegram %}
+                                <span class="contact-icon"><i class="fab fa-telegram-plane"></i></span>
+                                <span class="detail-value">{{ user.telegram }}</span>
+                            {% endif %}
+                        </div>
+
+                        <div class="detail-item">
+                            {% if user.phone_number %}
+                                <span class="contact-icon"><i class="fas fa-phone"></i></span>
+                                <span class="detail-value">{{ user.phone_number }}</span>
+                            {% endif %}
+                        </div>
+
                     </div>
                     
                     <div class="detail-group">
@@ -989,6 +988,7 @@
                         </div>
                         <div class="detail-item">
                              {% if owner.email %}
+                               <span class="contact-icon"><i class="fas fa-envelope"></i></span>
                                 <span class="detail-value">  {{ owner.email }}</span>
                                 {% endif %}
                            
@@ -996,6 +996,7 @@
                         
                         <div class="detail-item">
                             {% if owner.phone_number %}
+                              <span class="contact-icon"><i class="fas fa-phone"></i></span>
                             <span class="detail-value">{{ owner.phone_number }}</span>
                             {% endif %}
                            
@@ -1126,10 +1127,7 @@
             </div>
         </div>
         
-        {% if passport_url %}
-        <img src="{{base_url}}/{{passport_url}}" alt="Passport">
-        {% endif %}
-
+      
         <div class="copyright">
            <meta name="viewport" content="width=device-width, initial-scale=1.0">
          {% if user.english_full_name %}
@@ -1141,5 +1139,11 @@
             </div>
         </div>
     </div>
+
+      {% if passport_url %}
+        <img src="{{base_url}}/{{passport_url}}" alt="Passport">
+        {% endif %}
+
+        
 </body>
 </html>
