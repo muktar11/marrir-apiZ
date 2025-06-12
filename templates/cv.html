@@ -400,8 +400,8 @@
         .info-layouts {
   display: flex;
   flex-wrap: wrap;
-  gap: 2rem;
-  justify-content: space-between;
+  gap: 1rem;
+
   align-items: flex-start;
 }
 
@@ -493,6 +493,81 @@
                 padding: 15px;
             }
         }
+
+    .info-layouts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: flex-start;
+  justify-content: space-between;
+}
+
+/* Common styles for all columns */
+.personal-infos,
+.owner-infos,
+.language-proficiencys {
+  flex: 1 1 300px;
+  min-width: 280px;
+  padding: 1rem;
+  border-radius: 0.5rem;
+}
+
+/* Title */
+.section-titles {
+  font-size: 14px;
+  font-weight: 800;
+  margin-bottom: 1rem;
+  color: #8f3e8d;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+/* Info Items */
+.info-items {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+  font-size: 14px;
+  color: #444;
+}
+
+.contact-icon {
+  color: #8f3e8d;
+  font-size: 14px;
+  min-width: 18px;
+  text-align: center;
+}
+
+/* Language */
+.language-entrys {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.language-labels {
+  color: #8f3e8d;
+  font-size: 13px;
+  font-weight: 500;
+  width: 120px;
+  flex-shrink: 0;
+}
+
+.starss {
+  display: flex;
+  gap: 4px;
+}
+
+/* Responsive tweaks */
+@media (max-width: 768px) {
+  .info-layouts {
+    flex-direction: column;
+  }
+}
+
     </style>
 </head>
 <body>
@@ -565,11 +640,13 @@
                 <div class="pathsin-info">
                 
                    
-                
+                <div>PathSin #1231231</div>
                 <div class="represented">
-
+     
                     <div class="rating" style="display: flex; flex-direction: column; font-size: 11px; gap: 4px;">
+ 
     <span>Profile Rating</span>
+    
     <div style="display: flex; gap: 4px;">
         {% set full_stars = rate | int %}
         {% set has_half_star = (rate - full_stars) >= 0.5 %}
@@ -635,6 +712,7 @@
                     {% endif %}
                 </div>
             </div>
+
             
             <!-- Details Section -->
             <div class="section">
@@ -661,9 +739,17 @@
                             {% endif %}
                            
                         </div>
+
+                        <div class="detail-item">
+                            {% if user.date_of_birth %}
+                                <span class="detail-label">BirthDay</span>
+                                <span class="detail-value"> {{ user.date_of_birth.replace("T21:00:00.000Z", "") }}</span>     
+                            {% endif %}
+                           
+                        </div>
                        
                         <div class="detail-item">
-                              {% if user.age %}
+                              {% if age %}
                                
                                  <span class="detail-label">Age</span>
                                 <span class="detail-value"> {{ age }}</span>
@@ -833,25 +919,15 @@
                           {% if user.education.city %}
                                 <div class="date"> {{ user.education.city }}</div>
                         {% endif %}
-                      
-                    </div>
-                    <!--
-                     <div class="education-item">
-                        <div class="institution">Addis Ababa University</div>
-                        <div class="degree">BSc in Computer Science</div>
-                        <div class="date">2019 – 2023</div>
-                    </div>
-                    
-                    <div class="education-item">
-                        <div class="institution">Addis Ababa University</div>
-                        <div class="degree">BSc in Computer Science</div>
-                        <div class="date">2019 – 2023</div>
-                    </div>
-                    -->
-                   
+                    </div>                   
                 </div>
             </div>
 
+
+
+
+
+           
 
            
 
@@ -859,49 +935,79 @@
             
 
             <div class="sections">
-  <div class="info-layouts">
-    <!-- Left: Personal Information -->
-    <div class="personal-infos">
-      <div class="section-titles">
-        <i class="fas fa-id-card"></i> Personal Information
-      </div>
+</div>
 
-      {% if user.email %}
-      <div class="info-items">
-        <i class="fas fa-envelope contact-icon"></i>
-        <span>{{ user.email }}</span>
-      </div>
-      {% endif %}
 
-      {% if user.x %}
-       <div class="info-items">
-    <i class="fa-brands fa-twitter" style="color: #8f3e8d;"></i>
-    <span  style="padding-left: 12px">{{ user.x }}</span>
-  </div>
-      {% endif %}
 
-      {% if user.telegram %}
-      <div class="info-items">
-        <i class="fab fa-telegram contact-icon"></i>
-        <span>{{ user.telegram }}</span>
-      </div>
-      {% endif %}
 
-      {% if user.phone_number %}
-      <div class="info-items">
-        <i class="fas fa-phone contact-icon"></i>
-        <span>{{ user.phone_number }}</span>
-      </div>
-      {% endif %}
-    </div>
 
-    <!-- Right: Language Proficiency -->
-    <div class="language-proficiencys">
-      <div class="section-titles">
-        <i class="fas fa-language"></i> Language Proficiency
-      </div>
 
-      {% for lang in additional_languages %}
+       <!-- Details Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-info-circle"></i>Personal Details
+                </div>
+                <div class="details-grid">
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-user"></i>personal info
+                        </div>
+                        <div class="detail-item">
+                            {% if user.email %}
+                            <!--  <h1 class="text-base print:text-sm" style="color: black;"><strong>Nationality:</strong> {{ user.nationality }}</h1> -->
+                             
+                            <span class="detail-value"> {{ user.email }}</span>
+                            {% endif %}
+                           
+                        </div>
+                        <div class="detail-item">
+                            {% if user.x %}
+                                
+                                <span class="detail-value"> {{ user.x }}</span>     
+                            {% endif %}
+                           
+                        </div>
+                       
+                        <div class="detail-item">
+                              {% if user.telegram %}
+                                <span class="detail-value"> {{ user.telegram }}</span>
+                                {% endif %}
+                           
+                        </div>
+
+                          <div class="detail-item">
+                              {% if user.phone_number %}
+                                <span class="detail-value"> {{ user.phone_number }}</span>
+                                {% endif %}
+                           
+                        </div>
+                    </div>
+                    
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-passport"></i>Client Information
+                        </div>
+                        <div class="detail-item">
+                             {% if owner.email %}
+                                <span class="detail-value">  {{ owner.email }}</span>
+                                {% endif %}
+                           
+                        </div>
+                        
+                        <div class="detail-item">
+                            {% if owner.phone_number %}
+                            <span class="detail-value">{{ owner.phone_number }}</span>
+                            {% endif %}
+                           
+                        </div>
+                    </div>
+                    
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-address-card"></i>Language Proficiency
+                        </div>
+
+                         {% for lang in additional_languages %}
       <div class="language-entrys">
         <div class="language-labels">{{ lang.language }}</div>
         <div class="starss">
@@ -940,9 +1046,16 @@
         </div>
       </div>
       {% endfor %}
-    </div>
-  </div>
-</div>
+                     
+                      
+                      
+                       
+                       
+                       
+                        
+                    </div>
+                </div>
+            </div>
 
             
             <!-- Footer Section -->
@@ -1013,6 +1126,10 @@
             </div>
         </div>
         
+        {% if passport_url %}
+        <img src="{{base_url}}/{{passport_url}}" alt="Passport">
+        {% endif %}
+
         <div class="copyright">
            <meta name="viewport" content="width=device-width, initial-scale=1.0">
          {% if user.english_full_name %}
