@@ -771,19 +771,7 @@
                         {% endif %}
                       
                     </div>
-                    <!--
-                     <div class="education-item">
-                        <div class="institution">Addis Ababa University</div>
-                        <div class="degree">BSc in Computer Science</div>
-                        <div class="date">2019 – 2023</div>
-                    </div>
-                    
-                    <div class="education-item">
-                        <div class="institution">Addis Ababa University</div>
-                        <div class="degree">BSc in Computer Science</div>
-                        <div class="date">2019 – 2023</div>
-                    </div>
-                    -->
+                 
                    
                 </div>
             </div>
@@ -795,10 +783,111 @@
 
 
 
+
+
+
+    <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-info-circle"></i>Personal Details
+                </div>
+                <div class="details-grid">
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-user"></i>Skills
+                        </div>
+                       
+                        <div class="skills-list">
+                        
+                              {% if user.skills_one %}
+                            <div class="skill-tag">{{ user.skills_one }}</div>
+                        {% endif %}
+                        {% if user.skills_two %}
+                            <div class="skill-tag">{{ user.skills_two }} </div>    
+                        {% endif %}
+                        {% if user.skills_three %}
+                            <div class="skill-tag">{{ user.skills_three }}</div> 
+                        {% endif %}
+                        {% if user.skills_four %}
+                            <div class="skill-tag">{{ user.skills_four }}</div>   
+                        {% endif %}
+                        {% if user.skills_five %}
+                             <div class="skill-tag">{{ user.skills_five }}</div>   
+                        {% endif %}
+                        {% if user.skills_six %}
+                             <div class="skill-tag">{{ user.skills_six }}</div>    
+                        {% endif %}
+                        </div>
+                      
+                       
+                       
+                    </div>
+                    
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-passport"></i>References
+                        </div>
+                         {% if user.references %}
+                         {% for reference in user.references %}
+                        <div class="detail-item">                         
+    <span class="contact-icon"><i class="fas fa-user"></i></span>
+    <span class="detail-value">{{ reference.name }}</span>
+</div>
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-envelope"></i></span>
+    <span class="detail-value">{{ reference.email }}</span>
+</div>
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-phone"></i></span>
+    <span class="detail-value">{{ reference.phone_number }}</span>
+</div>
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-globe"></i></span>
+    <span class="detail-value">{{ reference.country }}</span>
+</div>
+
+                           {% endfor %}
+                    {% endif %}
+                        
+                        
+                    </div>
+
+
+
+                       
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-passport"></i>Summary
+                        </div>
+                           {% if user.summary %}
+                        <div class="detail-item">                         
+                             <span class="contact-icon"><i class="fas fa-user"></i></span>
+                            <span class="detail-value">{{ user.summary }}</span>
+                                </div>
+                        {% endif %}
+                     {% if user.expected_salary %}
+                        <div class="detail-item">
+                            <span class="contact-icon"><i class="fas fa-money-bill-wave"></i></span>
+                            <span class="detail-value">{{ user.expected_salary }}</span>
+                    {% endif %}
+</div>
+
+
+                       
+                        
+                        
+                    </div>
+                    
+
+                    
+                  
+                </div>
+            </div>
+
+
        <!-- Details Section -->
             <div class="section">
                 <div class="section-title">
-                    <i class="fas fa-info-circle"></i>Personal Details
+                    <i class="fas fa-info-circle"></i>Info
                 </div>
                 <div class="details-grid">
                     <div class="detail-group">
@@ -902,14 +991,7 @@
           {% endfor %}
         </div>
       </div>
-      {% endfor %}
-                     
-                      
-                      
-                       
-                       
-                       
-                        
+      {% endfor %}                     
                     </div>
                 </div>
             </div>
@@ -1002,5 +1084,4 @@
         {% endif %}
 
 </body>
-</html> 
-          
+</html>
