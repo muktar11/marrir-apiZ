@@ -869,17 +869,17 @@
                             <span class="contact-icon"><i class="fas fa-money-bill-wave"></i></span>
                             <span class="detail-value">{{ user.expected_salary }}</span>
                     {% endif %}
-                            {% if user.intro_video %}
-    {% set video_url = user.intro_video.replace('http://localhost:5173', 'https://marrir.com') %}
-    <div class="detail-item">
-        <span class="contact-icon"><i class="fas fa-video"></i></span>
-        <span class="detail-value">
-            <a href="{{ video_url }}" target="_blank" rel="noopener noreferrer">
-                Watch Intro Video
-            </a>
-        </span>
-    </div>
+                       {% if video_url %}
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-video"></i></span>
+    <span class="detail-value">
+        <a href="{{ video_url }}" target="_blank" rel="noopener noreferrer">
+            Watch Intro Video
+        </a>
+    </span>
+</div>
 {% endif %}
+
 
 
 </div>
