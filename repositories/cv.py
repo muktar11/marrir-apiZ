@@ -1226,13 +1226,17 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             logger.error(f"Error calculating age: {str(e)}")
             print(e)
         
+
         def build_video_url(entity) -> str:
             try:
                 if hasattr(entity, 'intro_video') and entity.intro_video:
-                    return f"{settings.BASE_URL}/static/videos/uploads/{entity.intro_video.strip('/')}"
+                    # Only use the filename, not path
+                    video_filename = entity.intro_video.strip().split("/")[-1]
+                    return f"{settings.BASE_URL}/static/videos/uploads/{video_filename}"
             except Exception as e:
                 logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
             return ""
+
 
 
         video_url = build_video_url(entity)
