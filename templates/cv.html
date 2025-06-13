@@ -1016,6 +1016,18 @@
                             <span class="contact-icon"><i class="fas fa-money-bill-wave"></i></span>
                             <span class="detail-value">{{ user.expected_salary }}</span>
                     {% endif %}
+
+                            {% if user.intro_video %}
+                    <div class="detail-item">
+                        <span class="contact-icon"><i class="fas fa-video"></i></span>
+                        <span class="detail-value">
+                            <a href="{{ user.intro_video }}" target="_blank" rel="noopener noreferrer">
+                                Watch Intro Video
+                            </a>
+                        </span>
+                    </div>
+                    {% endif %}
+
 </div>
 
 
