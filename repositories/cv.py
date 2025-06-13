@@ -476,9 +476,11 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             print("=====================\n")
 
             # Check for duplicate passport number
-            '''
             passport_number = cv_data.get("passport_number")
-            if passport_number:
+           
+
+            '''
+                if passport_number:
                 exists = db.query(CVModel).filter_by(passport_number=passport_number).first()
                 if exists and str(exists.user_id) != cv_data.get("user_id"):
                     context_set_response_code_message.set(
@@ -490,6 +492,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                     )
                     return None
                 '''
+
             try:
                 # Convert to schema
                 obj_in = CVUpsertSchema(**cv_data)
@@ -1094,6 +1097,8 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         
     '''
 
+
+
     def export_to_pdf(
         self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
     ):
@@ -1221,6 +1226,18 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             logger.error(f"Error calculating age: {str(e)}")
             print(e)
 
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    video_filename = entity.intro_video.lstrip('/')
+                    return f"{settings.BASE_URL}/static/videos/uploads/{video_filename}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+        video_url = build_video_url(entity)
+
+
         try:
             content = template.render(
                 request=request,
@@ -1233,7 +1250,8 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 additional_languages=additional_languages,
                 owner=owner_data,
                 description=getattr(entity, 'summary', ''),
-                age=age
+                age=age,
+                video_url=video_url 
             )
             
             logger.info(f"Successfully generated PDF content for CV: {entity.id}")
