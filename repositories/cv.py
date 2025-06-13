@@ -1225,8 +1225,8 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         except Exception as e:
             logger.error(f"Error calculating age: {str(e)}")
             print(e)
-
-       def build_video_url(entity) -> str:
+        
+        def build_video_url(entity) -> str:
             try:
                 if hasattr(entity, 'intro_video') and entity.intro_video:
                     return f"{settings.BASE_URL}/static/videos/uploads/{entity.intro_video.strip('/')}"
@@ -1251,7 +1251,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 owner=owner_data,
                 description=getattr(entity, 'summary', ''),
                 age=age,
-                video_url=video_url 
+                video_url=video_url
             )
             
             logger.info(f"Successfully generated PDF content for CV: {entity.id}")
