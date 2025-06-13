@@ -870,15 +870,17 @@
                             <span class="detail-value">{{ user.expected_salary }}</span>
                     {% endif %}
                             {% if user.intro_video %}
-                            <div class="detail-item">
-                                <span class="contact-icon"><i class="fas fa-video"></i></span>
-                                <span class="detail-value">
-                                    <a href="{{ user.intro_video }}" target="_blank" rel="noopener noreferrer">
-                                        Watch Intro Video
-                                    </a>
-                                </span>
-                            </div>
-                            {% endif %}
+    {% set video_url = user.intro_video.replace('http://localhost:5173', 'https://marrir.com') %}
+    <div class="detail-item">
+        <span class="contact-icon"><i class="fas fa-video"></i></span>
+        <span class="detail-value">
+            <a href="{{ video_url }}" target="_blank" rel="noopener noreferrer">
+                Watch Intro Video
+            </a>
+        </span>
+    </div>
+{% endif %}
+
 
 </div>
 
