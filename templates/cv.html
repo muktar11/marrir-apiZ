@@ -1017,8 +1017,7 @@
                             <span class="detail-value">{{ user.expected_salary }}</span>
                     {% endif %}
 
-                           {% if user.intro_video %}
-                        {% set video_url = user.intro_video.replace('http://localhost:5173', 'https://marrir.com') %}
+                         {% if video_url %}
                         <div class="detail-item">
                             <span class="contact-icon"><i class="fas fa-video"></i></span>
                             <span class="detail-value">
@@ -1027,7 +1026,8 @@
                                 </a>
                             </span>
                         </div>
-                    {% endif %}
+                        {% endif %}
+
 
 
 </div>
