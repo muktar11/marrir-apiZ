@@ -923,18 +923,7 @@
                 </div>
             </div>
 
-
-
-
-
-           
-
-           
-
-          
-            
-
-            <div class="sections">
+              <div class="sections">
 </div>
 
 
@@ -942,44 +931,147 @@
 
 
 
-       <!-- Details Section -->
-            <div class="section">
+
+
+    <div class="section">
                 <div class="section-title">
                     <i class="fas fa-info-circle"></i>Personal Details
                 </div>
                 <div class="details-grid">
                     <div class="detail-group">
                         <div class="detail-group-title">
+                            <i class="fas fa-user"></i>Skills
+                        </div>
+                       
+                        <div class="skills-list">
+                        
+                              {% if user.skills_one %}
+                            <div class="skill-tag">{{ user.skills_one }}</div>
+                        {% endif %}
+                        {% if user.skills_two %}
+                            <div class="skill-tag">{{ user.skills_two }} </div>    
+                        {% endif %}
+                        {% if user.skills_three %}
+                            <div class="skill-tag">{{ user.skills_three }}</div> 
+                        {% endif %}
+                        {% if user.skills_four %}
+                            <div class="skill-tag">{{ user.skills_four }}</div>   
+                        {% endif %}
+                        {% if user.skills_five %}
+                             <div class="skill-tag">{{ user.skills_five }}</div>   
+                        {% endif %}
+                        {% if user.skills_six %}
+                             <div class="skill-tag">{{ user.skills_six }}</div>    
+                        {% endif %}
+                        </div>
+                      
+                       
+                       
+                    </div>
+                    
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-passport"></i>References
+                        </div>
+                         {% if user.references %}
+                         {% for reference in user.references %}
+                        <div class="detail-item">                         
+    <span class="contact-icon"><i class="fas fa-user"></i></span>
+    <span class="detail-value">{{ reference.name }}</span>
+</div>
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-envelope"></i></span>
+    <span class="detail-value">{{ reference.email }}</span>
+</div>
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-phone"></i></span>
+    <span class="detail-value">{{ reference.phone_number }}</span>
+</div>
+<div class="detail-item">
+    <span class="contact-icon"><i class="fas fa-globe"></i></span>
+    <span class="detail-value">{{ reference.country }}</span>
+</div>
+
+                           {% endfor %}
+                    {% endif %}
+                        
+                        
+                    </div>
+
+
+
+                       
+                    <div class="detail-group">
+                        <div class="detail-group-title">
+                            <i class="fas fa-passport"></i>Summary
+                        </div>
+                           {% if user.summary %}
+                        <div class="detail-item">                         
+                             <span class="contact-icon"><i class="fas fa-user"></i></span>
+                            <span class="detail-value">{{ user.summary }}</span>
+                                </div>
+                        {% endif %}
+                     {% if user.expected_salary %}
+                        <div class="detail-item">
+                            <span class="contact-icon"><i class="fas fa-money-bill-wave"></i></span>
+                            <span class="detail-value">{{ user.expected_salary }}</span>
+                    {% endif %}
+</div>
+
+
+                       
+                        
+                        
+                    </div>
+                    
+
+                    
+                  
+                </div>
+            </div>
+
+
+       <!-- Details Section -->
+            <div class="section">
+                <div class="section-title">
+                    <i class="fas fa-info-circle"></i>Info
+                </div>
+                <div class="details-grid">
+                    <div class="detail-group">
+                        <div class="detail-group-title">
                             <i class="fas fa-user"></i>personal info
                         </div>
-                       <div class="detail-item">
+                        <div class="detail-item">
                             {% if user.email %}
-                                <span class="contact-icon"><i class="fas fa-envelope"></i></span>
-                                <span class="detail-value">{{ user.email }}</span>
+                            <!--  <h1 class="text-base print:text-sm" style="color: black;"><strong>Nationality:</strong> {{ user.nationality }}</h1> -->
+                              <span class="contact-icon"><i class="fas fa-envelope"></i></span>
+                            <span class="detail-value"> {{ user.email }}</span>
                             {% endif %}
+                           
                         </div>
-
                         <div class="detail-item">
                             {% if user.x %}
-                                <span class="contact-icon"><i class="fab fa-twitter"></i></span> <!-- Assuming "x" refers to X (formerly Twitter) -->
-                                <span class="detail-value">{{ user.x }}</span>
+                                 <span class="contact-icon"><i class="fab fa-twitter"></i></span>
+                                <span class="detail-value"> {{ user.x }}</span>     
                             {% endif %}
+                           
                         </div>
-
+                       
                         <div class="detail-item">
-                            {% if user.telegram %}
-                                <span class="contact-icon"><i class="fab fa-telegram-plane"></i></span>
-                                <span class="detail-value">{{ user.telegram }}</span>
-                            {% endif %}
+                              {% if user.telegram %}
+                               <span class="contact-icon"><i class="fab fa-telegram-plane"></i></span>
+                                <span class="detail-value"> {{ user.telegram }}</span>
+                                {% endif %}
+                           
                         </div>
 
-                        <div class="detail-item">
-                            {% if user.phone_number %}
-                                <span class="contact-icon"><i class="fas fa-phone"></i></span>
-                                <span class="detail-value">{{ user.phone_number }}</span>
-                            {% endif %}
+                          <div class="detail-item">
+                              {% if user.phone_number %}
+                               <span class="contact-icon"><i class="fas fa-phone"></i></span>
+                                <span class="detail-value"> {{ user.phone_number }}</span>
+                                {% endif %}
+                           
                         </div>
-
                     </div>
                     
                     <div class="detail-group">
@@ -988,7 +1080,7 @@
                         </div>
                         <div class="detail-item">
                              {% if owner.email %}
-                               <span class="contact-icon"><i class="fas fa-envelope"></i></span>
+                              <span class="contact-icon"><i class="fas fa-envelope"></i></span>
                                 <span class="detail-value">  {{ owner.email }}</span>
                                 {% endif %}
                            
@@ -996,7 +1088,7 @@
                         
                         <div class="detail-item">
                             {% if owner.phone_number %}
-                              <span class="contact-icon"><i class="fas fa-phone"></i></span>
+                             <span class="contact-icon"><i class="fas fa-phone"></i></span>
                             <span class="detail-value">{{ owner.phone_number }}</span>
                             {% endif %}
                            
@@ -1046,14 +1138,7 @@
           {% endfor %}
         </div>
       </div>
-      {% endfor %}
-                     
-                      
-                      
-                       
-                       
-                       
-                        
+      {% endfor %}                     
                     </div>
                 </div>
             </div>
@@ -1128,6 +1213,7 @@
         </div>
         
       
+
         <div class="copyright">
            <meta name="viewport" content="width=device-width, initial-scale=1.0">
          {% if user.english_full_name %}
@@ -1144,6 +1230,19 @@
         <img src="{{base_url}}/{{passport_url}}" alt="Passport">
         {% endif %}
 
-        
 </body>
-</html>
+</html> 
+          
+
+
+
+
+
+           
+
+           
+
+          
+            
+
+         
