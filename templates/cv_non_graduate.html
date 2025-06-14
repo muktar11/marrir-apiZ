@@ -299,7 +299,7 @@
             border-radius: 4px;
             text-align: center;
             font-size: 11px;
-            color: #65b3cb;
+            color: black;
             font-weight: 500;
             border: 1px solid rgba(101, 179, 203, 0.3);
         }
@@ -864,25 +864,27 @@
                             <span class="detail-value">{{ user.summary }}</span>
                                 </div>
                         {% endif %}
+                        
                      {% if user.expected_salary %}
                         <div class="detail-item">
                             <span class="contact-icon"><i class="fas fa-money-bill-wave"></i></span>
-                            <span class="detail-value">{{ user.expected_salary }}</span>
+                            <span class="detail-value">salary: {{ user.expected_salary }} {{ user.currency }}</span>
+                             </div>
                     {% endif %}
-                       {% if video_url %}
-<div class="detail-item">
-    <span class="contact-icon"><i class="fas fa-video"></i></span>
-    <span class="detail-value">
-        <a href="{{ video_url }}" target="_blank" rel="noopener noreferrer">
-            Watch Intro Video
-        </a>
-    </span>
-</div>
-{% endif %}
 
+                    
 
+                    {% if video_urls %}
+                        <div class="detail-item">
+                            <span class="contact-icon"><i class="fas fa-video"></i></span>
+                            <span class="detail-value">
+                                <a href="{{ video_url }}" target="_blank" rel="noopener noreferrer">
+                                    Watch Intro Video
+                                </a>
+                            </span>
+                        </div>
+                        {% endif %}
 
-</div>
 
 
                        
@@ -1090,12 +1092,12 @@
                 <img src="data:image/png;base64,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" alt="Logo" width="80" >
             </div>
         </div>
-         {% if passport_url %}
+           {% if passport_url %}
         <img src="{{base_url}}/{{passport_url}}" alt="Passport">
         {% endif %}
     </div>
 
-     
+   
 
 </body>
 </html>
