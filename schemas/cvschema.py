@@ -70,6 +70,7 @@ class CVBaseSchema(BaseProps):
     summary: Optional[str] = None
     passport_url: Optional[str] = None
     expected_salary: Optional[str] = None
+    currency: Optional[str] = None
     facebook: Optional[str] = None
     x: Optional[str] = None
     telegram: Optional[str] = None
