@@ -80,6 +80,7 @@ class CVModel(Base, EntityBaseModel):
         lazy="select",
     )
     expected_salary: Mapped[float] = mapped_column(String, nullable=True)
+    currency: Mapped[float] = mapped_column(String, nullable=True)
     passport_number: Mapped[str] = mapped_column(
         String(255), unique=True, nullable=True
     )
