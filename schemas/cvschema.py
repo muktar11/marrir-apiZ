@@ -73,6 +73,7 @@ class CVBaseSchema(BaseProps):
     currency: Optional[str] = None
     facebook: Optional[str] = None
     x: Optional[str] = None
+    instagram: Optional[str] = None
     telegram: Optional[str] = None
     tiktok: Optional[str] = None
     skills_one: Optional[str] = None
