@@ -1240,26 +1240,11 @@
             </div>
         </div>
 
-        {% if user.intro_video %}
-    {% if 'youtube.com' in user.intro_video or 'youtu.be' in user.intro_video %}
-            <!-- Render as YouTube iframe -->
-            <iframe width="320" height="240" src="{{ user.intro_video }}" frameborder="0" allowfullscreen></iframe>
-        {% else %}
-            <!-- Render as HTML5 video -->
-            <video width="320" height="240" controls>
-                <source src="{{ user.intro_video }}" type="video/mp4">
-            </video>
-        {% endif %}
-    {% endif %}
-
 
           {% if passport_url %}
         <img src="{{base_url}}/{{passport_url}}" alt="Passport">
         {% endif %}
     </div>
-
-    
-
 </body>
 </html> 
           
