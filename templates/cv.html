@@ -568,6 +568,24 @@
   }
 }
 
+.a4-container {
+    width: 794px;   /* A4 width at 96 DPI */
+    height: 1123px; /* A4 height at 96 DPI */
+    border: 1px solid #ccc;
+    padding: 20px;
+    box-sizing: border-box;
+    margin: 0 auto;
+    background-color: white;
+  }
+
+  .passport-image {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
+    display: block;
+    margin: 0 auto;
+  }
+
     </style>
 </head>
 <body>
@@ -1241,9 +1259,12 @@
         </div>
 
 
-          {% if passport_url %}
-        <img src="{{base_url}}/{{passport_url}}" alt="Passport">
-        {% endif %}
+         {% if passport_url %}
+  <div class="a4-container">
+    <img src="{{ base_url }}/{{ passport_url }}" alt="Passport" class="passport-image">
+  </div>
+{% endif %}
+
     </div>
 </body>
 </html> 
