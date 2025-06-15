@@ -958,6 +958,14 @@
                            
                         </div>
 
+                            <div class="detail-item">
+                              {% if user.instagram %}
+                               <span class="contact-icon"><i class="fab fa-instagram"></i></span>
+                                <span class="detail-value"> {{ user.instagram }}</span>
+                                {% endif %}
+                           
+                        </div>
+
                           <div class="detail-item">
                               {% if user.phone_number %}
                                <span class="contact-icon"><i class="fas fa-phone"></i></span>
