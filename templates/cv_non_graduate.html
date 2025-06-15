@@ -623,7 +623,7 @@
                         </div>
                        
                         <div class="detail-item">
-                              {% if user.age %}
+                              {% if age %}
                                
                                  <span class="detail-label">Age</span>
                                 <span class="detail-value"> {{ age }}</span>
@@ -965,6 +965,15 @@
                                 {% endif %}
                            
                         </div>
+
+                          <div class="detail-item">
+                              {% if user.facebook %}
+                               <span class="contact-icon"><i class="fab fa-facebook-f"></i></span>
+                                <span class="detail-value"> {{ user.facebook }}</span>
+                                {% endif %}
+                           
+                        </div>
+                        
                     </div>
                     
                     <div class="detail-group">
