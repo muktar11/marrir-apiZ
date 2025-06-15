@@ -47,6 +47,7 @@ class CVModel(Base, EntityBaseModel):
     full_body_photo: Mapped[str] = mapped_column(String(255), nullable=True)
     facebook: Mapped[str] = mapped_column(String(255), nullable=True)
     x: Mapped[str] = mapped_column(String(255), nullable=True)
+    instagram: Mapped[str] = mapped_column(String(255), nullable=True)
     telegram: Mapped[str] = mapped_column(String(255), nullable=True)
     tiktok: Mapped[str] = mapped_column(String(255), nullable=True)
     address_id: Mapped[int] = mapped_column(
