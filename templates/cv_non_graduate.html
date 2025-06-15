@@ -333,7 +333,7 @@
         
         .copyright {
             text-align: center;
-            padding: 15px;
+            padding: 5px;
             font-size: 11px;
             color: #777;
             background: #ffffff;
@@ -504,7 +504,7 @@
                     <img src="data:image/png;base64,{{img_base64}}" alt="QR Code">
                 </div>
                 <div class="pathsin-info">
-                    <div>marrir #1231231</div>
+                    <div>Marrir #1231231</div>
                        {% if user.occupation %}
                                 <div class="position">{{ user.occupation }}</div>    
                             {% endif %}
@@ -593,6 +593,14 @@
                             {% if user.religion %}
                                 <span class="detail-label">Religion</span>
                                 <span class="detail-value"> {{ user.religion }}</span>     
+                            {% endif %}
+                           
+                        </div>
+
+                         <div class="detail-item">
+                            {% if user.date_of_birth %}
+                                <span class="detail-label">BirthDay</span>
+                                <span class="detail-value"> {{ user.date_of_birth.replace("T21:00:00.000Z", "") }}</span>     
                             {% endif %}
                            
                         </div>
@@ -686,7 +694,7 @@
                         <div class="detail-item">
                             {% if user.height %}
                                 <span class="detail-label">Height</span>
-                            <span class="detail-value"> {{ user.height }}m</span>
+                            <span class="detail-value"> {{ user.height }}cm</span>
                             {% endif %}
                             
                            
@@ -868,13 +876,13 @@
                      {% if user.expected_salary %}
                         <div class="detail-item">
                             <span class="contact-icon"><i class="fas fa-money-bill-wave"></i></span>
-                            <span class="detail-value">salary: {{ user.expected_salary }} {{ user.currency }}</span>
+                            <span class="detail-value">Monthly salary: {{ user.expected_salary }} {{ user.currency }}</span>
                              </div>
                     {% endif %}
 
                     
 
-                    {% if video_urls %}
+                    {% if video_url %}
                         <div class="detail-item">
                             <span class="contact-icon"><i class="fas fa-video"></i></span>
                             <span class="detail-value">
