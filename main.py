@@ -34,6 +34,8 @@ from routers.assignagent import assign_agent_router
 from seed import seed_promotion_package
 from utils.exceptions import AppException
 from cron_jobs import inactive_expired_promotion, scheduler, delete_declined_and_cancelled_reserves
+from fastapi import FastAPI, Response
+
 
 tags_metadata = [
     {"name": "user", "description": "user routes"},
@@ -127,6 +129,18 @@ async def set_session(request: Request):
 async def get_session(request: Request):
     value = request.session.get("key", "Not set")
     return {"session_value": value}
+
+@app.get("/sitemap.xml", response_class=Response, tags=["SEO"])
+async def sitemap():
+    xml_content = """<?xml version="1.0" encoding="UTF-8"?>
+    <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+        <url>
+            <loc>https://marrir.com/</loc>
+            <priority>1.0</priority>
+        </url>
+    </urlset>"""
+    return Response(content=xml_content, media_type="application/xml")
+
 
 async def con_job_event():
     logger.info("initializing database")
