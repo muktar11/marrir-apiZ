@@ -102,7 +102,7 @@ class CVModel(Base, EntityBaseModel):
     skills_five: Mapped[float] = mapped_column(String, nullable=True)
     skills_six: Mapped[float] = mapped_column(String, nullable=True)
     passport_url: Mapped[str] = mapped_column(String, nullable=True)
-
+    is_passport: Mapped[bool] = mapped_column(String, nullable=True)
 
 
 
