@@ -140,7 +140,15 @@ async def reserve_cv(
     """
     Create a new reserve request.
     """
+    # ✅ Safe user check
     user = context_actor_user_data.get()
+    if not user or not getattr(user, "id", None):
+        return {
+            "status_code": 401,
+            "message": "User not authenticated",
+            "error": True
+        }
+
     reserve_in.reserver_id = user.id
 
     reserve_repo = ReserveRepository(entity=ReserveModel)
@@ -169,19 +177,22 @@ async def reserve_cv(
         "or it will become available for reservation again."
     )
 
-    background_tasks.add_task(send_notification, db, new_reserve[0].owner_id, title, description, "reserve")
+    owner_id = getattr(new_reserve[0], "owner_id", None)
+    if owner_id:
+        background_tasks.add_task(send_notification, db, owner_id, title, description, "reserve")
 
-    _user = db.query(UserModel).filter(UserModel.id == new_reserve[0].owner_id).first()
-    email = _user.email or (_user.company.alternative_email if _user.company else None)
-
-    if email:
-        background_tasks.add_task(send_email, email=email, title=title, description=description)
+        _user = db.query(UserModel).filter(UserModel.id == owner_id).first()
+        if _user:
+            email = _user.email or (_user.company.alternative_email if getattr(_user, "company", None) else None)
+            if email:
+                background_tasks.add_task(send_email, email=email, title=title, description=description)
 
     return {
         "status_code": res_data.status_code,
         "message": res_data.message,
         "error": res_data.error,
     }
+
 
 
 @reserve_router.post("/my-not-reserves", status_code=200)
