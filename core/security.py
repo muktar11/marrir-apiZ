@@ -43,9 +43,10 @@ class Settings(BaseSettings):
     APP_PASSWORD: str
     # Add these ↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓↓
     FACEBOOK_CLIENT_ID: str
-    FACEBOOK_CLIENT_ID: str
     FACEBOOK_CLIENT_SECRET: str
     FACEBOOK_REDIRECT_URI: str
+    FACEBOOK_CONFIG_ID: str
+    EMAIL: str
 
     TELR_RETURN_URL: str = "http://localhost:5173/replace/payments"
     TELR_TRANSFER_RETURN_URL: str = "http://localhost:5173/replace/transfer-history"
@@ -57,7 +58,7 @@ class Settings(BaseSettings):
     TELR_AUTH_KEY: str = "Mvc2X~scT45#WsKF"
     TELR_STORE_ID: str = "31896"
     TELR_TEST_MODE: int = 1
-    FRONTEND_PUBLIC_CV_URL: str = "http://localhost:5173/public/cv"
+    FRONTEND_PUBLIC_CV_URL: str = "https://api.marrir.com/public/cv"
     BASE_URL: str = "http://localhost:8000"
     # PROFILE_TRANSFER_PRICE: str
 
