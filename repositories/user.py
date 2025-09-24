@@ -349,6 +349,9 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     english=cv.english,
                     arabic=cv.arabic,
                     additional_languages=cv.additional_languages,
+                    passport_number= cv.passport_number,
+                    email = cv.email,
+                    phone_number= cv.phone_number,
                 )
                 if cv
                 else None

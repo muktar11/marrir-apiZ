@@ -364,13 +364,10 @@ class ReserveRepository(
     
 
 
-    def send_reserve_request(
-        self, db: Session, *, obj_in: ReserveCreateSchema
-    ) -> EntityType | None:
+    def send_reserve_request(self, db: Session, *, obj_in: ReserveCreateSchema) -> Any:
         try:
-            # ✅ Ensure user is present
             user = context_actor_user_data.get()
-            if not user:
+            if not user or not getattr(user, "id", None):
                 logger.debug("[TRACE] No user found in context")
                 context_set_response_code_message.set(
                     BaseGenericResponse(
@@ -381,15 +378,11 @@ class ReserveRepository(
                 )
                 return None
 
-            logger.debug(
-                f"[TRACE] User from context: id={getattr(user, 'id', None)}, "
-                f"email={getattr(user, 'email', None)}"
-            )
+            logger.debug(f"[TRACE] User from context: id={getattr(user, 'id', None)}, email={getattr(user, 'email', None)}")
 
             reserves = []
-            skipped_cvs = []  # track skipped CVs
+            skipped_cvs = []
 
-            # ✅ Create batch reserve
             batch_reserve = BatchReserveModel(reserver_id=user.id)
             db.add(batch_reserve)
             db.commit()
@@ -399,7 +392,6 @@ class ReserveRepository(
             for cv_id in obj_in.cv_id:
                 logger.debug(f"[TRACE] Processing CV ID: {cv_id}")
 
-                # Check if there is already a pending reserve
                 pending_reserve = (
                     db.query(ReserveModel)
                     .filter(
@@ -409,75 +401,37 @@ class ReserveRepository(
                     )
                     .first()
                 )
-                logger.debug(f"[TRACE] Pending reserve for CV {cv_id}: {pending_reserve}")
-                if pending_reserve:
-                    logger.debug(
-                        f"[TRACE] Skipping CV {cv_id}, already has a pending reserve"
-                    )
-                    skipped_cvs.append(cv_id)
-                    continue  # skip this one instead of failing
 
-                # Fetch CV
-                cv = db.query(CVModel).filter_by(id=cv_id).first()
-                logger.debug(f"[TRACE] CV fetched for ID {cv_id}: {cv}")
-                if not cv:
-                    logger.debug(f"[TRACE] CV {cv_id} not found, skipping")
+                if pending_reserve:
                     skipped_cvs.append(cv_id)
                     continue
 
-                # Fetch promotion (not required, but kept for business logic)
-                promotion = (
-                    db.query(PromotionModel).filter_by(user_id=cv.user_id).first()
-                )
-                logger.debug(f"[TRACE] Promotion fetched for CV {cv_id}: {promotion}")
+                cv = db.query(CVModel).filter_by(id=cv_id).first()
+                if not cv:
+                    skipped_cvs.append(cv_id)
+                    continue
 
-                # Prepare reserve object
-                single_reserve = ReserveSingleCreateSchema(
-                    cv_id=cv_id, reserver_id=user.id
-                )
+                single_reserve = ReserveSingleCreateSchema(cv_id=cv_id, reserver_id=user.id)
                 obj_in_data = jsonable_encoder(single_reserve)
                 db_obj = self.entity(**obj_in_data)
                 db_obj.batch_id = batch_reserve.id
                 reserves.append(db_obj)
-                logger.debug(f"[TRACE] Prepared reserve object: {db_obj}")
 
-            # Save all new reserves
             if reserves:
                 db.bulk_save_objects(reserves)
                 db.commit()
-                logger.debug(f"[TRACE] Saved {len(reserves)} reserve(s) into DB")
-            else:
-                logger.debug("[TRACE] No new reserves created")
 
-            # Retrieve manager IDs for notifications
-            manager_ids = (
-                db.query(EmployeeModel.manager_id)
-                .join(CVModel, CVModel.user_id == EmployeeModel.user_id)
-                .filter(CVModel.id.in_(obj_in.cv_id))
-                .all()
-            )
-            manager_ids = [id[0] for id in manager_ids if id[0] is not None]
-            logger.debug(f"[TRACE] Manager IDs for notification: {manager_ids}")
-
-            # ✅ Build response message
+            # Build response
             message = f"{self.entity.get_resource_name(self.entity.__name__)} requested for {len(reserves)} employees."
             if skipped_cvs:
-                message += (
-                    f" Skipped {len(skipped_cvs)} CV(s): {', '.join(map(str, skipped_cvs))} "
-                    "(already reserved or not found)."
-                )
+                message += f" Skipped {len(skipped_cvs)} CV(s): {', '.join(map(str, skipped_cvs))} (already reserved or not found)."
 
             context_set_response_code_message.set(
-                BaseGenericResponse(
-                    error=False,
-                    message=message,
-                    status_code=200,
-                )
+                BaseGenericResponse(error=False, message=message, status_code=200)
             )
             return reserves
 
         except Exception as e:
-            # ✅ Log the full traceback
             logger.error("Error in send_reserve_request", exc_info=True)
             context_set_response_code_message.set(
                 BaseGenericResponse(
