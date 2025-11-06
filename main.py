@@ -1,4 +1,5 @@
 import json
+import uuid
 from fastapi.staticfiles import StaticFiles
 import stripe
 
@@ -21,6 +22,9 @@ from routers.occupation import occupation_router
 from routers.refund import refund_router
 from routers.promotion import promotion_router
 from routers.reserve import reserve_router
+from routers.reserveagent import agent_reserve_router
+from routers.reserverecruiter import recruiter_reserve_router
+from routers.EmployeerRecruiter import recruiter_reserve_employeer_router
 from routers.offer import offer_router
 from routers.transfer import transfer_router
 from routers.dashboard import dashboard_router
@@ -35,7 +39,8 @@ from seed import seed_promotion_package
 from utils.exceptions import AppException
 from cron_jobs import inactive_expired_promotion, scheduler, delete_declined_and_cancelled_reserves
 from fastapi import FastAPI, Response
-
+from fastapi.middleware.cors import CORSMiddleware
+import stripe
 
 tags_metadata = [
     {"name": "user", "description": "user routes"},
@@ -45,6 +50,9 @@ tags_metadata = [
     {"name": "process", "description": "process routes"},
     {"name": "payment", "description": "payment routes"},
     {"name": "reserve", "description": "reserve routes"},
+    {"name": "agent_reserve", "description": "agent reserve routes"},
+    {"name": "recruiter_reserve", "description": "agent reserve routes"},
+    {"name": "recruiter_reserve_employeer", "description": "agent reserve routes"},
     {"name": "promotion", "description": "promotion routes"},
     {"name": "refund", "description": "refund routes"},
     {"name": "occupation", "description": "occupation routes"},
@@ -60,6 +68,10 @@ tags_metadata = [
     {"name": "assignagent", "description": "assign agent routes"},
 ]
 
+# import your Settings and tags_metadata from your project
+# from your_project.config import Settings
+# from your_project.tags import tags_metadata
+
 app = FastAPI(
     title="marrir api",
     description="Marrir API",
@@ -68,20 +80,22 @@ app = FastAPI(
     openapi_tags=tags_metadata,
 )
 
+# ✅ Allowed origins
+# Use ["*"] for development. In production, replace with your frontend domains
 origins = ["*"]
-settings = Settings()
 
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=origins,       # or ["https://yourfrontend.com"]
+    allow_credentials=True,
+    allow_methods=["*"],         # Allow all HTTP methods
+    allow_headers=["*"],         # Allow all headers
+)
+
+# Stripe configuration
+settings = Settings()
 stripe.api_key = settings.STRIPE_SECRET_KEY
 
-
-@app.middleware("http")
-async def cors_middleware(request: Request, call_next):
-    response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Credentials"] = "true"
-    response.headers["Access-Control-Allow-Methods"] = "*"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
 
 
 @app.api_route("/{path_name:path}", methods=["OPTIONS"])
@@ -130,6 +144,7 @@ async def get_session(request: Request):
     value = request.session.get("key", "Not set")
     return {"session_value": value}
 
+
 @app.get("/sitemap.xml", response_class=Response, tags=["SEO"])
 async def sitemap():
     xml_content = """<?xml version="1.0" encoding="UTF-8"?>
@@ -141,7 +156,6 @@ async def sitemap():
     </urlset>"""
     return Response(content=xml_content, media_type="application/xml")
 
-
 async def con_job_event():
     logger.info("initializing database")
     init_db()
@@ -152,6 +166,10 @@ async def con_job_event():
         seed_promotion_package(db)
     else:
         print("Failed to get a valid database session.")
+
+
+
+
 
 app.add_event_handler("startup", con_job_event)
 
@@ -166,6 +184,9 @@ app.include_router(cv_router, tags=["cv"])
 app.include_router(process_router, tags=["process"])
 app.include_router(payment_router, tags=["payment"])
 app.include_router(reserve_router, tags=["reserve"])
+app.include_router(agent_reserve_router, tags=["agent_reserve"])
+app.include_router(recruiter_reserve_router, tags=["recruiter_reserve"])
+app.include_router(recruiter_reserve_employeer_router, tags=["recruiter_reserve_employeer"])
 app.include_router(refund_router, tags=["refund"])
 app.include_router(promotion_router, tags=["promotion"])
 app.include_router(occupation_router, tags=["occupation"])
