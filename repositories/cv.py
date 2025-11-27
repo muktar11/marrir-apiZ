@@ -6,6 +6,7 @@ import os
 import tempfile
 from typing import Any, Dict, Optional, Union, Generic, List
 import uuid
+from models.notificationmodel import Notifications, NotificationReadModel, UserNotificationModel
 from fastapi import BackgroundTasks, File, Form, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.templating import Jinja2Templates
@@ -36,7 +37,7 @@ from repositories.base import (
     CreateSchemaType,
     FilterSchemaType,
 )
-from schemas.base import BaseGenericResponse
+from schemas.base import BaseGenericResponse, DeleteResponse
 from schemas.cvschema import (
     AdditionalLanguageCreateSchema,
     AdditionalLanguageReadSchema,
@@ -717,8 +718,97 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         
 
     '''
-    def delete(self, db: Session, filters: FilterSchemaType) -> EntityType:
-        return super().delete(db, filters)
+
+    '''
+    def delete_employee_and_related(self, db: Session, user_id: uuid.UUID):
+        
+        
+        # Ensure UUID
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        # 1. Delete notifications
+        db.query(Notifications).filter_by(user_id=user_id).delete()
+        db.query(NotificationReadModel).filter_by(user_id=user_id).delete()
+        db.query(UserNotificationModel).filter_by(user_id=user_id).delete()
+
+        # 2. Delete employee & profile
+        db.query(EmployeeModel).filter_by(user_id=user_id).delete()
+        db.query(UserProfileModel).filter_by(user_id=user_id).delete()
+
+        # 3. Delete CV and nested tables
+        cv = db.query(CVModel).filter_by(user_id=user_id).first()
+        if cv:
+            # child tables
+            db.query(WorkExperienceModel).filter_by(cv_id=cv.id).delete()
+            db.query(ReferenceModel).filter_by(cv_id=cv.id).delete()
+            db.query(EducationModel).filter_by(cv_id=cv.id).delete()
+
+            # delete CV itself
+            db.delete(cv)
+
+            # delete address after CV
+            if cv.address_id:
+                db.query(AddressModel).filter_by(id=cv.address_id).delete()
+
+        # 4. Delete user
+        db.query(UserModel).filter_by(id=user_id).delete()
+
+        # 5. Commit all changes
+        db.commit()
+
+        return DeleteResponse(message="CV and user deleted successfully")
+
+
+    '''
+    def delete_employee_and_related(self, db: Session, user_id: uuid.UUID):
+        """Delete user, CV, address, and all related tables safely."""
+
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        try:
+            # 1️⃣ Delete notifications
+            db.query(Notifications).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(NotificationReadModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(UserNotificationModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+
+            # 2️⃣ Delete CV and nested tables
+            cv = db.query(CVModel).filter_by(user_id=user_id).first()
+            if cv:
+                # Delete child tables first
+                db.query(WorkExperienceModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+                db.query(ReferenceModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+                db.query(EducationModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+
+                # Delete CV itself
+                db.delete(cv)
+                db.flush()  # Flush to DB so FK is cleared
+
+                # Now it's safe to delete address
+                if cv.address_id:
+                    db.query(AddressModel).filter_by(id=cv.address_id).delete(synchronize_session=False)
+
+            # 3️⃣ Delete Employee & Profile
+            db.query(EmployeeModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(UserProfileModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+
+            # 4️⃣ Delete the User
+            db.query(UserModel).filter_by(id=user_id).delete(synchronize_session=False)
+
+            # 5️⃣ Commit all changes
+            db.commit()
+
+            return DeleteResponse(message="User and all related data deleted successfully")
+
+        except Exception as e:
+            db.rollback()
+            raise e
+
+
+
+
+
 
     '''
     def upload_passport(
