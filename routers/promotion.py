@@ -566,9 +566,7 @@ async def buy_promotion_package(
         "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": str(subscription.id),
-        #"notificationUrl": "http://localhost:8000/api/v1/promotion/packages/callback/hyper",
-        #"shopperResultUrl": "http://localhost:5173/employee/promotion",
-        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyper",
+        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyper/server",
         "shopperResultUrl": "https://marrir.com/employee/promotion",
     }
 
@@ -695,34 +693,34 @@ async def hyperpay_status(ref: str, db: Session = Depends(get_db_sessions)):
     return {"status": "pending"}
 
 '''
-@promotion_router.post("/packages/callback/hyper")
-async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessions)):
-    logger.info("📥 Received HyperPay callback")
 
-    # 1️⃣ Try JSON
+@promotion_router.post("/packages/callback/hyper/server")
+async def hyperpay_server_callback(request: Request, db: Session = Depends(get_db_sessions)):
+    """
+    HyperPay server (POST) callback to activate subscription and mark invoice as PAID
+    """
+    logger.info("📥 Received HyperPay POST callback")
+
+    # Parse JSON body    
     try:
         data = await request.json()
-        logger.info(f"📨 JSON body: {data}")
+        logger.info(f"📨 JSON callback: {data}")
     except:
-        data = {}
-
-    # 2️⃣ If JSON missing fields → try form data
-    if not data:
         form = await request.form()
         data = dict(form)
-        logger.info(f"📨 FORM body: {data}")
+        logger.info(f"📨 FORM callback: {data}")
 
-    merchant_id = data.get("merchantTransactionId") or data.get("merchantTransactionId[]")
 
-    logger.info(f"🔎 merchantTransactionId: {merchant_id}")
+    merchant_id = data.get("merchantTransactionId")
+    logger.info(f"🔎 merchantTransactionId received: {merchant_id}")
 
     if not merchant_id:
-        logger.error("❌ No merchantTransactionId provided in callback")
         return {"status": "failed", "message": "No merchantTransactionId"}
 
-    clean_id = merchant_id.replace("SUB-", "")
-    logger.info(f"🧹 Normalized ID: {clean_id}")
+    clean_id = merchant_id.replace("SUB-", "").strip()
+    logger.info(f"🧹 Normalized transaction ID: {clean_id}")
 
+    # Find invoice
     invoice = db.query(InvoiceModel).filter(
         InvoiceModel.status == "pending",
         (InvoiceModel.reference == clean_id) |
@@ -730,25 +728,59 @@ async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessi
     ).first()
 
     if not invoice:
-        logger.error("❌ Invoice not found")
+        logger.error(f"❌ No invoice found with reference {clean_id}")
         return {"status": "failed", "message": "Invoice not found"}
 
+    logger.info(f"🧾 Invoice match: ID={invoice.id}, ref={invoice.reference}")
+
+    # Find subscription
     subscription = db.query(PromotionSubscriptionModel).filter(
         PromotionSubscriptionModel.id == invoice.object_id
     ).first()
 
-    if subscription:
-        subscription.status = "active"
-        db.add(subscription)
+    if not subscription:
+        logger.error(f"❌ Subscription not found for object_id={invoice.object_id}")
+        return {"status": "failed", "message": "Subscription not found"}
 
+    # Activate subscription
+    subscription.status = "active"
+    db.add(subscription)
+
+    # Mark invoice as PAID
     invoice.status = "paid"
     db.add(invoice)
 
-    db.commit()
-    db.refresh(invoice)
+    try:
+        db.commit()
+        logger.info("💾 Commit success – subscription activated + invoice paid")
+    except Exception as e:
+        db.rollback()
+        logger.error(f"❌ Commit failed: {e}")
+        return {"status": "failed", "message": "Database error"}
 
     return {"status": "successful"}
 
+
+@promotion_router.get("/packages/callback/hyper/status")
+async def hyperpay_status(ref: str, db: Session = Depends(get_db_sessions)):
+    """
+    GET endpoint used by frontend to poll payment status.
+    Accepts: ?ref=18 or ?ref=SUB-18
+    """
+    clean = ref.replace("SUB-", "").strip()
+
+    invoice = db.query(InvoiceModel).filter(
+        (InvoiceModel.reference == clean) |
+        (InvoiceModel.reference == f"SUB-{clean}")
+    ).first()
+
+    if not invoice:
+        return {"status": "failed", "message": "Invoice not found"}
+
+    if invoice.status == "paid":
+        return {"status": "successful"}
+
+    return {"status": "pending"}
 
 
 
