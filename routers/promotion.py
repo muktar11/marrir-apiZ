@@ -789,37 +789,43 @@ from fastapi import FastAPI, Request, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 import os
+import base64
 
-@promotion_router.get("/api/v1/payment/create")
+def get_hyperpay_auth_header() -> dict:
+    # HyperPay requires Basic Auth: username:password base64 encoded
+    auth_str = f"{settings.HYPERPAY_AUTH}:"
+    encoded_auth = base64.b64encode(auth_str.encode()).decode()
+    return {"Authorization": f"Basic {encoded_auth}"}
+
+@promotion_router.get("/create")
 async def create_payment(amount: float, currency: str = "USD"):
+    payload = {
+        "entityId": settings.HYPERPAY_ENTITY_ID,
+        "amount": f"{amount:.2f}",
+        "currency": currency,
+        "paymentType": "DB",  # DB = debit, PA = preauth
+    }
+    headers = {
+        **get_hyperpay_auth_header(),
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
     async with httpx.AsyncClient() as client:
-        payload = {
-            "entityId":  settings.HYPERPAY_ENTITY_ID,
-            "amount": f"{amount:.2f}",
-            "currency": currency,
-            "paymentType": "DB",  # DB = debit, PA = preauth
-        }
-        headers = {
-            "Authorization": f"Bearer { settings.HYPERPAY_AUTH}",
-            "Content-Type": "application/x-www-form-urlencoded"
-        }
-        res = await client.post( settings.HYPERPAY_URL, data=payload, headers=headers)
+        res = await client.post(settings.HYPERPAY_URL, data=payload, headers=headers)
         if res.status_code != 200:
-            raise HTTPException(status_code=500, detail="HyperPay request failed")
+            raise HTTPException(status_code=res.status_code, detail=res.text)
         return res.json()
 
 
-
-@promotion_router.get("/api/v1/payment/callback/hyper/status")
+@promotion_router.get("/callback/hyper/status")
 async def verify_payment(ref: str):
-    # HyperPay status URL
-    url = f"https://test.oppwa.com/v1/checkouts/{ref}/payment"
-    headers = {"Authorization": f"Bearer { settings.HYPERPAY_AUTH}"}
+    url = f"{settings.HYPERPAY_URL}/{ref}/payment"
+    headers = get_hyperpay_auth_header()
 
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=headers)
         if res.status_code != 200:
-            raise HTTPException(status_code=500, detail="HyperPay status request failed")
+            raise HTTPException(status_code=res.status_code, detail=res.text)
         data = res.json()
 
     # Example verification logic
@@ -829,6 +835,7 @@ async def verify_payment(ref: str):
         status = "failed"
 
     return {"status": status, "data": data}
+
 
 @promotion_router.post("/packages/callback")
 async def buy_promotion_package_callback(data: TransferRequestPaymentCallback,
