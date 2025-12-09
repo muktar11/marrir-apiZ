@@ -784,6 +784,52 @@ async def hyperpay_status(ref: str, db: Session = Depends(get_db_sessions)):
 
 
 
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import os
+
+@promotion_router.get("/api/v1/payment/create")
+async def create_payment(amount: float, currency: str = "USD"):
+    async with httpx.AsyncClient() as client:
+        payload = {
+            "entityId":  settings.HYPERPAY_ENTITY_ID,
+            "amount": f"{amount:.2f}",
+            "currency": currency,
+            "paymentType": "DB",  # DB = debit, PA = preauth
+        }
+        headers = {
+            "Authorization": f"Bearer { settings.HYPERPAY_AUTH}",
+            "Content-Type": "application/x-www-form-urlencoded"
+        }
+        res = await client.post( settings.HYPERPAY_URL, data=payload, headers=headers)
+        if res.status_code != 200:
+            raise HTTPException(status_code=500, detail="HyperPay request failed")
+        return res.json()
+
+
+
+@promotion_router.get("/api/v1/payment/callback/hyper/status")
+async def verify_payment(ref: str):
+    # HyperPay status URL
+    url = f"https://test.oppwa.com/v1/checkouts/{ref}/payment"
+    headers = {"Authorization": f"Bearer { settings.HYPERPAY_AUTH}"}
+
+    async with httpx.AsyncClient() as client:
+        res = await client.get(url, headers=headers)
+        if res.status_code != 200:
+            raise HTTPException(status_code=500, detail="HyperPay status request failed")
+        data = res.json()
+
+    # Example verification logic
+    if data.get("result", {}).get("code") == "000.100.110":
+        status = "success"
+    else:
+        status = "failed"
+
+    return {"status": status, "data": data}
+
 @promotion_router.post("/packages/callback")
 async def buy_promotion_package_callback(data: TransferRequestPaymentCallback,
                                           background_tasks: BackgroundTasks, _=Depends(authentication_context),
