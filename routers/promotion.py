@@ -566,8 +566,10 @@ async def buy_promotion_package(
         "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": str(subscription.id),
-        "notificationUrl": "http://localhost:8000/api/v1/promotion/packages/callback/hyper",
-        "shopperResultUrl": "http://localhost:5173/employee/promotion",
+        #"notificationUrl": "http://localhost:8000/api/v1/promotion/packages/callback/hyper",
+        #"shopperResultUrl": "http://localhost:5173/employee/promotion",
+        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyper",
+        "shopperResultUrl": "https://marrir.com/employee/promotion",
     }
 
     headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
@@ -601,12 +603,10 @@ from sqlalchemy.orm import Session
 import requests
 import logging
 logger = logging.getLogger("hyperpay")
-
+'''
 @promotion_router.post("/packages/callback/hyper")
 async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessions)):
-    """
-    HyperPay server callback (POST) to activate subscription and mark invoice as paid
-    """
+
     logger.info("📥 Received HyperPay callback")
 
     # Parse request body
@@ -694,6 +694,60 @@ async def hyperpay_status(ref: str, db: Session = Depends(get_db_sessions)):
 
     return {"status": "pending"}
 
+'''
+@promotion_router.post("/packages/callback/hyper")
+async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessions)):
+    logger.info("📥 Received HyperPay callback")
+
+    # 1️⃣ Try JSON
+    try:
+        data = await request.json()
+        logger.info(f"📨 JSON body: {data}")
+    except:
+        data = {}
+
+    # 2️⃣ If JSON missing fields → try form data
+    if not data:
+        form = await request.form()
+        data = dict(form)
+        logger.info(f"📨 FORM body: {data}")
+
+    merchant_id = data.get("merchantTransactionId") or data.get("merchantTransactionId[]")
+
+    logger.info(f"🔎 merchantTransactionId: {merchant_id}")
+
+    if not merchant_id:
+        logger.error("❌ No merchantTransactionId provided in callback")
+        return {"status": "failed", "message": "No merchantTransactionId"}
+
+    clean_id = merchant_id.replace("SUB-", "")
+    logger.info(f"🧹 Normalized ID: {clean_id}")
+
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.status == "pending",
+        (InvoiceModel.reference == clean_id) |
+        (InvoiceModel.reference == f"SUB-{clean_id}")
+    ).first()
+
+    if not invoice:
+        logger.error("❌ Invoice not found")
+        return {"status": "failed", "message": "Invoice not found"}
+
+    subscription = db.query(PromotionSubscriptionModel).filter(
+        PromotionSubscriptionModel.id == invoice.object_id
+    ).first()
+
+    if subscription:
+        subscription.status = "active"
+        db.add(subscription)
+
+    invoice.status = "paid"
+    db.add(invoice)
+
+    db.commit()
+    db.refresh(invoice)
+
+    return {"status": "successful"}
 
 
 
