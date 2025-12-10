@@ -599,7 +599,7 @@ async def buy_promotion_package(
         "paymentType": "DB",
         "merchantTransactionId": str(subscription.id),
         "shopperResultUrl": "https://marrir.com/employee/promotion",
-        "notificationUrl": "https://marrir.com/api/v1/promotion/packages/callback/hyper",
+        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyper",
     }
 
     headers = {
@@ -694,6 +694,18 @@ async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessi
 
     db.refresh(invoice)
     return {"status": "successful"}
+
+
+@promotion_router.get("/packages/callback/hyper/status")
+async def payment_status(ref: str, db: Session = Depends(get_db_sessions)):
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == ref
+    ).first()
+
+    if not invoice:
+        return {"status": "not_found"}
+
+    return {"status": invoice.status}
 
 
 
