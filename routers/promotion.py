@@ -792,10 +792,9 @@ import os
 import base64
 
 def get_hyperpay_auth_header() -> dict:
-    # HyperPay requires Basic Auth: username:password base64 encoded
-    auth_str = f"{settings.HYPERPAY_AUTH}:"
-    encoded_auth = base64.b64encode(auth_str.encode()).decode()
-    return {"Authorization": f"Basic {encoded_auth}"}
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
 
 @promotion_router.get("/create")
 async def create_payment(amount: float, currency: str = "USD"):
@@ -803,7 +802,7 @@ async def create_payment(amount: float, currency: str = "USD"):
         "entityId": settings.HYPERPAY_ENTITY_ID,
         "amount": f"{amount:.2f}",
         "currency": currency,
-        "paymentType": "DB",  # DB = debit, PA = preauth
+        "paymentType": "DB",
     }
     headers = {
         **get_hyperpay_auth_header(),
@@ -828,8 +827,7 @@ async def verify_payment(ref: str):
             raise HTTPException(status_code=res.status_code, detail=res.text)
         data = res.json()
 
-    # Example verification logic
-    if data.get("result", {}).get("code") == "000.100.110":
+    if data.get("result", {}).get("code", "").startswith("000."):
         status = "success"
     else:
         status = "failed"
