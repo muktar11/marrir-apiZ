@@ -617,7 +617,8 @@ async def buy_promotion_package(
 
     # Create invoice
     invoice = InvoiceModel(
-        reference=str(subscription.id),
+        #reference=str(subscription.id),
+        reference=checkout_id,
         amount=package.price,
         buyer_id=user.id,
         object_id=subscription.id,
@@ -637,6 +638,7 @@ async def buy_promotion_package(
 # -----------------------------
 # HyperPay Callback
 # -----------------------------
+
 @promotion_router.post("/packages/callback/hyper")
 async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessions)):
     # Parse callback data (JSON or form-data)
@@ -696,14 +698,37 @@ async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessi
     return {"status": "successful"}
 
 
-@promotion_router.get("/packages/callback/hyper/status")
+@promotion_router.get("/package/callback/hyper/status")
 async def payment_status(ref: str, db: Session = Depends(get_db_sessions)):
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.reference == ref
-    ).first()
+    # Lookup invoice
+    invoice = db.query(InvoiceModel).filter(InvoiceModel.reference == ref).first()
 
     if not invoice:
         return {"status": "not_found"}
+
+    # If invoice is still pending, activate subscription and mark invoice as paid
+    if invoice.status == "pending":
+        # Lookup subscription
+        subscription = db.query(PromotionSubscriptionModel).filter(
+            PromotionSubscriptionModel.id == invoice.object_id
+        ).first()
+
+        if subscription:
+            subscription.status = "active"
+            db.add(subscription)
+
+        invoice.status = "paid"
+        db.add(invoice)
+
+        try:
+            db.commit()
+        except Exception as e:
+            db.rollback()
+            logger.error(f"DB commit failed: {e}")
+            return {"status": "failed", "message": "DB commit failed"}
+
+        # Refresh invoice after commit
+        db.refresh(invoice)
 
     return {"status": invoice.status}
 
