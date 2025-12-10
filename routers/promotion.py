@@ -813,35 +813,47 @@ async def create_payment(body: PaymentRequest):
     }
 
     headers = {
+
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
         "Content-Type": "application/x-www-form-urlencoded",
     }
 
     async with httpx.AsyncClient() as client:
-        res = await client.post(settings.HYPERPAY_URL, data=payload, headers=headers)
+        #res = await client.post(settings.HYPERPAY_URL, data=payload, headers=headers)
+        res = await client.post("https://eu-test.oppwa.com/v1/checkouts", data=payload, headers=headers)
+        
+
         if res.status_code != 200:
             raise HTTPException(status_code=res.status_code, detail=res.text)
         return res.json()
 
 
+
+
 @promotion_router.get("/callback/hyper/status")
 async def verify_payment(ref: str):
-    url = f"{settings.HYPERPAY_URL}/{ref}/payment"
-    headers = get_hyperpay_auth_header()
+    url = (
+        f"https://eu-test.oppwa.com/v1/checkouts/{ref}/payment"
+        f"?entityId={settings.HYPERPAY_ENTITY_ID}"
+    )
+
+    headers = {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
 
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=headers)
+
         if res.status_code != 200:
             raise HTTPException(status_code=res.status_code, detail=res.text)
+
         data = res.json()
 
-    if data.get("result", {}).get("code", "").startswith("000."):
-        status = "success"
-    else:
-        status = "failed"
+    code = data.get("result", {}).get("code", "")
+
+    status = "success" if code.startswith("000.") else "failed"
 
     return {"status": status, "data": data}
-
 
 @promotion_router.post("/packages/callback")
 async def buy_promotion_package_callback(data: TransferRequestPaymentCallback,
