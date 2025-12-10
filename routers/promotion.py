@@ -508,15 +508,44 @@ async def buy_promotion_package(
 
 '''
 
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+from datetime import datetime, timezone, timedelta
+import requests
+import logging
+
+
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import os
+import base64
+from pydantic import BaseModel
+
+def get_hyperpay_auth_header() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
+
+
+class PaymentRequest(BaseModel):
+    amount: float
+    currency: str = "AED"
+
+
 @promotion_router.post("/packages/hyper")
 async def buy_promotion_package(
     data: BuyPromotionPackage,
     _=Depends(authentication_context),
     __=Depends(build_request_context),
 ):
-    db = get_db_session()
+    db: Session = get_db_session()
     user = context_actor_user_data.get()
 
+    # Get package
     package = (
         db.query(PromotionPackagesModel)
         .filter(
@@ -527,15 +556,19 @@ async def buy_promotion_package(
         .first()
     )
     if not package:
-        return {"message": "Invalid package"}
+        raise HTTPException(status_code=400, detail="Invalid package")
 
+    # Calculate subscription end date
     duration_days = {"1 month": 30, "3 months": 90, "6 months": 180, "12 months": 365}
     end_date = datetime.now(timezone.utc) + timedelta(days=duration_days[package.duration.value])
 
+    # Check existing subscription
     subscription = (
         db.query(PromotionSubscriptionModel)
-        .filter(PromotionSubscriptionModel.user_id == user.id)
-        .filter(PromotionSubscriptionModel.status == "active")
+        .filter(
+            PromotionSubscriptionModel.user_id == user.id,
+            PromotionSubscriptionModel.status == "active",
+        )
         .first()
     )
 
@@ -559,248 +592,118 @@ async def buy_promotion_package(
         db.commit()
 
     # Generate HyperPay checkout
-    import requests
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
         "amount": f"{package.price:.2f}",
         "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": str(subscription.id),
-        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyper/server",
         "shopperResultUrl": "https://marrir.com/employee/promotion",
+        "notificationUrl": "https://marrir.com/api/v1/promotion/packages/callback/hyper",
     }
 
-    headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+    headers = {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
 
     res = requests.post(
-        "https://test.oppwa.com/v1/checkouts", data=payload, headers=headers
+        "https://eu-test.oppwa.com/v1/checkouts", data=payload, headers=headers
     ).json()
 
     checkout_id = res.get("id")
     if not checkout_id:
-        return {"message": "Payment initialization failed"}
+        raise HTTPException(status_code=500, detail="Payment initialization failed")
 
-    invoice = create_invoice_hyper(
-        db=db,
-        reference=str(subscription.id), 
+    # Create invoice
+    invoice = InvoiceModel(
+        reference=str(subscription.id),
         amount=package.price,
         buyer_id=user.id,
         object_id=subscription.id,
+        status="pending",
     )
     db.add(invoice)
     db.commit()
+    db.refresh(invoice)
 
     return {
         "checkoutId": checkout_id,
-        "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
-        "subscriptionId": subscription.id   # ← ADD THIS
+        "redirectUrl": f"https://eu-test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
+        "subscriptionId": subscription.id,
     }
 
-from fastapi import Depends
-from sqlalchemy.orm import Session
-import requests
-import logging
-logger = logging.getLogger("hyperpay")
-'''
+
+# -----------------------------
+# HyperPay Callback
+# -----------------------------
 @promotion_router.post("/packages/callback/hyper")
 async def hyperpay_callback(request: Request, db: Session = Depends(get_db_sessions)):
-
-    logger.info("📥 Received HyperPay callback")
-
-    # Parse request body
+    # Parse callback data (JSON or form-data)
     try:
         data = await request.json()
-        logger.info(f"📨 Callback body: {data}")
-    except Exception as e:
-        logger.error(f"❌ Failed to parse JSON body: {e}")
-        data = {}
+    except:
+        data = dict(await request.form())
+
+    logger.info(f"📨 Callback body: {data}")
 
     merchant_id = data.get("merchantTransactionId")
-    logger.info(f"🔎 merchantTransactionId received: {merchant_id}")
-
     if not merchant_id:
-        logger.error("❌ No merchantTransactionId provided by HyperPay")
         return {"status": "failed", "message": "No merchantTransactionId"}
 
-    # Normalize id
-    clean_id = merchant_id.replace("SUB-", "")
-    logger.info(f"🧹 Normalized transaction id: {clean_id}")
-
-    # Query invoice
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.status == "pending",
-        (InvoiceModel.reference == clean_id) |
-        (InvoiceModel.reference == f"SUB-{clean_id}")
-    ).first()
-
+    # Lookup invoice
+    invoice = (
+        db.query(InvoiceModel)
+        .filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.reference == str(merchant_id),
+        )
+        .first()
+    )
     if not invoice:
-        logger.error(f"❌ Invoice not found for reference {clean_id} or SUB-{clean_id}")
         return {"status": "failed", "message": "Invoice not found"}
 
-    logger.info(f"🧾 Invoice found: ID={invoice.id}, reference={invoice.reference}")
+    # Verify payment result
+    result_code = data.get("result", {}).get("code", "")
+    if not result_code.startswith("000."):
+        invoice.status = "failed"
+        db.add(invoice)
+        db.commit()
+        return {"status": "failed", "message": "Payment failed"}
 
     # Activate subscription
     subscription = db.query(PromotionSubscriptionModel).filter(
         PromotionSubscriptionModel.id == invoice.object_id
     ).first()
-
     if not subscription:
-        logger.error(f"❌ Subscription not found for object_id={invoice.object_id}")
-    else:
-        logger.info(f"📌 Activating subscription ID={subscription.id}")
-        subscription.status = "active"
-        db.add(subscription)
-
-    # Mark invoice as paid
-    logger.info(f"💰 Marking invoice ID={invoice.id} as PAID")
-    invoice.status = "paid"
-    db.add(invoice)
-
-    try:
-        db.commit()
-        logger.info("💾 Database commit successful")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"❌ Database commit failed: {e}")
-        return {"status": "failed", "message": "DB commit failed"}
-
-    db.refresh(invoice)
-    logger.info("✅ HyperPay callback successfully processed")
-
-    return {"status": "successful"}
-
-
-@promotion_router.get("/packages/callback/hyper")
-async def hyperpay_status(ref: str, db: Session = Depends(get_db_sessions)):
-    """
-    GET endpoint for frontend polling payment status.
-    Matches both raw '95' or 'SUB-95'.
-    """
-
-    clean = ref.replace("SUB-", "")
-
-    invoice = db.query(InvoiceModel).filter(
-        (InvoiceModel.reference == clean) |
-        (InvoiceModel.reference == f"SUB-{clean}")
-    ).first()
-
-    if not invoice:
-        return {"status": "failed", "message": "Invoice not found"}
-
-    if invoice.status == "paid":
-        return {"status": "successful"}
-
-    return {"status": "pending"}
-
-'''
-
-@promotion_router.post("/packages/callback/hyper/server")
-async def hyperpay_server_callback(request: Request, db: Session = Depends(get_db_sessions)):
-    """
-    HyperPay server (POST) callback to activate subscription and mark invoice as PAID
-    """
-    logger.info("📥 Received HyperPay POST callback")
-
-    # Parse JSON body    
-    try:
-        data = await request.json()
-        logger.info(f"📨 JSON callback: {data}")
-    except:
-        form = await request.form()
-        data = dict(form)
-        logger.info(f"📨 FORM callback: {data}")
-
-
-    merchant_id = data.get("merchantTransactionId")
-    logger.info(f"🔎 merchantTransactionId received: {merchant_id}")
-
-    if not merchant_id:
-        return {"status": "failed", "message": "No merchantTransactionId"}
-
-    clean_id = merchant_id.replace("SUB-", "").strip()
-    logger.info(f"🧹 Normalized transaction ID: {clean_id}")
-
-    # Find invoice
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.status == "pending",
-        (InvoiceModel.reference == clean_id) |
-        (InvoiceModel.reference == f"SUB-{clean_id}")
-    ).first()
-
-    if not invoice:
-        logger.error(f"❌ No invoice found with reference {clean_id}")
-        return {"status": "failed", "message": "Invoice not found"}
-
-    logger.info(f"🧾 Invoice match: ID={invoice.id}, ref={invoice.reference}")
-
-    # Find subscription
-    subscription = db.query(PromotionSubscriptionModel).filter(
-        PromotionSubscriptionModel.id == invoice.object_id
-    ).first()
-
-    if not subscription:
-        logger.error(f"❌ Subscription not found for object_id={invoice.object_id}")
         return {"status": "failed", "message": "Subscription not found"}
 
-    # Activate subscription
     subscription.status = "active"
     db.add(subscription)
 
-    # Mark invoice as PAID
+    # Mark invoice as paid
     invoice.status = "paid"
     db.add(invoice)
 
     try:
         db.commit()
-        logger.info("💾 Commit success – subscription activated + invoice paid")
     except Exception as e:
         db.rollback()
-        logger.error(f"❌ Commit failed: {e}")
-        return {"status": "failed", "message": "Database error"}
+        logger.error(f"DB commit failed: {e}")
+        return {"status": "failed", "message": "DB commit failed"}
 
+    db.refresh(invoice)
     return {"status": "successful"}
 
 
-@promotion_router.get("/packages/callback/hyper/status")
-async def hyperpay_status(ref: str, db: Session = Depends(get_db_sessions)):
-    """
-    GET endpoint used by frontend to poll payment status.
-    Accepts: ?ref=18 or ?ref=SUB-18
-    """
-    clean = ref.replace("SUB-", "").strip()
 
-    invoice = db.query(InvoiceModel).filter(
-        (InvoiceModel.reference == clean) |
-        (InvoiceModel.reference == f"SUB-{clean}")
-    ).first()
 
-    if not invoice:
-        return {"status": "failed", "message": "Invoice not found"}
-
-    if invoice.status == "paid":
-        return {"status": "successful"}
-
-    return {"status": "pending"}
+    
 
 
 
 
-from fastapi import FastAPI, Request, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
-import httpx
-import os
-import base64
 
-def get_hyperpay_auth_header() -> dict:
-    return {
-        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
-    }
-
-from pydantic import BaseModel
-
-class PaymentRequest(BaseModel):
-    amount: float
-    currency: str = "AED"
 
 
 @promotion_router.post("/create")
@@ -810,6 +713,7 @@ async def create_payment(body: PaymentRequest):
         "amount": f"{body.amount:.2f}",
         "currency": body.currency,
         "paymentType": "DB",
+        "shopperResultUrl": "https://marrir.com/employee/promotion"
     }
 
     headers = {
@@ -836,23 +740,16 @@ async def verify_payment(ref: str):
         f"https://eu-test.oppwa.com/v1/checkouts/{ref}/payment"
         f"?entityId={settings.HYPERPAY_ENTITY_ID}"
     )
-
     headers = {
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
-
     async with httpx.AsyncClient() as client:
         res = await client.get(url, headers=headers)
-
         if res.status_code != 200:
             raise HTTPException(status_code=res.status_code, detail=res.text)
-
         data = res.json()
-
     code = data.get("result", {}).get("code", "")
-
     status = "success" if code.startswith("000.") else "failed"
-
     return {"status": status, "data": data}
 
 @promotion_router.post("/packages/callback")
