@@ -796,16 +796,24 @@ def get_hyperpay_auth_header() -> dict:
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
-@promotion_router.get("/create")
-async def create_payment(amount: float, currency: str = "USD"):
+
+
+class PaymentRequest(BaseModel):
+    amount: float
+    currency: str = "AED"
+
+
+@promotion_router.post("/create")
+async def create_payment(body: PaymentRequest):
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{amount:.2f}",
-        "currency": currency,
+        "amount": f"{body.amount:.2f}",
+        "currency": body.currency,
         "paymentType": "DB",
     }
+
     headers = {
-        **get_hyperpay_auth_header(),
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
         "Content-Type": "application/x-www-form-urlencoded",
     }
 
