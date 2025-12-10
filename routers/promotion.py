@@ -796,7 +796,7 @@ def get_hyperpay_auth_header() -> dict:
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
-
+from pydantic import BaseModel
 
 class PaymentRequest(BaseModel):
     amount: float
