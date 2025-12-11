@@ -670,79 +670,41 @@ async def update_job_application_status(
             media_type="application/json"
         )
 
+from fastapi import Query
+from sqlalchemy.orm import Session
 @job_router.get("/my-applications/status/callback/hyper")
 async def hyperpay_job_application_callback(
-    request: Request,
     background_tasks: BackgroundTasks,
-    db = get_db_session()
+    ref: str = Query(...),
+ 
+    db: Session = Depends(get_db_sessions)
 ):
     try:
-        # Parse callback data (JSON or form)
-        try:
-            data = await request.json()
-        except:
-            data = dict(await request.form())
-
-        logger.info(f"📨 Job Application Callback: {data}")
-
-        merchant_id = data.get("merchantTransactionId")
-        if not merchant_id:
-            return {"status": "failed", "message": "No merchantTransactionId"}
-
-        # Validate payment success
-        result_code = data.get("result", {}).get("code", "")
-        is_success = result_code.startswith("000.")
-
-        # Find invoice
-        invoice = (
-            db.query(InvoiceModel)
-            .filter(
-                InvoiceModel.status == "pending",
-                InvoiceModel.reference == str(merchant_id),
-                InvoiceModel.type == "job_application"
-            )
-            .first()
-        )
+        # Lookup invoice by merchantTransactionId
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == ref,
+            InvoiceModel.type == "job_application"
+        ).first()
 
         if not invoice:
             return {"status": "failed", "message": "Invoice not found"}
 
-        # If HyperPay failed
-        if not is_success:
-            invoice.status = "failed"
-            db.add(invoice)
-            db.commit()
-            return {"status": "failed", "message": "Payment failed"}
+        # Check if invoice is already paid
+        if invoice.status != "paid":
+            return {"status": invoice.status, "message": "Payment not completed yet"}
 
         # Find job applications linked to invoice
         application_ids = list(map(int, invoice.object_id.split(",")))
-
-        job_applications = (
-            db.query(JobApplicationModel)
-            .filter(
-                JobApplicationModel.id.in_(application_ids),
-                JobApplicationModel.status == "pending"
-            )
-            .all()
-        )
+        job_applications = db.query(JobApplicationModel).filter(
+            JobApplicationModel.id.in_(application_ids)
+        ).all()
 
         if not job_applications:
             return {"status": "failed", "message": "Job applications not found"}
 
-        # Mark invoice as paid
-        invoice.status = "paid"
-        db.add(invoice)
-
-        # Accept all applications
-        for app in job_applications:
-            app.status = "accepted"
-            db.add(app)
-
-        db.commit()
-
-        # Send notifications + email
-        first_application = job_applications[0]
-        job = db.query(JobModel).filter(JobModel.id == first_application.job_id).first()
+        # Optionally, send notifications again if needed
+        first_app = job_applications[0]
+        job = db.query(JobModel).filter(JobModel.id == first_app.job_id).first()
 
         title = "Job Application Accepted"
         description = f"{job.job_poster.first_name} {job.job_poster.last_name} has accepted your application for {job.name}"
@@ -756,20 +718,13 @@ async def hyperpay_job_application_callback(
                 description,
                 "job_application"
             )
-
             email = app.user.email or app.user.cv.email
-            background_tasks.add_task(
-                send_email,
-                email=email,
-                title=title,
-                description=description
-            )
+            background_tasks.add_task(send_email, email, title, description)
 
-        return {"status": "successful"}
+        return {"status": "successful", "message": "Payment completed"}
 
     except Exception as e:
         logger.error(f"Callback Error: {e}")
-        db.rollback()
         return {"status": "failed", "message": str(e)}
 
 
