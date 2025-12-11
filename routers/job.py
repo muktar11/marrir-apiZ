@@ -359,9 +359,11 @@ async def get_my_applications(job_id: int,_=Depends(authentication_context),__=D
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
 
 
-def create_invoice(db, ref: str, amount: float, user_id: uuid.UUID, job_id: str) -> InvoiceModel:
+
+def create_invoice(db, ref, reference, amount, user_id, job_id):
     invoice = InvoiceModel(
         stripe_session_id=ref,
+        reference=reference,
         status="pending",
         amount=amount,
         created_at=datetime.now(timezone.utc),
@@ -372,9 +374,15 @@ def create_invoice(db, ref: str, amount: float, user_id: uuid.UUID, job_id: str)
     db.add(invoice)
     return invoice
 
+def update_invoice(invoice, ref, reference):
+    invoice.stripe_session_id = ref
+    invoice.reference = reference
 
+
+'''
 def update_invoice(invoice: InvoiceModel, ref: str) -> None:
     invoice.stripe_session_id = ref
+'''
 
 @job_router.patch("/my-applications/{job_id}/status")
 async def update_job_application_status(data: ApplicationStatusUpdateSchema, job_id: int, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
@@ -602,15 +610,17 @@ async def update_job_application_status(
             # -----------------------------------------
             merchant_ref = f"JOBAPP-{uuid.uuid4().hex[:10]}"
 
+
             payload = {
                 "entityId": settings.HYPERPAY_ENTITY_ID,
                 "amount": f"{total_amount:.2f}",
                 "currency": "AED",
                 "paymentType": "DB",
                 "merchantTransactionId": merchant_ref,
-                "shopperResultUrl": "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper",
+                "shopperResultUrl": f"https://marrir.com/sponsor/jobs/{job_id}?ref={merchant_ref}",
                 "notificationUrl": "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper",
             }
+
 
 
             import requests
@@ -638,17 +648,20 @@ async def update_job_application_status(
                 .filter(
                     InvoiceModel.buyer_id == user.id,
                     InvoiceModel.status == "pending",
+                    InvoiceModel.reference == checkout_id,
                     InvoiceModel.type == "job_application",
                 )
                 .first()
             )
 
             if invoice:
-                update_invoice(invoice, merchant_ref)
+                update_invoice(invoice, merchant_ref, checkout_id)
             else:
                 invoice = create_invoice(
-                    db, merchant_ref, total_amount, user.id, object_ids
+                    db, merchant_ref, checkout_id, total_amount, user.id, object_ids
                 )
+
+                
                 db.add(invoice)
 
             db.commit()
