@@ -358,12 +358,10 @@ async def get_my_applications(job_id: int,_=Depends(authentication_context),__=D
         print(e)
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
 
-
-
-def create_invoice(db, ref, reference, amount, user_id, job_id):
+'''
+def create_invoice(db, ref: str, amount: float, user_id: uuid.UUID, job_id: str) -> InvoiceModel:
     invoice = InvoiceModel(
         stripe_session_id=ref,
-        reference=reference,
         status="pending",
         amount=amount,
         created_at=datetime.now(timezone.utc),
@@ -374,15 +372,28 @@ def create_invoice(db, ref, reference, amount, user_id, job_id):
     db.add(invoice)
     return invoice
 
-def update_invoice(invoice, ref, reference):
-    invoice.stripe_session_id = ref
-    invoice.reference = reference
 
-
-'''
 def update_invoice(invoice: InvoiceModel, ref: str) -> None:
     invoice.stripe_session_id = ref
 '''
+def create_invoice(
+    db, reference: str, amount: float, user_id: uuid.UUID, job_id: str
+) -> InvoiceModel:
+    invoice = InvoiceModel(
+        reference=reference,       # <-- SAVE checkout_id HERE
+        status="pending",
+        amount=amount,
+        created_at=datetime.now(timezone.utc),
+        type="job_application",
+        buyer_id=user_id,
+        object_id=job_id,
+    )
+    db.add(invoice)
+    return invoice
+
+def update_invoice(invoice: InvoiceModel, reference: str) -> None:
+    invoice.reference = reference   # <-- UPDATE checkout_id here
+
 
 @job_router.patch("/my-applications/{job_id}/status")
 async def update_job_application_status(data: ApplicationStatusUpdateSchema, job_id: int, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
@@ -627,61 +638,59 @@ async def update_job_application_status(
             headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
 
             hp_res = requests.post(
-                "https://test.oppwa.com/v1/checkouts", data=payload, headers=headers
+                "https://test.oppwa.com/v1/checkouts",
+                data=payload,
+                headers=headers
             ).json()
 
             checkout_id = hp_res.get("id")
 
             if not checkout_id:
-                return Response(status_code=400,
+                return Response(
+                    status_code=400,
                     content=json.dumps({"message": "Failed to initialize HyperPay payment"}),
                     media_type="application/json"
                 )
 
-            # -----------------------------------------
-            # 🔥 Step 2 — Create / Update Invoice
-            # -----------------------------------------
             object_ids = ",".join([str(a.id) for a in jobs_applications])
 
+            # 🔍 Look for existing pending invoice for same user + type
             invoice = (
                 db.query(InvoiceModel)
                 .filter(
                     InvoiceModel.buyer_id == user.id,
                     InvoiceModel.status == "pending",
-                    InvoiceModel.reference == checkout_id,
                     InvoiceModel.type == "job_application",
                 )
                 .first()
             )
 
             if invoice:
-                update_invoice(invoice, merchant_ref, checkout_id)
+                # update invoice reference → checkout_id
+                update_invoice(invoice, checkout_id)
             else:
+                # create invoice with reference → checkout_id
                 invoice = create_invoice(
-                    db, merchant_ref, checkout_id, total_amount, user.id, object_ids
+                    db, checkout_id, total_amount, user.id, object_ids
                 )
-
-                
                 db.add(invoice)
 
             db.commit()
 
-            # -----------------------------------------
-            # 🔥 Step 3 — Return checkoutId to FE
-            # -----------------------------------------
             return {
                 "checkoutId": checkout_id,
                 "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
-                "ref": merchant_ref,
+                "ref": checkout_id   # return checkout_id to frontend
             }
 
+
     except Exception as e:
-        print(e)
-        return Response(
-            status_code=400,
-            content=json.dumps({"message": str(e)}),
-            media_type="application/json"
-        )
+                    print(e)
+                    return Response(
+                        status_code=400,
+                        content=json.dumps({"message": str(e)}),
+                        media_type="application/json"
+                    )
 
 from fastapi import Query
 from sqlalchemy.orm import Session
