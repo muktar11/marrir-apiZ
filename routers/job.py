@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
 from starlette.requests import Request
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
-from models.db import authentication_context, build_request_context, get_db_session
+from models.db import authentication_context, build_request_context, get_db_session, get_db_sessions
 from models.invoicemodel import InvoiceModel
 from models.jobapplicationmodel import JobApplicationModel
 from models.jobmodel import JobModel
@@ -478,150 +478,84 @@ async def update_job_application_status(data: ApplicationStatusUpdateSchema, job
 
 
 
-@job_router.patch("/my-applications/{job_id}/status")
-async def update_job_application_status(data: ApplicationStatusUpdateSchema, job_id: int, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
-    try:
-        db = get_db_session()
-        user = context_actor_user_data.get()
-
-        if user.role != "recruitment" and user.role != "sponsor":
-            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
-
-        job = db.query(JobModel).filter(JobModel.id == job_id).first()
-
-        if not job:
-            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
-
-        jobs_applications: List[JobApplicationModel] = db.query(JobApplicationModel).filter(JobApplicationModel.job_id == job_id, JobApplicationModel.id.in_(data.job_application_ids), JobApplicationModel.status == "pending").all()
-        
-        if not jobs_applications:
-            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
-
-        for job_application in jobs_applications:
-            if job_application.job.posted_by != user.id:
-                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
-
-        if data.status == "declined":
-            for job_application in jobs_applications:
-                job_application.status = "declined"
-                db.add(job_application)
-
-            db.commit()
-
-            title = "Job Application Declined"
-
-            description = f"{job.job_poster.first_name} {job.job_poster.last_name} has declined the job application for {job.name}"
-
-            background_tasks.add_task(send_notification, db, job_application.user_id, title, description, "job_application")
-
-            email = job_application.user.email or job_application.user.cv.email
-
-            background_tasks.add_task(send_email, email=email, title=title, description=description)
-
-            return {"message": "Job applications status updated successfully"}
-
-        if data.status == "accepted":
-            package = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.role == user.role, PromotionPackagesModel.category == "job_application").first()
-
-#            return_url = f"{settings.TELR_JOB_APPLICATION_RETURN_URL.replace("replace", user.role)}/{job_id}"
-            return_url = f"{settings.TELR_JOB_APPLICATION_RETURN_URL.replace('replace', user.role)}/{job_id}"
-
-            for job_application in jobs_applications:
-
-                job_application = db.query(JobApplicationModel).filter(JobApplicationModel.user_id == job_application.user_id, JobApplicationModel.status == "accepted").first()
-
-                if job_application:
-                    return Response(status_code=400, content=json.dumps({"message": f"{job_application.user.first_name} {job_application.user.last_name} has already been accepted for other job"}), media_type="application/json")
-
-            order_response = telr.order(
-                order_id=f"ORDER{uuid.uuid4().hex[:8]}",
-                amount=package.price * len(jobs_applications),
-                currency="AED",
-                return_url=return_url,
-                return_decl=return_url,
-                return_can=return_url,
-                description=f"Job Application"
-            )
-
-            ref = order_response.get("order", {}).get("ref")
-
-            if not ref:
-                return Response(status_code=400, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
-
-            ids = ",".join([str(tr.id) for tr in jobs_applications])
-
-            invoice = db.query(InvoiceModel).filter(
-                InvoiceModel.buyer_id == user.id,
-                InvoiceModel.status == "pending",
-                InvoiceModel.type == "job_application"
-            ).first()
-
-            if invoice:
-                update_invoice(invoice, ref)
-            else:
-                invoice = create_invoice(db, ref, len(jobs_applications) * 10, user.id, ids)
-                db.add(invoice)
-
-            db.commit()
-
-            return {
-                "method": order_response.get("method"),
-                "trace": order_response.get("trace"),
-                "order": {
-                    "ref": order_response.get("order", {}).get("ref"),
-                    "url": order_response.get("order", {}).get("url"),
-                },
-            }
-
-    except Exception as e:
-        print(e)
-        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
 
 
 
 @job_router.patch("/my-applications/{job_id}/status/hyper")
-async def update_job_application_status(data: ApplicationStatusUpdateSchema, job_id: int, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
+async def update_job_application_status(
+    data: ApplicationStatusUpdateSchema,
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context)
+):
     try:
         db = get_db_session()
         user = context_actor_user_data.get()
 
-        if user.role != "recruitment" and user.role != "sponsor":
-            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+        if user.role not in ["recruitment", "sponsor"]:
+            return Response(status_code=403,
+                content=json.dumps({"message": "Unauthorized"}),
+                media_type="application/json"
+            )
 
         job = db.query(JobModel).filter(JobModel.id == job_id).first()
-
         if not job:
-            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
+            return Response(status_code=404,
+                content=json.dumps({"message": "Job not found"}),
+                media_type="application/json"
+            )
 
-        jobs_applications: List[JobApplicationModel] = db.query(JobApplicationModel).filter(JobApplicationModel.job_id == job_id, JobApplicationModel.id.in_(data.job_application_ids), JobApplicationModel.status == "pending").all()
-        
+        jobs_applications: List[JobApplicationModel] = (
+            db.query(JobApplicationModel)
+            .filter(
+                JobApplicationModel.job_id == job_id,
+                JobApplicationModel.id.in_(data.job_application_ids),
+                JobApplicationModel.status == "pending",
+            )
+            .all()
+        )
+
         if not jobs_applications:
-            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
+            return Response(status_code=404,
+                content=json.dumps({"message": "Job applications not found"}),
+                media_type="application/json"
+            )
 
-        for job_application in jobs_applications:
-            if job_application.job.posted_by != user.id:
-                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+        # 🔒 Permission check
+        for app in jobs_applications:
+            if app.job.posted_by != user.id:
+                return Response(status_code=403,
+                    content=json.dumps({"message": "Unauthorized"}),
+                    media_type="application/json"
+                )
 
+        # ❌ Decline logic stays unchanged
         if data.status == "declined":
-            for job_application in jobs_applications:
-                job_application.status = "declined"
-                db.add(job_application)
+            for app in jobs_applications:
+                app.status = "declined"
+                db.add(app)
 
             db.commit()
 
             title = "Job Application Declined"
+            description = (
+                f"{job.job_poster.first_name} {job.job_poster.last_name} "
+                f"has declined the job application for {job.name}"
+            )
 
-            description = f"{job.job_poster.first_name} {job.job_poster.last_name} has declined the job application for {job.name}"
-
-            background_tasks.add_task(send_notification, db, job_application.user_id, title, description, "job_application")
-
-            email = job_application.user.email or job_application.user.cv.email
-
-            background_tasks.add_task(send_email, email=email, title=title, description=description)
+            background_tasks.add_task(
+                send_notification, db, app.user_id, title, description, "job_application"
+            )
+            email = app.user.email or app.user.cv.email
+            background_tasks.add_task(send_email, email, title, description)
 
             return {"message": "Job applications status updated successfully"}
 
+        # 🔥 ACCEPT → PAYMENT REQUIRED
         if data.status == "accepted":
+
+            # Get correct package
             package = (
                 db.query(PromotionPackagesModel)
                 .filter(
@@ -632,52 +566,53 @@ async def update_job_application_status(data: ApplicationStatusUpdateSchema, job
             )
 
             if not package:
-                return Response(
-                    status_code=404,
+                return Response(status_code=404,
                     content=json.dumps({"message": "Package not found"}),
-                    media_type="application/json",
+                    media_type="application/json"
                 )
 
-            # Redirect after payment
-            return_url = f"{settings.HYPERPAY_JOB_RETURN_URL.replace('replace', user.role)}/{job_id}"
-
-            # Ensure none already accepted
-            for job_application in jobs_applications:
-                already = (
+            # ❌ Prevent accepting user already accepted somewhere else
+            for app in jobs_applications:
+                existing = (
                     db.query(JobApplicationModel)
                     .filter(
-                        JobApplicationModel.user_id == job_application.user_id,
+                        JobApplicationModel.user_id == app.user_id,
                         JobApplicationModel.status == "accepted",
                     )
                     .first()
                 )
-                if already:
-                    return Response(
-                        status_code=400,
-                        content=json.dumps(
-                            {
-                                "message": f"{already.user.first_name} {already.user.last_name} has already been accepted for another job"
-                            }
-                        ),
-                        media_type="application/json",
+                if existing:
+                    return Response(status_code=400,
+                        content=json.dumps({
+                            "message": f"{existing.user.first_name} {existing.user.last_name} is already accepted for another job"
+                        }),
+                        media_type="application/json"
                     )
 
-            # Total amount = package price × number of applicants
+            # Price × applicants count
             total_amount = package.price * len(jobs_applications)
 
-            # 🔹 STEP 1: Create HyperPay Checkout
-            import requests
+            # 🔗 Return URL (MUST include job_id)
+            return_url = (
+                f"{settings.HYPERPAY_JOB_RETURN_URL.replace('replace', user.role)}/{job_id}"
+            )
+
+            # -----------------------------------------
+            # 🔥 Step 1 — Create HyperPay Checkout
+            # -----------------------------------------
+            merchant_ref = f"JOBAPP-{uuid.uuid4().hex[:10]}"
 
             payload = {
                 "entityId": settings.HYPERPAY_ENTITY_ID,
                 "amount": f"{total_amount:.2f}",
                 "currency": "AED",
                 "paymentType": "DB",
-                "merchantTransactionId": f"JOBAPP-{uuid.uuid4().hex[:8]}",
-                "notificationUrl": settings.HYPERPAY_JOB_NOTIFY_URL,
+                "merchantTransactionId": merchant_ref,
+                "notificationUrl": "https://marrir.com/api/v1/sponsor/jobs/{job_id}",
                 "shopperResultUrl": return_url,
             }
 
+            import requests
             headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
 
             hp_res = requests.post(
@@ -687,17 +622,15 @@ async def update_job_application_status(data: ApplicationStatusUpdateSchema, job
             checkout_id = hp_res.get("id")
 
             if not checkout_id:
-                return Response(
-                    status_code=400,
+                return Response(status_code=400,
                     content=json.dumps({"message": "Failed to initialize HyperPay payment"}),
-                    media_type="application/json",
+                    media_type="application/json"
                 )
 
-            # Reference for invoice
-            ref = payload["merchantTransactionId"]
-
-            # 🔹 STEP 2: Create or update invoice
-            ids = ",".join([str(tr.id) for tr in jobs_applications])
+            # -----------------------------------------
+            # 🔥 Step 2 — Create / Update Invoice
+            # -----------------------------------------
+            object_ids = ",".join([str(a.id) for a in jobs_applications])
 
             invoice = (
                 db.query(InvoiceModel)
@@ -710,223 +643,133 @@ async def update_job_application_status(data: ApplicationStatusUpdateSchema, job
             )
 
             if invoice:
-                update_invoice(invoice, ref)
+                update_invoice(invoice, merchant_ref)
             else:
-                invoice = create_invoice(db, ref, len(jobs_applications) * 10, user.id, ids)
+                invoice = create_invoice(
+                    db, merchant_ref, total_amount, user.id, object_ids
+                )
                 db.add(invoice)
 
             db.commit()
 
-            # 🔹 STEP 3: Return widget url
+            # -----------------------------------------
+            # 🔥 Step 3 — Return checkoutId to FE
+            # -----------------------------------------
             return {
                 "checkoutId": checkout_id,
                 "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
-                "ref": ref,
+                "ref": merchant_ref,
             }
 
     except Exception as e:
         print(e)
-        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
-
-
-@job_router.post("/my-applications/status/callback")
-async def update_job_application_status_callback(data: TransferRequestPaymentCallback, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
-    try:
-        db = get_db_session()
-        user = context_actor_user_data.get()
-
-        if user.role != "recruitment" and user.role != "sponsor":
-            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
-
-        status_response = telr.status(
-            order_reference = data.ref
+        return Response(
+            status_code=400,
+            content=json.dumps({"message": str(e)}),
+            media_type="application/json"
         )
-        
-        state = status_response.get("order").get("status").get("text")
-    
-        error = status_response.get("error", {})
 
-        card_type = status_response.get("order", {}).get("card", {}).get("type")
-
-        description = status_response.get("order", {}).get("description")
-
-        if error:
-            return Response(status_code=400, content=json.dumps({"message": error.get("note", "Failed to process payment")}), media_type="application/json")
-
-        if state.lower()  == "pending":
-            return Response(status_code=400, content=json.dumps({"message": "Payment is pending"}), media_type="application/json")
-
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.stripe_session_id == data.ref,
-            InvoiceModel.buyer_id == user.id,
-            InvoiceModel.status == "pending",
-            InvoiceModel.type == "job_application"
-        ).first()
-
-        if not invoice:
-            return Response(status_code=404, content=json.dumps({"message": "Invoice not found"}), media_type="application/json")
-        
-        job_applications = db.query(JobApplicationModel).filter(
-            JobApplicationModel.id.in_(map(int, invoice.object_id.split(','))),
-            JobApplicationModel.status == "pending"
-        ).all()
-
-        if not job_applications:
-            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
-
-        invoice.status = "paid"
-        invoice.card = card_type
-        invoice.description = description
-        db.add(invoice)
-
-        for job_application in job_applications:
-            job_application.status = "accepted"
-            db.add(job_application)
-
-        db.commit()
-
-        title = "Job Application Accepted"
-
-        job = db.query(JobModel).filter(JobModel.id == job_applications[0].job_id).first()
-
-        description = f"{job.job_poster.first_name} {job.job_poster.last_name} has accepted the job application for {job.name}"
-
-        for job_application in job_applications:
-            background_tasks.add_task(send_notification, db, job_application.user_id, title, description, "job_application")
-
-            email = job_application.user.email or job_application.user.cv.email
-
-            background_tasks.add_task(send_email, email=email, title=title, description=description)
-
-        return {"message": "Job applications status updated successfully"}
-
-    except Exception as e:
-        print(e)
-        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
-
-
-
-from fastapi import Depends
-from sqlalchemy.orm import Session
-import requests
-import logging
-logger = logging.getLogger("hyperpay")
-
-@job_router.api_route("/my-applications/status/callback/hyper", methods=["POST"])
-async def job_application_hyperpay_callback(
+@job_router.post("/my-applications/status/callback/hyper")
+async def hyperpay_job_application_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db_session)
+    db = get_db_session()
 ):
-    """
-    HyperPay server callback for job application payments
-    """
-    logger.info("📥 Job Application HyperPay callback received")
-
-    # Parse JSON (HyperPay sends POST JSON)
     try:
-        data = await request.json()
-        logger.info(f"📨 Callback data: {data}")
-    except Exception as e:
-        logger.error(f"❌ Failed to parse JSON: {e}")
-        data = {}
+        # Parse callback data (JSON or form)
+        try:
+            data = await request.json()
+        except:
+            data = dict(await request.form())
 
-    merchant_id = data.get("merchantTransactionId")
-    logger.info(f"🔎 merchantTransactionId: {merchant_id}")
+        logger.info(f"📨 Job Application Callback: {data}")
 
-    if not merchant_id:
-        logger.error("❌ No merchantTransactionId in callback")
-        return {"status": "failed", "message": "No merchantTransactionId"}
+        merchant_id = data.get("merchantTransactionId")
+        if not merchant_id:
+            return {"status": "failed", "message": "No merchantTransactionId"}
 
-    # Normalize id
-    clean_id = merchant_id.replace("JOBAPP-", "")
-    logger.info(f"🧹 Clean transaction id: {clean_id}")
+        # Validate payment success
+        result_code = data.get("result", {}).get("code", "")
+        is_success = result_code.startswith("000.")
 
-    # Fetch Invoice
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.status == "pending",
-        (InvoiceModel.reference == clean_id) |
-        (InvoiceModel.reference == f"JOBAPP-{clean_id}"),
-        InvoiceModel.type == "job_application"
-    ).first()
-
-    if not invoice:
-        logger.error(f"❌ Invoice not found for ref {clean_id}")
-        return {"status": "failed", "message": "Invoice not found"}
-
-    logger.info(f"🧾 Invoice {invoice.id} found, marking PAID")
-
-    # Fetch job applications
-    job_application_ids = list(map(int, invoice.object_id.split(",")))
-
-    job_applications = db.query(JobApplicationModel).filter(
-        JobApplicationModel.id.in_(job_application_ids),
-        JobApplicationModel.status == "pending"
-    ).all()
-
-    if not job_applications:
-        logger.error("❌ No pending job applications found to accept")
-        return {"status": "failed", "message": "Job applications not found"}
-
-    # Mark invoice as paid
-    invoice.status = "paid"
-    db.add(invoice)
-
-    # Accept all job applications
-    for job_application in job_applications:
-        job_application.status = "accepted"
-        db.add(job_application)
-
-    try:
-        db.commit()
-        logger.info("💾 Job application payment commit successful")
-    except Exception as e:
-        db.rollback()
-        logger.error(f"❌ DB commit failed: {e}")
-        return {"status": "failed", "message": "DB commit failed"}
-
-    # Send notifications
-    job = db.query(JobModel).filter(
-        JobModel.id == job_applications[0].job_id
-    ).first()
-
-    if job:
-        title = "Job Application Accepted"
-        description = (
-            f"{job.job_poster.first_name} {job.job_poster.last_name} "
-            f"has accepted the job application for {job.name}"
+        # Find invoice
+        invoice = (
+            db.query(InvoiceModel)
+            .filter(
+                InvoiceModel.status == "pending",
+                InvoiceModel.reference == str(merchant_id),
+                InvoiceModel.type == "job_application"
+            )
+            .first()
         )
 
-        for j in job_applications:
-            email = j.user.email or j.user.cv.email
-            background_tasks.add_task(send_notification, db, j.user_id, title, description, "job_application")
-            background_tasks.add_task(send_email, email=email, title=title, description=description)
+        if not invoice:
+            return {"status": "failed", "message": "Invoice not found"}
 
-    logger.info("✅ Job Application HyperPay callback fully processed")
+        # If HyperPay failed
+        if not is_success:
+            invoice.status = "failed"
+            db.add(invoice)
+            db.commit()
+            return {"status": "failed", "message": "Payment failed"}
 
-    return {"status": "successful"}
+        # Find job applications linked to invoice
+        application_ids = list(map(int, invoice.object_id.split(",")))
 
+        job_applications = (
+            db.query(JobApplicationModel)
+            .filter(
+                JobApplicationModel.id.in_(application_ids),
+                JobApplicationModel.status == "pending"
+            )
+            .all()
+        )
 
-@job_router.get("/my-applications/status/callback/hyper")
-async def job_application_hyperpay_status(ref: str, db: Session = Depends(get_db_session)):
-    """
-    GET polling endpoint for frontend to check payment status
-    """
-    clean = ref.replace("JOBAPP-", "")
+        if not job_applications:
+            return {"status": "failed", "message": "Job applications not found"}
 
-    invoice = db.query(InvoiceModel).filter(
-        (InvoiceModel.reference == clean) |
-        (InvoiceModel.reference == f"JOBAPP-{clean}"),
-        InvoiceModel.type == "job_application"
-    ).first()
+        # Mark invoice as paid
+        invoice.status = "paid"
+        db.add(invoice)
 
-    if not invoice:
-        return {"status": "failed", "message": "Invoice not found"}
+        # Accept all applications
+        for app in job_applications:
+            app.status = "accepted"
+            db.add(app)
 
-    if invoice.status == "paid":
+        db.commit()
+
+        # Send notifications + email
+        first_application = job_applications[0]
+        job = db.query(JobModel).filter(JobModel.id == first_application.job_id).first()
+
+        title = "Job Application Accepted"
+        description = f"{job.job_poster.first_name} {job.job_poster.last_name} has accepted your application for {job.name}"
+
+        for app in job_applications:
+            background_tasks.add_task(
+                send_notification,
+                db,
+                app.user_id,
+                title,
+                description,
+                "job_application"
+            )
+
+            email = app.user.email or app.user.cv.email
+            background_tasks.add_task(
+                send_email,
+                email=email,
+                title=title,
+                description=description
+            )
+
         return {"status": "successful"}
 
-    return {"status": "pending"}
+    except Exception as e:
+        logger.error(f"Callback Error: {e}")
+        db.rollback()
+        return {"status": "failed", "message": str(e)}
 
 
 
@@ -955,4 +798,4 @@ async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema
 
     except Exception as e:
         print(e)
-        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json") 
