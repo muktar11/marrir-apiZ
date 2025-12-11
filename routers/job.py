@@ -711,6 +711,27 @@ async def hyperpay_job_application_callback(
         if not invoice:
             return {"status": "failed", "message": "Invoice not found"}
 
+
+        import requests
+        url = f"https://test.oppwa.com/v1/checkouts/{ref}/payment"
+        headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+
+        hp_status = requests.get(url, headers=headers).json()
+        result_code = hp_status.get("result", {}).get("code")
+
+        # 3️⃣ Payment successful codes
+        if result_code and (
+            result_code.startswith("000.000")
+            or result_code.startswith("000.100")
+            or result_code.startswith("000.200")
+        ):
+            # Mark invoice as paid
+            invoice.status = "paid"
+            db.add(invoice)
+            db.commit()
+        else:
+            return {"status": "pending", "message": "Payment not completed yet"}
+
         # Check if invoice is already paid
         if invoice.status != "paid":
             return {"status": invoice.status, "message": "Payment not completed yet"}
