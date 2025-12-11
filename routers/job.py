@@ -608,9 +608,10 @@ async def update_job_application_status(
                 "currency": "AED",
                 "paymentType": "DB",
                 "merchantTransactionId": merchant_ref,
-                "notificationUrl": "https://marrir.com/api/v1/sponsor/jobs/{job_id}",
-                "shopperResultUrl": return_url,
+                "shopperResultUrl": "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper",
+                "notificationUrl": "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper",
             }
+
 
             import requests
             headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
@@ -669,7 +670,7 @@ async def update_job_application_status(
             media_type="application/json"
         )
 
-@job_router.post("/my-applications/status/callback/hyper")
+@job_router.get("/my-applications/status/callback/hyper")
 async def hyperpay_job_application_callback(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -798,4 +799,4 @@ async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema
 
     except Exception as e:
         print(e)
-        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json") 
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
