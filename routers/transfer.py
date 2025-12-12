@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from typing import Any, Optional
 import uuid
@@ -13,7 +13,7 @@ from models.agentrecruitmentmodel import AgentRecruitmentModel
 from models.batchtransfermodel import BatchTransferModel
 from models.companyinfomodel import CompanyInfoModel
 from models.cvmodel import CVModel
-from models.db import authentication_context, build_request_context, get_db_session
+from models.db import authentication_context, build_request_context, get_db_session, get_db_sessions
 from models.employeemodel import EmployeeModel
 from models.invoicemodel import InvoiceModel
 from models.notificationmodel import Notifications
@@ -856,6 +856,8 @@ async def update_transfer_request_status(data: TransferRequestStatusSchema, back
         db.rollback()
         return Response(status_code=400, content=json.dumps({"message": "Failed to update transfer request status"}), media_type="application/json")
 
+
+'''
 def create_invoice(db, ref: str, amount: float, user_id: int, transfer_request_id: int) -> InvoiceModel:
     invoice = InvoiceModel(
         stripe_session_id=ref,
@@ -871,6 +873,27 @@ def create_invoice(db, ref: str, amount: float, user_id: int, transfer_request_i
 
 def update_invoice(invoice: InvoiceModel, ref: str) -> None:
     invoice.stripe_session_id = ref
+
+    '''
+
+def create_invoice(
+    db, reference: str, amount: float, user_id: uuid.UUID, job_id: str
+) -> InvoiceModel:
+    invoice = InvoiceModel(
+        reference=reference,       # <-- SAVE checkout_id HERE
+        status="pending",
+        amount=amount,
+        created_at=datetime.now(timezone.utc),
+        type="transfer",
+        buyer_id=user_id,
+        object_id=job_id,
+    )
+    db.add(invoice)
+    return invoice
+
+def update_invoice(invoice: InvoiceModel, reference: str) -> None:
+    invoice.reference = reference   # <-- UPDATE checkout_id here
+
 
 '''
 @transfer_router.post("/pay")
@@ -1028,280 +1051,260 @@ async def pay_transfer(
     _=Depends(HTTPBearer(scheme_name="bearer")),
     __=Depends(build_request_context)
 ):
-    db = get_db_session()
-    user = context_actor_user_data.get()
-
-    # 1️⃣ Fetch package for transfer payments
-    package = (
-        db.query(PromotionPackagesModel)
-        .filter(
-            PromotionPackagesModel.role == user.role,
-            PromotionPackagesModel.category == "transfer"
-        )
-        .first()
-    )
-    if not package:
-        return Response(
-            status_code=404,
-            content=json.dumps({"message": "Package not found"})
-        )
-
-    # 2️⃣ Fetch accepted transfer requests
-    transfer_requests = (
-        db.query(TransferRequestModel)
-        .filter(
-            TransferRequestModel.id.in_(data.transfer_request_ids),
-            TransferRequestModel.manager_id == user.id,
-            TransferRequestModel.status == "accepted",
-        )
-        .all()
-    )
-    if not transfer_requests:
-        return Response(
-            status_code=404,
-            content=json.dumps({"message": "Transfer request not found"})
-        )
-
-    # 3️⃣ Total amount
-    amount = package.price * len(transfer_requests)
-
-    # 4️⃣ Create reference (invoice reference)
-    ref = f"TRF{uuid.uuid4().hex[:10]}"
-
-    # 5️⃣ Create HyperPay checkout session
-    import requests
-    payload = {
-        "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{amount:.2f}",
-        "currency": "AED",
-        "paymentType": "DB",
-        "merchantTransactionId": ref,
-        "notificationUrl": settings.HYPERPAY_TRANSFER_CALLBACK_URL,
-        "shopperResultUrl": settings.HYPERPAY_TRANSFER_RESULT_URL,
-    }
-
-    headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
-
     try:
-        res = requests.post(
-            "https://test.oppwa.com/v1/checkouts",
-            data=payload,
-            headers=headers
-        ).json()
-    except Exception as e:
-        return Response(
-            status_code=500,
-            content=json.dumps({"message": "Payment initialization failed", "error": str(e)})
-        )
+        db = get_db_session()
+        user = context_actor_user_data.get()
 
-    checkout_id = res.get("id")
-    if not checkout_id:
-        return Response(
-            status_code=400,
-            content=json.dumps({"message": "HyperPay checkout failed"})
-        )
-
-    # 6️⃣ Build object ID (multiple transfers)
-    ids = ",".join([str(tr.id) for tr in transfer_requests])
-
-    # 7️⃣ Create/update invoice
-    invoice = (
-        db.query(InvoiceModel)
-        .filter(
-            InvoiceModel.object_id == ids,
-            InvoiceModel.buyer_id == user.id,
-            InvoiceModel.status == "pending",
-            InvoiceModel.type == "transfer"
-        )
-        .first()
-    )
-
-    try:
-        if invoice:
-            update_invoice(invoice, ref)
-        else:
-            invoice = create_invoice(
-                db=db,
-                ref=ref,
-                amount=amount,
-                buyer_id=user.id,
-                object_id=ids,
-                type="transfer"
+        # 1️⃣ Fetch package for transfer payments
+        package = (
+            db.query(PromotionPackagesModel)
+            .filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "transfer"
             )
-            db.add(invoice)
+            .first()
+        )
+        if not package:
+            return Response(
+                status_code=404,
+                content=json.dumps({"message": "Package not found"})
+            )
+
+        # 2️⃣ Fetch accepted transfer requests
+        transfer_requests = (
+            db.query(TransferRequestModel)
+            .filter(
+                TransferRequestModel.id.in_(data.transfer_request_ids),
+                TransferRequestModel.manager_id == user.id,
+                TransferRequestModel.status == "accepted",
+            )
+            .all()
+        )
+        if not transfer_requests:
+            return Response(
+                status_code=404,
+                content=json.dumps({"message": "Transfer request not found"})
+            )
+
+        # 3️⃣ Total amount
+        amount = package.price * len(transfer_requests)
+
+        # 4️⃣ Create reference (invoice reference)
+        ref = f"TRF{uuid.uuid4().hex[:10]}"
+
+        # 5️⃣ Create HyperPay checkout session
+        import requests
+        payload = {
+            "entityId": settings.HYPERPAY_ENTITY_ID,
+            "amount": f"{amount:.2f}",
+            "currency": "AED",
+            "paymentType": "DB",
+            "merchantTransactionId": ref,
+            #"notificationUrl": settings.HYPERPAY_TRANSFER_CALLBACK_URL,
+            #"shopperResultUrl": settings.HYPERPAY_TRANSFER_RESULT_URL,
+            "shopperResultUrl": f"https://marrir.com/agent/transfer-history",
+            "notificationUrl": "https://api.marrir.com/api/v1/transfer/pay/callback/hyper",
+        }
+
+        headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+
+        try:
+            res = requests.post(
+                "https://test.oppwa.com/v1/checkouts",
+                data=payload,
+                headers=headers
+            ).json()
+        except Exception as e:
+            return Response(
+                status_code=500,
+                content=json.dumps({"message": "Payment initialization failed", "error": str(e)})
+            )
+
+        checkout_id = res.get("id")
+        if not checkout_id:
+            return Response(
+                status_code=400,
+                content=json.dumps({"message": "HyperPay checkout failed"})
+            )
+
+        # 6️⃣ Build object ID (multiple transfers)
+        ids = ",".join([str(tr.id) for tr in transfer_requests])
+
+        # 7️⃣ Create/update invoice
+        invoice = (
+            db.query(InvoiceModel)
+            .filter(
+               
+                InvoiceModel.buyer_id == user.id,
+                InvoiceModel.status == "pending",
+                InvoiceModel.type == "transfer"
+            )
+            .first()
+        )
+
+        
+        if invoice:
+                update_invoice(invoice, checkout_id)
+        else:
+                invoice = create_invoice(
+                        db, checkout_id, amount, user.id,
+                    )
+                db.add(invoice)
 
         db.commit()
+
+
+            # 8️⃣ Response to frontend
+        return {
+                "checkoutId": checkout_id,
+                "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
+                "ref": ref,
+                "amount": amount,
+            }
     except Exception as e:
-        logger.error(f"Failed to process invoice: {e}")
-        db.rollback()
-        return Response(
-            status_code=400,
-            content=json.dumps({"message": "Failed to process invoice"})
-        )
+                    print(e)
+                    return Response(
+                        status_code=400,
+                        content=json.dumps({"message": str(e)}),
+                        media_type="application/json"
+                    )
 
-    # 8️⃣ Response to frontend
-    return {
-        "checkoutId": checkout_id,
-        "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
-        "ref": ref,
-        "amount": amount,
-    }
+from fastapi import Query, Response
+from sqlalchemy.orm import Session
+from fastapi import BackgroundTasks, Depends
+import json
 
+@transfer_router.get("/pay/callback")
+async def pay_transfer_callback(
+    background_tasks: BackgroundTasks,
+    ref: str = Query(...),
+    db: Session = Depends(get_db_sessions)
+):
+    try:
+        # 1️⃣ Find Invoice
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == ref,
+            InvoiceModel.type == "transfer"
+        ).first()
 
+        if not invoice:
+            return Response(
+                status_code=404,
+                content=json.dumps({"message": "Invoice not found"}),
+                media_type="application/json"
+            )
 
-@transfer_router.post("/pay/callback")
-async def pay_transfer_callback(data: TransferRequestPaymentCallback, background_tasks: BackgroundTasks, _=Depends(HTTPBearer (scheme_name="bearer")),__=Depends(build_request_context)):
-    db = get_db_session()
+        # Mark invoice as paid
+        invoice.status = "paid"
+        db.add(invoice)
+        db.commit()
 
-    user = context_actor_user_data.get()
-    status_response = telr.status(
-            order_reference = data.ref
-    )
-        
-    state = status_response.get("order", {}).get("status", {}).get("text", "")
+        # 2️⃣ Fetch user from context
+        user = context_actor_user_data.get()
 
-    error = status_response.get("error", {})
-    
-    card_type = status_response.get("order", {}).get("card", {}).get("type")
-
-    description = status_response.get("order", {}).get("description")
-    
-    if error:
-        return Response(status_code=400, content=json.dumps({"message": error.get("note", "Failed to process payment")}), media_type="application/json")
-
-    if state.lower()  == "pending":
-        return Response(status_code=400, content=json.dumps({"message": "Payment is pending"}), media_type="application/json")
-
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.stripe_session_id == data.ref,
-        InvoiceModel.buyer_id == user.id,
-        InvoiceModel.status == "pending",
-        InvoiceModel.type == "transfer"
-    ).first()
-
-    if not invoice:
-        return Response(status_code=404, content=json.dumps({"message": "Invoice not found"}), media_type="application/json")
-
-    transfer_requests = db.query(TransferRequestModel).filter(
+        # 3️⃣ Load transfer requests
+        transfer_requests = db.query(TransferRequestModel).filter(
             TransferRequestModel.id.in_(map(int, invoice.object_id.split(','))),
             TransferRequestModel.manager_id == user.id,
             TransferRequestModel.status == "accepted"
-    ).all()
+        ).all()
 
-    if not transfer_requests:
-        return Response(status_code=404, content=json.dumps({"message": "Transfer requests not found"}), media_type="application/json")
+        if not transfer_requests:
+            return Response(
+                status_code=404,
+                content=json.dumps({"message": "Transfer requests not found"}),
+                media_type="application/json"
+            )
 
-    try:
-        employee = None  # Define employee before the loop
+        # Prepare additional fields used later
+        card_type = invoice.card if hasattr(invoice, "card") else None
+        description = ""
+
+        employee = None
+
+        # 4️⃣ Process each transfer request
         for transfer_request in transfer_requests:
-            employee = db.query(EmployeeModel).filter(EmployeeModel.user_id == transfer_request.user_id).first()
+
+            employee = db.query(EmployeeModel).filter(
+                EmployeeModel.user_id == transfer_request.user_id
+            ).first()
+
             if employee:
                 employee.manager_id = transfer_request.requester_id
                 db.add(employee)
 
             transfer_request.status = "done"
-
             db.add(transfer_request)
 
+        # Update invoice again if needed
         invoice.status = "paid"
         invoice.description = description
         invoice.card = card_type
         db.add(invoice)
-        manager_user = db.query(UserModel).filter(UserModel.id == user.id).first()
-    
-        name = ""
 
-        if employee and not employee.employee.first_name and not employee.employee.last_name:
-            name = employee.employee.cv.english_full_name
-        elif employee:
-            name = f"{employee.employee.first_name} {employee.employee.last_name}"
+        manager_user = db.query(UserModel).filter(UserModel.id == user.id).first()
+
+        # Build employee name
+        name = ""
+        if employee:
+            if not employee.employee.first_name and not employee.employee.last_name:
+                name = employee.employee.cv.english_full_name
+            else:
+                name = f"{employee.employee.first_name} {employee.employee.last_name}"
 
         db.commit()
 
+        # Emails
         manager_email = manager_user.email or manager_user.company.alternative_email
-
-        requester_user = db.query(UserModel).filter(UserModel.id == transfer_requests[0].requester_id).first()
+        requester_user = db.query(UserModel).filter(
+            UserModel.id == transfer_requests[0].requester_id
+        ).first()
 
         requester_email = requester_user.email or requester_user.company.alternative_email
 
+        # 5️⃣ NOTIFICATIONS
         title = "Transfer"
-
         description = (
             f"{manager_user.company.company_name} has transferred {name} to you. "
-            f"The contact information for {manager_user.company.company_name} are: {manager_email}, {manager_user.phone_number}, {manager_user.company.location}."
+            f"The contact information for {manager_user.company.company_name} are: "
+            f"{manager_email}, {manager_user.phone_number}, {manager_user.company.location}."
         )
 
-        background_tasks.add_task(send_notification, db, requester_user.id, title, description, "transfer")
+        background_tasks.add_task(
+            send_notification, db, requester_user.id, title, description, "transfer"
+        )
+        background_tasks.add_task(
+            send_email, requester_email, title, description
+        )
 
-        background_tasks.add_task(send_email, email=requester_email, title=title, description=description)
-
+        # Manager notification
         title = "Transfer Finished"
+        description = (
+            f"The contact information for {requester_user.company.company_name} are: "
+            f"{requester_email}, {requester_user.phone_number}, {requester_user.company.location}."
+        )
 
-        description = f"The contact information for {requester_user.company.company_name} are: {requester_email}, {requester_user.phone_number}, {requester_user.company.location}."
-
-        background_tasks.add_task(send_notification, db, manager_user.id, title, description, "transfer")
-
-        background_tasks.add_task(send_email, email=manager_email, title=title, description=description)
+        background_tasks.add_task(
+            send_notification, db, manager_user.id, title, description, "transfer"
+        )
+        background_tasks.add_task(
+            send_email, manager_email, title, description
+        )
 
         return {"status": "success", "message": "Payment successful"}
+
     except Exception as e:
         print(e)
         db.rollback()
-        return Response(status_code=400, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
+        return Response(
+            status_code=400,
+            content=json.dumps({"message": "Failed to process payment"}),
+            media_type="application/json"
+        )
 
 
 
 
-@transfer_router.api_route("/pay/callback/hyper", methods=["GET", "POST"])
-async def buy_promotion_package_callback(
-    request: Request,
-    db: Session = Depends(get_db_session),
-):
-    # -------------------------
-    # 1. Handle POST request (HyperPay callback)
-    # -------------------------
-    if request.method == "POST":
-        try:
-            body = await request.json()
-        except:
-            body = {}
-
-        # HyperPay sends details in POST body
-        result = body.get("result", {})
-        ref = body.get("merchantTransactionId") or body.get("id")  # fallback
-        status = result.get("code") or None
-
-        return {
-            "method": "POST",
-            "ref": ref,
-            "status": status,
-            "body": body,
-        }
-
-    # -------------------------
-    # 2. Handle GET request (Frontend polling with ?ref=66)
-    # -------------------------
-    if request.method == "GET":
-        query = dict(request.query_params)
-        ref = query.get("ref")
-
-        # Validate GET request
-        if not ref:
-            return {
-                "method": "GET",
-                "error": "Missing ref parameter"
-            }
-
-        # Here you can check DB for payment status if needed
-        # Example:
-        # payment = db.query(PaymentModel).filter_by(ref=ref).first()
-
-        return {
-            "method": "GET",
-            "ref": ref,
-            "message": "Callback received via GET",
-        }
-    
 
 '''
 
@@ -1556,4 +1559,4 @@ async def transfer_pay_info(
  
     except Exception as e:
         print(e)
-        return Response(status_code=400, content=json.dumps({"message": "Failed to get transfer pay info"}), media_type="application/json")
+        return Response(status_code=400, content=json.dumps({"message": "Failed to get transfer pay info"}), media_type="application/json") 
