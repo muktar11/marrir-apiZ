@@ -877,7 +877,7 @@ def update_invoice(invoice: InvoiceModel, ref: str) -> None:
     '''
 
 def create_invoice(
-    db, reference: str, amount: float, user_id: uuid.UUID, job_id: str
+    db, reference: str, amount: float, user_id: uuid.UUID, 
 ) -> InvoiceModel:
     invoice = InvoiceModel(
         reference=reference,       # <-- SAVE checkout_id HERE
@@ -886,7 +886,7 @@ def create_invoice(
         created_at=datetime.now(timezone.utc),
         type="transfer",
         buyer_id=user_id,
-        object_id=job_id,
+        
     )
     db.add(invoice)
     return invoice
@@ -1559,4 +1559,4 @@ async def transfer_pay_info(
  
     except Exception as e:
         print(e)
-        return Response(status_code=400, content=json.dumps({"message": "Failed to get transfer pay info"}), media_type="application/json") 
+        return Response(status_code=400, content=json.dumps({"message": "Failed to get transfer pay info"}), media_type="application/json")
