@@ -1100,8 +1100,7 @@ async def pay_transfer(
             "currency": "AED",
             "paymentType": "DB",
             "merchantTransactionId": ref,
-            #"notificationUrl": settings.HYPERPAY_TRANSFER_CALLBACK_URL,
-            #"shopperResultUrl": settings.HYPERPAY_TRANSFER_RESULT_URL,
+
             "shopperResultUrl": f"https://marrir.com/agent/transfer-history",
             "notificationUrl": "https://api.marrir.com/api/v1/transfer/pay/callback/hyper",
         }
@@ -1131,10 +1130,14 @@ async def pay_transfer(
         ids = ",".join([str(tr.id) for tr in transfer_requests])
 
         # 7️⃣ Create/update invoice
+
+
+
+
+        # 7️⃣ Create/update invoice
         invoice = (
             db.query(InvoiceModel)
             .filter(
-               
                 InvoiceModel.buyer_id == user.id,
                 InvoiceModel.status == "pending",
                 InvoiceModel.type == "transfer"
@@ -1142,16 +1145,17 @@ async def pay_transfer(
             .first()
         )
 
-        
         if invoice:
-                update_invoice(invoice, checkout_id)
+            # Save the merchantTransactionId, NOT checkout_id
+            update_invoice(invoice, ref)
         else:
-                invoice = create_invoice(
-                        db, checkout_id, amount, user.id,
-                    )
-                db.add(invoice)
+            invoice = create_invoice(
+                db, ref, amount, user.id,   # Save merchantTransactionId here
+            )
+            db.add(invoice)
 
         db.commit()
+
 
 
             # 8️⃣ Response to frontend
