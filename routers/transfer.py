@@ -1177,17 +1177,28 @@ from fastapi import Query, Response
 from sqlalchemy.orm import Session
 from fastapi import BackgroundTasks, Depends
 import json
-
 @transfer_router.get("/pay/callback")
 async def pay_transfer_callback(
     background_tasks: BackgroundTasks,
-    ref: str = Query(...),
+    ref: str = Query(...),     # This is checkoutId
     db: Session = Depends(get_db_sessions)
 ):
     try:
-        # 1️⃣ Find Invoice
+        checkout_id = ref
+
+        # 1️⃣ VERIFY PAYMENT WITH HYPERPAY
+        url = f"https://test.oppwa.com/v1/checkouts/{checkout_id}/payment"
+        headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+
+        hp_res = requests.get(url, headers=headers).json()
+        result_code = hp_res.get("result", {}).get("code", "")
+
+        if not result_code.startswith("000."):
+            return {"status": "failed", "message": "Payment not successful"}
+
+        # 2️⃣ Find invoice by checkoutId
         invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == ref,
+            InvoiceModel.reference == checkout_id,
             InvoiceModel.type == "transfer"
         ).first()
 
@@ -1198,80 +1209,68 @@ async def pay_transfer_callback(
                 media_type="application/json"
             )
 
-        # Mark invoice as paid
+        # 3️⃣ Mark invoice as paid
         invoice.status = "paid"
         db.add(invoice)
         db.commit()
 
-        # 2️⃣ Fetch user from context
-        user = context_actor_user_data.get()
+        # 4️⃣ Load transfer requests using invoice.object_id
+        transfer_ids = list(map(int, invoice.object_id.split(",")))
 
-        # 3️⃣ Load transfer requests
         transfer_requests = db.query(TransferRequestModel).filter(
-            TransferRequestModel.id.in_(map(int, invoice.object_id.split(','))),
-            TransferRequestModel.manager_id == user.id,
+            TransferRequestModel.id.in_(transfer_ids),
             TransferRequestModel.status == "accepted"
         ).all()
 
         if not transfer_requests:
-            return Response(
-                status_code=404,
-                content=json.dumps({"message": "Transfer requests not found"}),
-                media_type="application/json"
-            )
+            return {"status": "failed", "message": "Transfer requests not found"}
 
-        # Prepare additional fields used later
-        card_type = invoice.card if hasattr(invoice, "card") else None
-        description = ""
+        # Find manager and requester
+        first_tr = transfer_requests[0]
 
+        manager_user = db.query(UserModel).filter(
+            UserModel.id == first_tr.manager_id
+        ).first()
+
+        requester_user = db.query(UserModel).filter(
+            UserModel.id == first_tr.requester_id
+        ).first()
+
+        # 5️⃣ Process employee transfer
         employee = None
-
-        # 4️⃣ Process each transfer request
-        for transfer_request in transfer_requests:
-
+        for tr in transfer_requests:
             employee = db.query(EmployeeModel).filter(
-                EmployeeModel.user_id == transfer_request.user_id
+                EmployeeModel.user_id == tr.user_id
             ).first()
 
             if employee:
-                employee.manager_id = transfer_request.requester_id
+                employee.manager_id = tr.requester_id
                 db.add(employee)
 
-            transfer_request.status = "done"
-            db.add(transfer_request)
-
-        # Update invoice again if needed
-        invoice.status = "paid"
-        invoice.description = description
-        invoice.card = card_type
-        db.add(invoice)
-
-        manager_user = db.query(UserModel).filter(UserModel.id == user.id).first()
-
-        # Build employee name
-        name = ""
-        if employee:
-            if not employee.employee.first_name and not employee.employee.last_name:
-                name = employee.employee.cv.english_full_name
-            else:
-                name = f"{employee.employee.first_name} {employee.employee.last_name}"
+            tr.status = "done"
+            db.add(tr)
 
         db.commit()
 
+        # 6️⃣ Prepare notifications
+        employee_name = ""
+        if employee:
+            emp = employee.employee
+            employee_name = (
+                emp.cv.english_full_name
+                if not emp.first_name and not emp.last_name
+                else f"{emp.first_name} {emp.last_name}"
+            )
+
         # Emails
         manager_email = manager_user.email or manager_user.company.alternative_email
-        requester_user = db.query(UserModel).filter(
-            UserModel.id == transfer_requests[0].requester_id
-        ).first()
-
         requester_email = requester_user.email or requester_user.company.alternative_email
 
-        # 5️⃣ NOTIFICATIONS
+        # 7️⃣ Send notifications
         title = "Transfer"
         description = (
-            f"{manager_user.company.company_name} has transferred {name} to you. "
-            f"The contact information for {manager_user.company.company_name} are: "
-            f"{manager_email}, {manager_user.phone_number}, {manager_user.company.location}."
+            f"{manager_user.company.company_name} has transferred {employee_name} to you. "
+            f"Contact Info: {manager_email}, {manager_user.phone_number}, {manager_user.company.location}."
         )
 
         background_tasks.add_task(
@@ -1282,30 +1281,29 @@ async def pay_transfer_callback(
         )
 
         # Manager notification
-        title = "Transfer Finished"
-        description = (
-            f"The contact information for {requester_user.company.company_name} are: "
+        title2 = "Transfer Finished"
+        description2 = (
+            f"Contact info for {requester_user.company.company_name}: "
             f"{requester_email}, {requester_user.phone_number}, {requester_user.company.location}."
         )
 
         background_tasks.add_task(
-            send_notification, db, manager_user.id, title, description, "transfer"
+            send_notification, db, manager_user.id, title2, description2, "transfer"
         )
         background_tasks.add_task(
-            send_email, manager_email, title, description
+            send_email, manager_email, title2, description2
         )
 
         return {"status": "success", "message": "Payment successful"}
 
     except Exception as e:
-        print(e)
+        print("Callback error:", e)
         db.rollback()
         return Response(
             status_code=400,
             content=json.dumps({"message": "Failed to process payment"}),
             media_type="application/json"
         )
-
 
 
 
