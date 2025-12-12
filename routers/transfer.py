@@ -1141,8 +1141,10 @@ async def pay_transfer(
         invoice = InvoiceModel(
                 reference=checkout_id,
                 buyer_id=user.id,
+                amount=amount,
                 status="pending",
                 type="transfer",
+                object_id=",".join(str(tr.id) for tr in transfer_requests)
         
         )
         db.add(invoice)
@@ -1161,10 +1163,11 @@ async def pay_transfer(
     except Exception as e:
                     print(e)
                     return Response(
-                        status_code=400,
-                        content=json.dumps({"message": str(e)}),
-                        media_type="application/json"
-                    )
+        status_code=400,
+        content=json.dumps({"message": str(e)}),  # show full error
+        media_type="application/json"
+    )            
+
 
 from fastapi import Query, Response
 from sqlalchemy.orm import Session
