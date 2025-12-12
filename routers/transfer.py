@@ -1043,7 +1043,18 @@ from sqlalchemy.orm import Session
 import requests
 import logging
 logger = logging.getLogger("hyperpay")
+from pydantic import BaseModel
 
+def get_hyperpay_auth_header() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
+
+
+class PaymentRequest(BaseModel):
+    amount: float
+    currency: str = "AED"
 
 @transfer_router.post("/pay/hyper")
 async def pay_transfer(
@@ -1089,8 +1100,7 @@ async def pay_transfer(
         # 3️⃣ Total amount
         amount = package.price * len(transfer_requests)
 
-        # 4️⃣ Create reference (invoice reference)
-        ref = f"TRF{uuid.uuid4().hex[:10]}"
+
 
         # 5️⃣ Create HyperPay checkout session
         import requests
@@ -1099,13 +1109,14 @@ async def pay_transfer(
             "amount": f"{amount:.2f}",
             "currency": "AED",
             "paymentType": "DB",
-            "merchantTransactionId": ref,
-
             "shopperResultUrl": f"https://marrir.com/agent/transfer-history",
-            "notificationUrl": "https://api.marrir.com/api/v1/transfer/pay/callback/hyper",
+            "notificationUrl": "https://api.marrir.com/api/v1/transfer/pay/callback",
         }
 
-        headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+        headers = {"Authorization": 
+                   f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+                    "Content-Type": "application/x-www-form-urlencoded",
+                }
 
         try:
             res = requests.post(
@@ -1126,35 +1137,17 @@ async def pay_transfer(
                 content=json.dumps({"message": "HyperPay checkout failed"})
             )
 
-        # 6️⃣ Build object ID (multiple transfers)
-        ids = ",".join([str(tr.id) for tr in transfer_requests])
-
         # 7️⃣ Create/update invoice
-
-
-
-
-        # 7️⃣ Create/update invoice
-        invoice = (
-            db.query(InvoiceModel)
-            .filter(
-                InvoiceModel.buyer_id == user.id,
-                InvoiceModel.status == "pending",
-                InvoiceModel.type == "transfer"
-            )
-            .first()
+        invoice = InvoiceModel(
+                reference=checkout_id,
+                buyer_id=user.id,
+                status="pending",
+                type="transfer",
+        
         )
-
-        if invoice:
-            # Save the merchantTransactionId, NOT checkout_id
-            update_invoice(invoice, checkout_id)
-        else:
-            invoice = create_invoice(
-                db, checkout_id, amount, user.id,   # Save merchantTransactionId here
-            )
-            db.add(invoice)
-
+        db.add(invoice)
         db.commit()
+        db.refresh(invoice)
 
 
 
@@ -1162,7 +1155,7 @@ async def pay_transfer(
         return {
                 "checkoutId": checkout_id,
                 "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
-                "ref": ref,
+            
                 "amount": amount,
             }
     except Exception as e:
@@ -1180,25 +1173,14 @@ import json
 @transfer_router.get("/pay/callback")
 async def pay_transfer_callback(
     background_tasks: BackgroundTasks,
-    ref: str = Query(...),     # This is checkoutId
+    ref: str,   # This is checkoutId
     db: Session = Depends(get_db_sessions)
 ):
     try:
-        checkout_id = ref
-
-        # 1️⃣ VERIFY PAYMENT WITH HYPERPAY
-        url = f"https://test.oppwa.com/v1/checkouts/{checkout_id}/payment"
-        headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
-
-        hp_res = requests.get(url, headers=headers).json()
-        result_code = hp_res.get("result", {}).get("code", "")
-
-        if not result_code.startswith("000."):
-            return {"status": "failed", "message": "Payment not successful"}
-
+    
         # 2️⃣ Find invoice by checkoutId
         invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == checkout_id,
+            InvoiceModel.reference == ref,
             InvoiceModel.type == "transfer"
         ).first()
 
