@@ -1147,10 +1147,10 @@ async def pay_transfer(
 
         if invoice:
             # Save the merchantTransactionId, NOT checkout_id
-            update_invoice(invoice, ref)
+            update_invoice(invoice, checkout_id)
         else:
             invoice = create_invoice(
-                db, ref, amount, user.id,   # Save merchantTransactionId here
+                db, checkout_id, amount, user.id,   # Save merchantTransactionId here
             )
             db.add(invoice)
 
