@@ -117,8 +117,31 @@ class TransferRequestStatusSchema(BaseModel):
 
     reason: Optional[str] = None
 
+
+from pydantic import BaseModel, EmailStr
+
+class TransferInfoSchema(BaseModel):
+    transfer_request_ids: List[int]
+
+
+class BillingInfoSchema(BaseModel):
+    email: EmailStr
+    given_name: str
+    surname: str
+    street1: str
+    city: str
+    state: str
+    country: str  # ISO Alpha-2 (AE, SA, US)
+    postcode: str
+
+
 class TransferRequestPaymentSchema(BaseModel):
-    transfer_request_ids: list[int] = []
+    transfer_request_ids: list[int]
+    billing: BillingInfoSchema
+
+class TransferPaySchema(BaseModel):
+    transfer_request_ids: List[int]
+    billing: BillingInfoSchema
 
 class TransferRequestPaymentCallback(BaseModel):
     ref: str
