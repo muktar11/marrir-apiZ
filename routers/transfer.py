@@ -31,8 +31,11 @@ from schemas.transferschema import (
     AllTransfersReadSchema,
     BatchTransferFilterSchema,
     BatchTransferReadSchema,
+    BillingInfoSchema,
     TransferBaseSchema,
     TransferCreateSchema,
+    TransferInfoSchema,
+    TransferPaySchema,
     TransferReadSchema,
     TransferRequest,
     TransferRequestBaseSchema,
@@ -1037,7 +1040,7 @@ async def pay_transfer(
             "url": order_response.get("order", {}).get("url"),
         },
     }
-
+'''
 from fastapi import Depends
 from sqlalchemy.orm import Session
 import requests
@@ -1290,8 +1293,207 @@ async def pay_transfer_callback(
             media_type="application/json"
         )
 
+'''
 
 
+
+from pydantic import BaseModel, EmailStr
+class TransferRequestPaymentSchema(BaseModel):
+    transfer_request_ids: list[int]
+    billing: BillingInfoSchema
+
+
+from fastapi import Depends
+from sqlalchemy.orm import Session
+import requests
+import logging
+logger = logging.getLogger("hyperpay")
+from pydantic import BaseModel
+
+import json
+import secrets
+import logging
+import requests
+
+
+
+def get_hyperpay_auth_header() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
+
+
+class PaymentRequest(BaseModel):
+    amount: float
+    currency: str = "AED"
+
+logger = logging.getLogger("hyperpay")
+
+
+
+@transfer_router.post("/pay/hyper")
+async def pay_transfer(
+    data: TransferPaySchema,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        package = (
+            db.query(PromotionPackagesModel)
+            .filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "transfer",
+            )
+            .first()
+        )
+        if not package:
+            return Response(status_code=404, content="Package not found")
+
+        transfers = (
+            db.query(TransferRequestModel)
+            .filter(
+                TransferRequestModel.id.in_(data.transfer_request_ids),
+                TransferRequestModel.manager_id == user.id,
+                TransferRequestModel.status == "accepted",
+            )
+            .all()
+        )
+
+        if not transfers:
+            return Response(status_code=404, content="Transfer requests not found")
+
+        amount = package.price * len(transfers)
+        merchant_tx_id = secrets.token_hex(12)
+        b = data.billing
+
+        payload = {
+            "entityId": settings.HYPERPAY_ENTITY_ID,
+            "amount": f"{amount:.2f}",
+            "currency": "AED",
+            "paymentType": "DB",
+
+            "merchantTransactionId": merchant_tx_id,
+            "customParameters[3DS2_enrolled]": "true",
+
+            "customer.email": b.email,
+            "customer.givenName": b.given_name,
+            "customer.surname": b.surname,
+
+            "billing.street1": b.street1,
+            "billing.city": b.city,
+            "billing.state": b.state,
+            "billing.country": b.country.upper(),
+            "billing.postcode": b.postcode,
+
+            "shopperResultUrl": "https://marrir.com/transfer-history",
+            "notificationUrl": "https://api.marrir.com/api/v1/transfer/pay/callback",
+        }
+
+        res = requests.post(
+            "https://test.oppwa.com/v1/checkouts",
+            data=payload,
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        checkout_id = res.get("id")
+        if not checkout_id:
+            return Response(status_code=400, content=json.dumps(res))
+
+        invoice = InvoiceModel(
+            reference=merchant_tx_id,
+            buyer_id=user.id,
+            amount=amount,
+            status="pending",
+            type="transfer",
+            object_id=",".join(str(t.id) for t in transfers),
+        )
+        db.add(invoice)
+        db.commit()
+
+        return {
+            "checkoutId": checkout_id,
+            "merchantTransactionId": merchant_tx_id,
+            "amount": amount,
+        }
+
+    except Exception as e:
+        return Response(status_code=500, content=str(e))
+
+
+
+def verify_hyperpay_payment(payment_id: str) -> bool:
+    url = f"https://test.oppwa.com/v1/payments/{payment_id}"
+    params = {"entityId": settings.HYPERPAY_ENTITY_ID}
+    headers = get_hyperpay_auth_header()
+
+    res = requests.get(url, params=params, headers=headers).json()
+    logger.info(f"HyperPay payment verify response: {res}")
+
+    return res.get("result", {}).get("code", "").startswith("000.100")
+
+@transfer_router.post("/pay/callback")
+async def pay_transfer_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db_sessions),
+):
+    try:
+        data = await request.form()
+        logger.info(f"HyperPay callback data: {dict(data)}")
+        merchant_tx_id = data.get("merchantTransactionId")
+        payment_id = data.get("id")
+        if not merchant_tx_id or not payment_id:
+            return Response(status_code=400, content="Invalid callback")
+        # 1️⃣ Verify payment with HyperPay
+        if not verify_hyperpay_payment(payment_id):
+            logger.error("HyperPay verification failed")
+            return Response(status_code=400, content="Payment not verified")
+        # 2️⃣ Find invoice
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.type == "transfer"
+        ).first()
+
+        if not invoice:
+            return Response(status_code=404, content="Invoice not found")
+
+        if invoice.status == "paid":
+            return {"status": "already_paid"}
+
+        # 3️⃣ Mark invoice paid
+        invoice.status = "paid"
+        db.commit()
+
+        # 4️⃣ Process transfers
+        transfer_ids = list(map(int, invoice.object_id.split(",")))
+        transfer_requests = db.query(TransferRequestModel).filter(
+            TransferRequestModel.id.in_(transfer_ids)
+        ).all()
+
+        for tr in transfer_requests:
+            employee = db.query(EmployeeModel).filter(
+                EmployeeModel.user_id == tr.user_id
+            ).first()
+            if employee:
+                employee.manager_id = tr.requester_id
+                db.add(employee)
+
+            tr.status = "done"
+            db.add(tr)
+
+        db.commit()
+
+        return {"status": "success"}
+
+    except Exception as e:
+        logger.exception("Callback error")
+        db.rollback()
+        return Response(status_code=500, content="Callback failed")
 
 '''
 
@@ -1516,6 +1718,53 @@ async def get_process_transfer(_=Depends(HTTPBearer(scheme_name="bearer")), __
 
 @transfer_router.post("/info")
 async def transfer_pay_info(
+    data: TransferInfoSchema,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        package = (
+            db.query(PromotionPackagesModel)
+            .filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "transfer",
+            )
+            .first()
+        )
+        if not package:
+            return Response(status_code=404, content="Package not found")
+
+        transfers = (
+            db.query(TransferRequestModel)
+            .filter(
+                TransferRequestModel.id.in_(data.transfer_request_ids),
+                TransferRequestModel.manager_id == user.id,
+                TransferRequestModel.status == "accepted",
+            )
+            .all()
+        )
+
+        if not transfers:
+            return Response(status_code=404, content="Transfer request not found")
+
+        total_amount = package.price * len(transfers)
+
+        return {
+            "price": package.price,
+            "profile": len(transfers),
+            "total_amount": total_amount,
+        }
+
+    except Exception as e:
+        return Response(status_code=400, content="Failed to get transfer info")
+
+
+'''
+@transfer_router.post("/info")
+async def transfer_pay_info(
     data: TransferRequestPaymentSchema,
     _=Depends(authentication_context),
     __=Depends(build_request_context)
@@ -1547,3 +1796,4 @@ async def transfer_pay_info(
     except Exception as e:
         print(e)
         return Response(status_code=400, content=json.dumps({"message": "Failed to get transfer pay info"}), media_type="application/json")
+        '''
