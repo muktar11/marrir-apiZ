@@ -1426,15 +1426,20 @@ async def pay_transfer(
 
 
 
+
+
 def verify_hyperpay_payment(payment_id: str) -> bool:
     url = f"https://test.oppwa.com/v1/payments/{payment_id}"
     params = {"entityId": settings.HYPERPAY_ENTITY_ID}
     headers = get_hyperpay_auth_header()
 
     res = requests.get(url, params=params, headers=headers).json()
-    logger.info(f"HyperPay payment verify response: {res}")
+    logger.info(f"HyperPay verify response: {res}")
 
-    return res.get("result", {}).get("code", "").startswith("000.100")
+    code = res.get("result", {}).get("code", "")
+    return code.startswith(("000.000", "000.100", "000.200"))
+
+
 
 @transfer_router.post("/pay/callback")
 async def pay_transfer_callback(
@@ -1442,40 +1447,48 @@ async def pay_transfer_callback(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db_sessions),
 ):
+    data = await request.form()
+    logger.info(f"HyperPay callback data: {dict(data)}")
+
+    merchant_tx_id = data.get("merchantTransactionId")
+    payment_id = data.get("id")
+
+    if not merchant_tx_id or not payment_id:
+        return Response(status_code=400, content="Invalid callback")
+
+    background_tasks.add_task(
+        process_transfer_payment,
+        merchant_tx_id,
+        payment_id
+    )
+
+    # 🔥 RETURN IMMEDIATELY
+    return {"status": "received"}
+
+def process_transfer_payment(merchant_tx_id: str, payment_id: str):
+    db = get_db_session()
     try:
-        data = await request.form()
-        logger.info(f"HyperPay callback data: {dict(data)}")
-        merchant_tx_id = data.get("merchantTransactionId")
-        payment_id = data.get("id")
-        if not merchant_tx_id or not payment_id:
-            return Response(status_code=400, content="Invalid callback")
-        # 1️⃣ Verify payment with HyperPay
         if not verify_hyperpay_payment(payment_id):
-            logger.error("HyperPay verification failed")
-            return Response(status_code=400, content="Payment not verified")
-        # 2️⃣ Find invoice
+            logger.error("Payment verification failed")
+            return
+
         invoice = db.query(InvoiceModel).filter(
             InvoiceModel.reference == merchant_tx_id,
             InvoiceModel.type == "transfer"
         ).first()
 
-        if not invoice:
-            return Response(status_code=404, content="Invoice not found")
+        if not invoice or invoice.status == "paid":
+            return
 
-        if invoice.status == "paid":
-            return {"status": "already_paid"}
-
-        # 3️⃣ Mark invoice paid
         invoice.status = "paid"
         db.commit()
 
-        # 4️⃣ Process transfers
         transfer_ids = list(map(int, invoice.object_id.split(",")))
-        transfer_requests = db.query(TransferRequestModel).filter(
+        transfers = db.query(TransferRequestModel).filter(
             TransferRequestModel.id.in_(transfer_ids)
         ).all()
 
-        for tr in transfer_requests:
+        for tr in transfers:
             employee = db.query(EmployeeModel).filter(
                 EmployeeModel.user_id == tr.user_id
             ).first()
@@ -1488,12 +1501,31 @@ async def pay_transfer_callback(
 
         db.commit()
 
-        return {"status": "success"}
-
-    except Exception as e:
-        logger.exception("Callback error")
+    except Exception:
+        logger.exception("Payment processing failed")
         db.rollback()
-        return Response(status_code=500, content="Callback failed")
+    finally:
+        db.close()
+
+
+@transfer_router.get("/pay/status")
+async def pay_status(
+    merchantTransactionId: str,
+    db: Session = Depends(get_db_sessions),
+):
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchantTransactionId,
+        InvoiceModel.type == "transfer"
+    ).first()
+
+    if not invoice:
+        return {"status": "not_found"}
+
+    return {
+        "status": invoice.status,  # pending | paid
+        "amount": invoice.amount
+    }
+
 
 '''
 
