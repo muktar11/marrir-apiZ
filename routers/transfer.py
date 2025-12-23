@@ -1479,50 +1479,45 @@ HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C84
 
 
 
+
+
 @transfer_router.post("/pay/callback")
 async def pay_transfer_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    x_webhook_key: str | None = Header(default=None),
+    x_webhook_key: str | None = None,
 ):
+    # 🔐 Validate webhook key
+    if x_webhook_key != HYPERPAY_WEBHOOK_KEY:
+        logger.warning("Invalid webhook key")
+        # Still respond 200 to prevent retries
+        return JSONResponse(status_code=200, content={"status": "ignored"})
+
+    data = dict(request.query_params)  # always safe
+
+    # Try to read JSON body if present
     try:
-        # 🔐 Verify key
-        if x_webhook_key != HYPERPAY_WEBHOOK_KEY:
-            logger.warning("Invalid webhook key")
-            return {"status": "ignored"}
+        body = await request.json()
+        if isinstance(body, dict):
+            data.update(body)
+    except Exception:
+        pass  # ignore if no JSON or invalid JSON
 
-        data = dict(request.query_params)
+    # Try to read form data if present
+    try:
+        form = await request.form()
+        data.update(form)
+    except Exception:
+        pass  # ignore if no form
 
-        try:
-            body = await request.json()
-            if isinstance(body, dict):
-                data.update(body)
-        except Exception:
-            pass
+    logger.info(f"HyperPay webhook received: {data}")
 
-        try:
-            form = await request.form()
-            data.update(form)
-        except Exception:
-            pass
+    payment_id = data.get("id")
+    if payment_id:
+        background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
 
-        logger.info(f"HyperPay webhook received: {data}")
-
-        payment_id = data.get("id")
-        if not payment_id:
-            return {"status": "received"}
-
-        background_tasks.add_task(
-            process_transfer_payment_by_payment_id,
-            payment_id
-        )
-
-        return {"status": "received"}
-
-    except Exception as e:
-        logger.exception("Webhook error")
-        # 🔥 ALWAYS return 200
-        return {"status": "error_ignored"}
+    # Always return 200 to HyperPay
+    return JSONResponse(status_code=200, content={"status": "received"})
 
 
 def process_transfer_payment_by_payment_id(payment_id: str):
