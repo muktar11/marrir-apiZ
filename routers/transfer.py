@@ -1439,66 +1439,124 @@ def verify_hyperpay_payment(payment_id: str) -> bool:
     code = res.get("result", {}).get("code", "")
     return code.startswith(("000.000", "000.100", "000.200"))
 
+'''
+@transfer_router.post("/pay/callback")
+async def pay_transfer_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    # Accept everything
+    data = dict(request.query_params)
+
+    try:
+        body = await request.json()
+        data.update(body)
+    except Exception:
+        pass
+
+    try:
+        form = await request.form()
+        data.update(form)
+    except Exception:
+        pass
+
+    logger.info(f"HyperPay callback received: {data}")
+    print(f"HyperPay callback received: {data}")
+
+    payment_id = data.get("id")
+    if not payment_id:
+        # Always return 200
+        return {"status": "ignored"}
+
+    background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
+    return {"status": "received"}
+'''
+
+from fastapi import Header, HTTPException
+from starlette.responses import JSONResponse
+
+HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C840A014B1F"
+
 
 
 @transfer_router.post("/pay/callback")
 async def pay_transfer_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db_sessions),
+    x_webhook_key: str | None = Header(default=None),
 ):
-    data = await request.form()
-    logger.info(f"HyperPay callback data: {dict(data)}")
+    try:
+        # 🔐 Verify key
+        if x_webhook_key != HYPERPAY_WEBHOOK_KEY:
+            logger.warning("Invalid webhook key")
+            return {"status": "ignored"}
 
-    merchant_tx_id = data.get("merchantTransactionId")
-    payment_id = data.get("id")
+        data = dict(request.query_params)
 
-    if not merchant_tx_id or not payment_id:
-        return Response(status_code=400, content="Invalid callback")
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                data.update(body)
+        except Exception:
+            pass
 
-    background_tasks.add_task(
-        process_transfer_payment,
-        merchant_tx_id,
-        payment_id
-    )
+        try:
+            form = await request.form()
+            data.update(form)
+        except Exception:
+            pass
 
-    # 🔥 RETURN IMMEDIATELY
-    return {"status": "received"}
+        logger.info(f"HyperPay webhook received: {data}")
 
-def process_transfer_payment(merchant_tx_id: str, payment_id: str):
+        payment_id = data.get("id")
+        if not payment_id:
+            return {"status": "received"}
+
+        background_tasks.add_task(
+            process_transfer_payment_by_payment_id,
+            payment_id
+        )
+
+        return {"status": "received"}
+
+    except Exception as e:
+        logger.exception("Webhook error")
+        # 🔥 ALWAYS return 200
+        return {"status": "error_ignored"}
+
+
+def process_transfer_payment_by_payment_id(payment_id: str):
     db = get_db_session()
     try:
-        if not verify_hyperpay_payment(payment_id):
-            logger.error("Payment verification failed")
+        url = f"https://test.oppwa.com/v1/payments/{payment_id}"
+        res = requests.get(
+            url,
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        logger.info(f"HyperPay verify response: {res}")
+
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            logger.error("merchantTransactionId missing in verification")
             return
 
         invoice = db.query(InvoiceModel).filter(
             InvoiceModel.reference == merchant_tx_id,
-            InvoiceModel.type == "transfer"
+            InvoiceModel.status != "paid"
         ).first()
 
-        if not invoice or invoice.status == "paid":
+        if not invoice:
             return
 
         invoice.status = "paid"
-        db.commit()
-
-        transfer_ids = list(map(int, invoice.object_id.split(",")))
-        transfers = db.query(TransferRequestModel).filter(
-            TransferRequestModel.id.in_(transfer_ids)
-        ).all()
-
-        for tr in transfers:
-            employee = db.query(EmployeeModel).filter(
-                EmployeeModel.user_id == tr.user_id
-            ).first()
-            if employee:
-                employee.manager_id = tr.requester_id
-                db.add(employee)
-
-            tr.status = "done"
-            db.add(tr)
-
+        invoice.payment_id = payment_id
         db.commit()
 
     except Exception:
