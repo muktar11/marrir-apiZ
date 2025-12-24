@@ -1489,6 +1489,8 @@ async def pay_transfer_callback(
 ):
     # 🔐 Validate webhook key
     if x_webhook_key != HYPERPAY_WEBHOOK_KEY:
+        print('x_webhook_key', x_webhook_key)
+        print('HYPER WEB KEY', HYPERPAY_WEBHOOK_KEY)
         logger.warning("Invalid webhook key")
         # Still respond 200 to prevent retries
         return JSONResponse(status_code=200, content={"status": "ignored"})
