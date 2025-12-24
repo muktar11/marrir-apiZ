@@ -1487,14 +1487,7 @@ async def pay_transfer_callback(
     background_tasks: BackgroundTasks,
     x_webhook_key: str | None = Header(None),
 ):
-    logger.warning("Received x_webhook_key: %s", x_webhook_key)
 
-    # 🔐 Log expected webhook key (optional – for debugging only)
-    logger.warning("Expected HyperPay webhook key: %s", HYPERPAY_WEBHOOK_KEY)
-
-    if x_webhook_key != HYPERPAY_WEBHOOK_KEY:
-        logger.warning("Invalid webhook key")
-        return JSONResponse(status_code=200, content={"status": "ignored"})
 
 
     data = dict(request.query_params)  # always safe
