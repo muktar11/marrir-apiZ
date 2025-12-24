@@ -13,7 +13,7 @@ from models.agentrecruitmentmodel import AgentRecruitmentModel
 from models.batchtransfermodel import BatchTransferModel
 from models.companyinfomodel import CompanyInfoModel
 from models.cvmodel import CVModel
-from models.db import authentication_context, build_request_context, get_db_session, get_db_sessions
+from models.db import SessionLocal, authentication_context, build_request_context, get_db_session, get_db_sessions
 from models.employeemodel import EmployeeModel
 from models.invoicemodel import InvoiceModel
 from models.notificationmodel import Notifications
@@ -1517,7 +1517,7 @@ async def pay_transfer_callback(
 
 
 def poll_pending_transfer_payments():
-    db = get_db_session()
+    db = SessionLocal()  # 👈 must create fresh session
     try:
         invoices = db.query(InvoiceModel).filter(
             InvoiceModel.status == "pending",
@@ -1539,6 +1539,8 @@ def poll_pending_transfer_payments():
             for p in payments:
                 code = p.get("result", {}).get("code", "")
                 if code.startswith(("000.000", "000.100", "000.200")):
+                    if invoice.status == "paid":
+                        continue
                     invoice.status = "paid"
                     invoice.payment_id = p.get("id")
                     db.commit()
@@ -1547,20 +1549,21 @@ def poll_pending_transfer_payments():
         logger.exception("Polling failed")
         db.rollback()
     finally:
-        db.close()
+        db.close()  # ✅ now always safe
+
+
+
+
 
 def process_transfer_payment_by_payment_id(payment_id: str):
-    db = get_db_session()
+    db = SessionLocal()  # 👈 REQUIRED
     try:
-        url = f"https://test.oppwa.com/v1/payments/{payment_id}"
         res = requests.get(
-            url,
+            f"https://test.oppwa.com/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
             headers=get_hyperpay_auth_header(),
             timeout=30,
         ).json()
-
-        logger.info(f"HyperPay verify response: {res}")
 
         code = res.get("result", {}).get("code", "")
         if not code.startswith(("000.000", "000.100", "000.200")):
@@ -1568,12 +1571,11 @@ def process_transfer_payment_by_payment_id(payment_id: str):
 
         merchant_tx_id = res.get("merchantTransactionId")
         if not merchant_tx_id:
-            logger.error("merchantTransactionId missing in verification")
             return
 
         invoice = db.query(InvoiceModel).filter(
             InvoiceModel.reference == merchant_tx_id,
-            InvoiceModel.status != "paid"
+            InvoiceModel.status != "paid",
         ).first()
 
         if not invoice:
@@ -1588,6 +1590,7 @@ def process_transfer_payment_by_payment_id(payment_id: str):
         db.rollback()
     finally:
         db.close()
+
 
 
 @transfer_router.get("/pay/status")
