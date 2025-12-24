@@ -1518,7 +1518,11 @@ async def pay_transfer_callback(
 
     payment_id = data.get("id")
     if payment_id:
+        logger.info(f"payment id is found: {data}")
         background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
+    else:
+        
+        logger.info(f"payment id is not found: {data}")
 
     # Always return 200 to HyperPay
     return JSONResponse(status_code=200, content={"status": "received"})
