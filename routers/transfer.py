@@ -1485,41 +1485,69 @@ HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C84
 async def pay_transfer_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-    x_webhook_key: str | None = Header(None),
 ):
+    data = {}
 
+    try:
+        form = await request.form()
+        data.update(form)
+    except Exception:
+        pass
 
-
-    data = dict(request.query_params)  # always safe
-
-    # Try to read JSON body if present
     try:
         body = await request.json()
         if isinstance(body, dict):
             data.update(body)
     except Exception:
-        pass  # ignore if no JSON or invalid JSON
+        pass
 
-    # Try to read form data if present
-    try:
-        form = await request.form()
-        data.update(form)
-    except Exception:
-        pass  # ignore if no form
+    logger.info("HyperPay webhook received: %s", data)
 
-    logger.info(f"HyperPay webhook received: {data}")
+    # 🔐 Encrypted callback → poll payments
+    if "encryptedBody" in data:
+        logger.info("Encrypted webhook received — starting polling")
+        background_tasks.add_task(poll_pending_transfer_payments)
+        return JSONResponse(status_code=200, content={"status": "received"})
 
     payment_id = data.get("id")
     if payment_id:
-        logger.info(f"payment id is found: {data}")
         background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
-    else:
-        
-        logger.info(f"payment id is not found: {data}")
 
-    # Always return 200 to HyperPay
     return JSONResponse(status_code=200, content={"status": "received"})
 
+
+def poll_pending_transfer_payments():
+    db = get_db_session()
+    try:
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "transfer",
+        ).all()
+
+        for invoice in invoices:
+            res = requests.get(
+                "https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            payments = res.get("payments", [])
+            for p in payments:
+                code = p.get("result", {}).get("code", "")
+                if code.startswith(("000.000", "000.100", "000.200")):
+                    invoice.status = "paid"
+                    invoice.payment_id = p.get("id")
+                    db.commit()
+
+    except Exception:
+        logger.exception("Polling failed")
+        db.rollback()
+    finally:
+        db.close()
 
 def process_transfer_payment_by_payment_id(payment_id: str):
     db = get_db_session()
