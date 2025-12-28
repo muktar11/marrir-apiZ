@@ -1478,8 +1478,73 @@ from starlette.responses import JSONResponse
 HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C840A014B1F"
 
 
+from datetime import datetime
+import uuid
+
+def generate_invoice_number():
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+import os
+
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+
+def generate_invoice_pdf(invoice: InvoiceModel):
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+
+    c = canvas.Canvas(file_path, pagesize=A4)
+    c.setFont("Helvetica-Bold", 18)
+    c.drawString(50, 800, "INVOICE")
+
+    c.setFont("Helvetica", 12)
+    c.drawString(50, 760, f"Invoice #: {invoice.invoice_number}")
+    c.drawString(50, 740, f"Payment Ref: {invoice.payment_id}")
+    c.drawString(50, 720, f"Amount: {invoice.amount} {invoice.currency.upper()}")
+    c.drawString(50, 700, f"Status: PAID")
+
+    c.drawString(50, 660, "Thank you for your payment.")
+    c.drawString(50, 640, "Company: Marrir.com")
+
+    c.showPage()
+    c.save()
+
+    return file_path
 
 
+
+
+from fastapi import HTTPException
+from fastapi.responses import FileResponse
+
+
+
+
+from fastapi import Depends, HTTPException
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+
+@transfer_router.get("/invoice/{merchantTransactionId}")
+def view_invoice(
+    merchantTransactionId: str,
+    db: Session = Depends(get_db_sessions),
+):
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchantTransactionId,
+        InvoiceModel.status == "paid",
+    ).first()
+
+    if not invoice or not invoice.invoice_file:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return FileResponse(
+        path=invoice.invoice_file,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'
+        },
+    )
 
 @transfer_router.post("/pay/callback")
 async def pay_transfer_callback(
