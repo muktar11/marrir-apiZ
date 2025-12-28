@@ -1472,6 +1472,8 @@ async def pay_transfer_callback(
     return {"status": "received"}
 '''
 
+'''
+
 from datetime import datetime
 import uuid
 
@@ -1596,6 +1598,7 @@ def poll_pending_transfer_payments():
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
+                    
                 },
                 headers=get_hyperpay_auth_header(),
                 timeout=30,
@@ -1678,6 +1681,7 @@ async def pay_status(
     }
 
 '''
+
 
 
 
@@ -1813,7 +1817,7 @@ async def pay_status(
         "status": invoice.status,  # pending | paid
         "amount": invoice.amount
     }
-'''
+
 
 
 '''
