@@ -1488,31 +1488,53 @@ from reportlab.lib.pagesizes import A4
 from reportlab.pdfgen import canvas
 import os
 
+from datetime import datetime
+import uuid
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from sqlalchemy.orm import Session
+
 INVOICE_DIR = "media/invoices"
 os.makedirs(INVOICE_DIR, exist_ok=True)
 
-def generate_invoice_pdf(invoice: InvoiceModel):
+
+def generate_invoice_number():
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+def generate_invoice_pdf(invoice):
     file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
 
     c = canvas.Canvas(file_path, pagesize=A4)
+
     c.setFont("Helvetica-Bold", 18)
     c.drawString(50, 800, "INVOICE")
 
     c.setFont("Helvetica", 12)
-    c.drawString(50, 760, f"Invoice #: {invoice.invoice_number}")
-    c.drawString(50, 740, f"Payment Ref: {invoice.payment_id}")
+    c.drawString(50, 760, f"Invoice Number: {invoice.invoice_number}")
+    c.drawString(50, 740, f"Payment Reference: {invoice.payment_id}")
     c.drawString(50, 720, f"Amount: {invoice.amount} {invoice.currency.upper()}")
-    c.drawString(50, 700, f"Status: PAID")
+    c.drawString(50, 700, "Status: PAID")
 
-    c.drawString(50, 660, "Thank you for your payment.")
-    c.drawString(50, 640, "Company: Marrir.com")
+    c.drawString(50, 660, "Billed To:")
+    c.drawString(70, 640, f"Email: {invoice.billing_email or '-'}")
+    c.drawString(70, 620, f"Phone: {invoice.billing_phone or '-'}")
+    c.drawString(70, 600, f"Country: {invoice.billing_country or '-'}")
+
+    c.drawString(50, 560, "Thank you for your payment.")
+    c.drawString(50, 540, "Company: Marrir.com")
 
     c.showPage()
     c.save()
-
     return file_path
 
 
+def finalize_invoice(db: Session, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
 
 
 from fastapi import HTTPException
@@ -1575,6 +1597,7 @@ async def pay_transfer_callback(
         background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
     return JSONResponse(status_code=200, content={"status": "received"})
 
+'''
 def poll_pending_transfer_payments():
     db = SessionLocal()  # 👈 must create fresh session
     try:
@@ -1610,10 +1633,10 @@ def poll_pending_transfer_payments():
     finally:
         db.close()  # ✅ now always safe
 
+'''
 
 
-
-
+'''
 def process_transfer_payment_by_payment_id(payment_id: str):
     db = SessionLocal()  # 👈 REQUIRED
     try:
@@ -1642,6 +1665,80 @@ def process_transfer_payment_by_payment_id(payment_id: str):
 
         invoice.status = "paid"
         invoice.payment_id = payment_id
+        db.commit()
+
+    except Exception:
+        logger.exception("Payment processing failed")
+        db.rollback()
+    finally:
+        db.close()
+'''
+def poll_pending_transfer_payments():
+    db = SessionLocal()
+    try:
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "transfer",
+        ).all()
+
+        for invoice in invoices:
+            res = requests.get(
+                "https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            for p in res.get("payments", []):
+                code = p.get("result", {}).get("code", "")
+                if code.startswith(("000.000", "000.100", "000.200")):
+                    if invoice.status == "paid":
+                        continue
+
+                    invoice.status = "paid"
+                    invoice.payment_id = p.get("id")
+
+                    finalize_invoice(db, invoice)
+                    db.commit()
+    except Exception:
+        logger.exception("Polling failed")
+        db.rollback()
+    finally:
+        db.close()
+
+def process_transfer_payment_by_payment_id(payment_id: str):
+    db = SessionLocal()
+    try:
+        res = requests.get(
+            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            return
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.status != "paid",
+        ).first()
+
+        if not invoice:
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        finalize_invoice(db, invoice)
         db.commit()
 
     except Exception:
