@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8" />
+<style>
+  body {
+    font-family: Arial, sans-serif;
+    color: #1a1a1a;
+    font-size: 12px;
+  }
+
+  .container {
+    width: 100%;
+    padding: 40px;
+  }
+
+  .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 2px solid #1f5aa6;
+    padding-bottom: 10px;
+  }
+
+  .logo {
+    font-size: 28px;
+    font-weight: bold;
+    color: #1f5aa6;
+  }
+
+  .invoice-title {
+    font-size: 20px;
+    font-weight: bold;
+    color: #1f5aa6;
+  }
+
+  .row {
+    display: flex;
+    justify-content: space-between;
+    margin-top: 20px;
+  }
+
+  .left, .right {
+    width: 48%;
+  }
+
+  h4 {
+    margin-bottom: 5px;
+    color: #1f5aa6;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 30px;
+  }
+
+  table th {
+    background: #1f5aa6;
+    color: white;
+    padding: 10px;
+    text-align: left;
+  }
+
+  table td {
+    padding: 10px;
+    border-bottom: 1px solid #ddd;
+  }
+
+  .totals {
+    margin-top: 20px;
+    width: 40%;
+    float: right;
+  }
+
+  .totals table td {
+    border: none;
+    padding: 5px;
+  }
+
+  .total {
+    font-weight: bold;
+    font-size: 14px;
+    color: #1f5aa6;
+  }
+
+  .footer {
+    margin-top: 80px;
+    text-align: center;
+    font-size: 10px;
+    color: #555;
+  }
+</style>
+</head>
+
+<body>
+<div class="container">
+
+  <div class="header">
+    <div class="logo">MARRIR</div>
+    <div class="invoice-title">INVOICE</div>
+  </div>
+
+  <div class="row">
+    <div class="left">
+      <strong>EJTIAZ PORTAL L.L.C.</strong><br/>
+      Concord Tower – 9th Floor<br/>
+      Office No. 382-748<br/>
+      Al Sufouh – Dubai Media City – UAE<br/>
+      <strong>TRN:</strong> 104926356700001
+    </div>
+
+    <div class="right">
+      <strong>Invoice #:</strong> {{ invoice.invoice_number }}<br/>
+      <strong>Date:</strong> {{ invoice.date }}<br/>
+      <strong>Payment Ref:</strong> {{ invoice.payment_id }}<br/>
+      <strong>Payment Method:</strong> Credit Card
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="right">
+      <h4>Billing To</h4>
+      {{ invoice.card_holder }}<br/>
+      {{ invoice.billing_email }}<br/>
+      {{ invoice.billing_country }}
+    </div>
+  </div>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Description</th>
+        <th>Period</th>
+        <th>Qty</th>
+        <th>Unit Price (AED)</th>
+        <th>Amount (AED)</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>{{ invoice.description }}</td>
+        <td>One-time</td>
+        <td>1</td>
+        <td>{{ invoice.amount }}</td>
+        <td>{{ invoice.amount }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <div class="totals">
+    <table>
+      <tr>
+        <td>Subtotal:</td>
+        <td>{{ invoice.amount }}</td>
+      </tr>
+      <tr>
+        <td>VAT (5%):</td>
+        <td>{{ invoice.vat }}</td>
+      </tr>
+      <tr class="total">
+        <td>Total (AED):</td>
+        <td>{{ invoice.total }}</td>
+      </tr>
+    </table>
+  </div>
+
+  <div class="footer">
+    This is a system-generated invoice issued by Marrir.com<br/>
+    No signature required<br/>
+    support@marrir.com<br/>
+    © 2025 EJTIAZ PORTAL L.L.C.
+  </div>
+
+</div>
+</body>
+</html>
