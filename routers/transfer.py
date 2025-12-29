@@ -1537,6 +1537,7 @@ def generate_invoice_pdf(invoice):
 def generate_invoice_number():
     return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
+'''
 def generate_invoice_pdf(invoice):
     file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
 
@@ -1562,7 +1563,7 @@ def generate_invoice_pdf(invoice):
     c.showPage()
     c.save()
     return file_path
-
+'''
 
 
 def finalize_invoice(db, invoice):
