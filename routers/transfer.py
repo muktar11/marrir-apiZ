@@ -1499,6 +1499,41 @@ INVOICE_DIR = "media/invoices"
 os.makedirs(INVOICE_DIR, exist_ok=True)
 
 
+from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+import os
+
+TEMPLATE_DIR = "templates"
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+
+env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+def generate_invoice_pdf(invoice):
+    template = env.get_template("invoice.html")
+
+    vat = round(invoice.amount * 0.05, 2)
+    total = invoice.amount + vat
+
+    html_content = template.render(
+        invoice={
+            "invoice_number": invoice.invoice_number,
+            "payment_id": invoice.payment_id,
+            "amount": f"{invoice.amount:.2f}",
+            "vat": f"{vat:.2f}",
+            "total": f"{total:.2f}",
+            "description": invoice.description or "Service",
+            "billing_email": invoice.billing_email,
+            "billing_country": invoice.billing_country,
+            "card_holder": invoice.card_holder,
+            "date": invoice.created_at.strftime("%d %B %Y"),
+        }
+    )
+
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+    HTML(string=html_content).write_pdf(file_path)
+
+    return file_path
+
 def generate_invoice_number():
     return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
@@ -1529,7 +1564,8 @@ def generate_invoice_pdf(invoice):
     return file_path
 
 
-def finalize_invoice(db: Session, invoice):
+
+def finalize_invoice(db, invoice):
     if not invoice.invoice_number:
         invoice.invoice_number = generate_invoice_number()
 
