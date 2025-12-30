@@ -1411,9 +1411,17 @@ async def pay_transfer(
             status="pending",
             type="transfer",
             object_id=",".join(str(t.id) for t in transfers),
+
+            billing_email=b.email,
+            billing_country=b.country.upper(),
+            billing_street=b.street1,
+            billing_city=b.city,
+            billing_state=b.state,
+            billing_postcode=b.postcode,
         )
         db.add(invoice)
         db.commit()
+        db.refresh(invoice)
 
         return {
             "checkoutId": checkout_id,
@@ -1536,34 +1544,6 @@ def generate_invoice_pdf(invoice):
 
 def generate_invoice_number():
     return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-
-'''
-def generate_invoice_pdf(invoice):
-    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
-
-    c = canvas.Canvas(file_path, pagesize=A4)
-
-    c.setFont("Helvetica-Bold", 18)
-    c.drawString(50, 800, "INVOICE")
-
-    c.setFont("Helvetica", 12)
-    c.drawString(50, 760, f"Invoice Number: {invoice.invoice_number}")
-    c.drawString(50, 740, f"Payment Reference: {invoice.payment_id}")
-    c.drawString(50, 720, f"Amount: {invoice.amount} {invoice.currency.upper()}")
-    c.drawString(50, 700, "Status: PAID")
-
-    c.drawString(50, 660, "Billed To:")
-    c.drawString(70, 640, f"Email: {invoice.billing_email or '-'}")
-    c.drawString(70, 620, f"Phone: {invoice.billing_phone or '-'}")
-    c.drawString(70, 600, f"Country: {invoice.billing_country or '-'}")
-
-    c.drawString(50, 560, "Thank you for your payment.")
-    c.drawString(50, 540, "Company: Marrir.com")
-
-    c.showPage()
-    c.save()
-    return file_path
-'''
 
 
 def finalize_invoice(db, invoice):
