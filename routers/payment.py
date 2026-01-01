@@ -655,7 +655,7 @@ def multiple_process_telr_payment(
         print(f"Error in Telr SDK: {repr(e)}")
         raise
 
-
+'''
 @payment_router.get("/")
 async def get_payments(_=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(build_request_context)):
     db = get_db_session()
@@ -682,6 +682,51 @@ async def get_payments(_=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(b
             "buyer_id": payment.buyer_id,
             "created_at": payment.created_at,
             "updated_at": payment.updated_at
+        })
+
+    return data
+'''
+
+from fastapi import Request
+
+@payment_router.get("/")
+async def get_payments(
+    request: Request,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    payments = db.query(InvoiceModel).filter(
+        (InvoiceModel.buyer_id == user.id) |
+        (InvoiceModel.customer_id == user.id)
+    ).all()
+
+    base_url = str(request.base_url).rstrip("/")
+
+    data = []
+    for payment in payments:
+        invoice_url = None
+
+        if payment.status == "paid" and payment.invoice_file:
+            invoice_url = f"{base_url}/transfer/invoice/{payment.reference}"
+
+        data.append({
+            "id": payment.id,
+            "customer_id": payment.customer_id,
+            "ref": payment.stripe_session_id,
+            "status": payment.status,
+            "amount": payment.amount,
+            "currency": payment.currency,
+            "type": payment.type,
+            "card": payment.card,
+            "description": payment.description,
+            "buyer_id": payment.buyer_id,
+            "created_at": payment.created_at,
+            "updated_at": payment.updated_at,
+            "invoice_url": invoice_url,          # ✅ added
+            "invoice_number": payment.invoice_number,  # optional
         })
 
     return data
