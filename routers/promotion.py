@@ -790,7 +790,7 @@ from fastapi import Header, HTTPException
 from starlette.responses import JSONResponse
 
 
-@promotion_router.post("/packages/callback")
+@promotion_router.post("/packages/callback/hyper")
 async def promotion_hyperpay_entry(
     request: Request,
     background_tasks: BackgroundTasks,
