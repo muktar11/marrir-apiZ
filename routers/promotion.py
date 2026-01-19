@@ -568,101 +568,6 @@ class PaymentRequest(BaseModel):
     currency: str = "AED"
 
 
-@promotion_router.post("/packages/hyper")
-async def buy_promotion_package(
-    data: BuyPromotionPackage,
-    _=Depends(authentication_context),
-    __=Depends(build_request_context),
-):
-    db: Session = get_db_session()
-    user = context_actor_user_data.get()
-
-    # Get package
-    package = (
-        db.query(PromotionPackagesModel)
-        .filter(
-            PromotionPackagesModel.id == data.id,
-            PromotionPackagesModel.role == user.role,
-            PromotionPackagesModel.category == "promotion",
-        )
-        .first()
-    )
-    if not package:
-        raise HTTPException(status_code=400, detail="Invalid package")
-
-    # Calculate subscription end date
-    duration_days = {"1 month": 30, "3 months": 90, "6 months": 180, "12 months": 365}
-    end_date = datetime.now(timezone.utc) + timedelta(days=duration_days[package.duration.value])
-
-    # Check existing subscription
-    subscription = (
-        db.query(PromotionSubscriptionModel)
-        .filter(
-            PromotionSubscriptionModel.user_id == user.id,
-            PromotionSubscriptionModel.status == "active",
-        )
-        .first()
-    )
-
-    if not subscription:
-        subscription = PromotionSubscriptionModel(
-            user_id=user.id,
-            package_id=package.id,
-            current_profile_count=package.profile_count,
-            status="inactive",
-            start_date=datetime.now(timezone.utc),
-            end_date=end_date,
-        )
-        db.add(subscription)
-        db.commit()
-    else:
-        subscription.current_profile_count = package.profile_count
-        subscription.package_id = package.id
-        subscription.status = "inactive"
-        subscription.start_date = datetime.now(timezone.utc)
-        subscription.end_date = end_date
-        db.commit()
-
-    # Generate HyperPay checkout
-    merchant_tx_id = str(subscription.id)
-
-    payload = {
-        "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{package.price:.2f}",
-        "currency": "AED",
-        "paymentType": "DB",
-        "merchantTransactionId": merchant_tx_id,
-        "shopperResultUrl": "https://marrir.com/employee/promotion",
-        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback",
-    }
-
-    res = requests.post(
-        "https://test.oppwa.com/v1/checkouts",
-        data=payload,
-        headers=get_hyperpay_auth_header(),
-    ).json()
-
-    checkout_id = res.get("id")
-    if not checkout_id:
-        raise HTTPException(status_code=500, detail="Payment initialization failed")
-
-    invoice = InvoiceModel(
-        reference=merchant_tx_id,   # ✅ SAME VALUE
-        amount=package.price,
-        buyer_id=user.id,
-        object_id=subscription.id,
-        status="pending",
-        type="promotion",
-    )
-
-    db.add(invoice)
-    db.commit()
-
-    return {
-        "checkoutId": checkout_id,
-        "subscriptionId": subscription.id,
-    }
-
 
 
 
@@ -674,7 +579,7 @@ from fastapi import Header, HTTPException
 from starlette.responses import JSONResponse
 
 
-def get_hyperpay_auth_header():
+def get_hyperpay_auth_header_promotion():
     return {
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
@@ -788,6 +693,27 @@ async def buy_promotion_package(
         "subscriptionId": subscription.id,
     }
 
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+import binascii
+import json
+
+HYPERPAY_ENCRYPTION_KEY="52C78392A3658DEC1CAA6AD8D98B1B78EE3FEB1CA7369FA3531E67FEDF9B0EBE"
+def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
+    encrypted_bytes = binascii.unhexlify(encrypted_hex)
+
+    iv = encrypted_bytes[:16]          # First 16 bytes
+    ciphertext = encrypted_bytes[16:]  # Rest is payload
+
+    cipher = AES.new(
+        HYPERPAY_ENCRYPTION_KEY,
+        AES.MODE_CBC,
+        iv
+    )
+
+    decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
+    return json.loads(decrypted.decode("utf-8"))
+
 
 # ------------------------------------------------------------------
 # CALLBACK (ONLY CALLED BY HYPERPAY)
@@ -816,8 +742,24 @@ async def promotion_hyperpay_callback(
 
     # Encrypted bulk callback
     if "encryptedBody" in data:
-        background_tasks.add_task(poll_pending_promotion_payments)
+        try:
+            decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
+            logger.info("HyperPay decrypted payload received")
+
+            payments = decrypted.get("payments", [])
+            for p in payments:
+                payment_id = p.get("id")
+                if payment_id:
+                    background_tasks.add_task(
+                        process_promotion_payment_by_payment_id,
+                        payment_id,
+                    )
+        except Exception:
+            logger.exception("HyperPay decryption failed — fallback polling")
+            background_tasks.add_task(poll_pending_promotion_payments)
+
         return JSONResponse(status_code=200, content={"status": "received"})
+
 
     # Single payment callback
     payment_id = data.get("id")
