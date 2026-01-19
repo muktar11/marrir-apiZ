@@ -658,7 +658,7 @@ async def buy_promotion_package(
         "paymentType": "DB",
         "merchantTransactionId": merchant_tx_id,
         "shopperResultUrl": "https://marrir.com/employee/promotion",
-        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback",
+        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyperpay",
     }
 
     headers = {
@@ -718,7 +718,7 @@ def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
 # ------------------------------------------------------------------
 # CALLBACK (ONLY CALLED BY HYPERPAY)
 # ------------------------------------------------------------------
-@promotion_router.post("/packages/callback")
+@promotion_router.post("/packages/callback/hyperpay")
 async def promotion_hyperpay_callback(
     request: Request,
     background_tasks: BackgroundTasks,
