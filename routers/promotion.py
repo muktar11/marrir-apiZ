@@ -34,6 +34,7 @@ from datetime import datetime, timedelta, timezone
 from telr_payment.api import Telr
 from core.security import settings
 import logging
+from models.db import SessionLocal, authentication_context, build_request_context, get_db_session, get_db_sessions
 
 from schemas.transferschema import TransferRequestPaymentCallback
 from schemas.userschema import UserTokenSchema
@@ -643,78 +644,13 @@ async def buy_promotion_package(
     }
 
 
-# -----------------------------
-# HyperPay Callback
-# -----------------------------
-'''
-@promotion_router.post("/packages/callback/hyper")
-
-async def hyperpay_callback(
-    request: Request,
-      db: Session = Depends(get_db_sessions)):
-    
-    try:
-        data = await request.json()
-    except:
-        data = dict(await request.form())
-
-    logger.info(f"📨 Callback body: {data}")
-
-    merchant_id = data.get("merchantTransactionId")
-    if not merchant_id:
-        return {"status": "failed", "message": "No merchantTransactionId"}
-
-    # Lookup invoice
-    invoice = (
-        db.query(InvoiceModel)
-        .filter(
-            InvoiceModel.status == "pending",
-            InvoiceModel.reference == str(merchant_id),
-        )
-        .first()
-    )
-    if not invoice:
-        return {"status": "failed", "message": "Invoice not found"}
-
-    # Verify payment result
-    result_code = data.get("result", {}).get("code", "")
-    if not result_code.startswith("000."):
-        invoice.status = "failed"
-        db.add(invoice)
-        db.commit()
-        return {"status": "failed", "message": "Payment failed"}
-
-    # Activate subscription
-    subscription = db.query(PromotionSubscriptionModel).filter(
-        PromotionSubscriptionModel.id == invoice.object_id
-    ).first()
-    if not subscription:
-        return {"status": "failed", "message": "Subscription not found"}
-
-    subscription.status = "active"
-    db.add(subscription)
-
-    # Mark invoice as paid
-    invoice.status = "paid"
-    db.add(invoice)
-
-    try:
-        db.commit()
-    except Exception as e:
-        db.rollback()
-        logger.error(f"DB commit failed: {e}")
-        return {"status": "failed", "message": "DB commit failed"}
-
-    db.refresh(invoice)
-    return {"status": "successful"}
-
-'''
 @promotion_router.post("/packages/callback/hyper")
 async def buy_promotion_package_callback():
     return Response(
         status_code=status.HTTP_200_OK,
         content="OK"
     )
+
 @promotion_router.get("/package/callback/hyper/status")
 async def payment_status(ref: str, db: Session = Depends(get_db_sessions)):
     # Lookup invoice
@@ -758,34 +694,7 @@ async def payment_status(ref: str, db: Session = Depends(get_db_sessions)):
 
 
 
-
-
-@promotion_router.post("/create-test")
-async def create_payment(body: PaymentRequest):
-    payload = {
-        "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{body.amount:.2f}",
-        "currency": body.currency,
-        "paymentType": "DB",
-        "shopperResultUrl": "https://marrir.com/employee/promotion"
-    }
-
-    headers = {
-
-        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
-        "Content-Type": "application/x-www-form-urlencoded",
-    }
-
-    async with httpx.AsyncClient() as client:
-        #res = await client.post(settings.HYPERPAY_URL, data=payload, headers=headers)
-        res = await client.post("https://eu-test.oppwa.com/v1/checkouts", data=payload, headers=headers)
-        
-
-        if res.status_code != 200:
-            raise HTTPException(status_code=res.status_code, detail=res.text)
-        return res.json()
-
-
+#
 
 
 @promotion_router.get("/callback/hyper/status")
@@ -805,7 +714,7 @@ async def verify_payment(ref: str):
     code = data.get("result", {}).get("code", "")
     status = "success" if code.startswith("000.") else "failed"
     return {"status": status, "data": data}
-
+'''
 @promotion_router.post("/packages/callback")
 async def buy_promotion_package_callback(data: TransferRequestPaymentCallback,
                                           background_tasks: BackgroundTasks, _=Depends(authentication_context),
@@ -866,16 +775,263 @@ async def buy_promotion_package_callback(data: TransferRequestPaymentCallback,
         print(e)
         db.rollback()
         return Response(status_code=500, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
+'''
 
-
+'''
 @promotion_router.post("/packages/callback")
 async def buy_promotion_package_callback():
     return Response(
         status_code=status.HTTP_200_OK,
         content="OK"
     )
-
+'''
 from fastapi import Request, status
+from fastapi import Header, HTTPException
+from starlette.responses import JSONResponse
+
+
+@promotion_router.post("/packages/callback")
+async def promotion_hyperpay_entry(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    data = {}
+
+    try:
+        # Attempt to read form data
+        form = await request.form()
+        if form:
+            data.update(form)
+    except Exception:
+        pass
+
+    try:
+        # Attempt to read JSON body
+        body = await request.json()
+        if isinstance(body, dict):
+            data.update(body)
+    except Exception:
+        pass
+
+    try:
+        # ----------------------------------------------------
+        # 🔔 CALLBACK FLOW
+        # ----------------------------------------------------
+        if "id" in data or "encryptedBody" in data:
+            logger.info("HyperPay PROMOTION callback received: %s", data)
+
+            # Encrypted callback → poll all pending
+            if "encryptedBody" in data:
+                background_tasks.add_task(poll_pending_promotion_payments)
+                return JSONResponse(status_code=200, content={"status": "received"})
+
+            # Normal callback → verify single payment
+            payment_id = data.get("id")
+            if payment_id:
+                background_tasks.add_task(
+                    process_promotion_payment_by_payment_id,
+                    payment_id,
+                )
+
+            return JSONResponse(status_code=200, content={"status": "received"})
+
+        # ----------------------------------------------------
+        # 💳 INITIATION FLOW
+        # ----------------------------------------------------
+        buy_data = BuyPromotionPackage(**data)
+
+        result = await initiate_promotion_payment(buy_data)
+
+        # Always respond 200 even for initiation
+        return JSONResponse(
+            status_code=200,
+            content={
+                "status": "ok",
+                "data": result,
+            },
+        )
+
+    except Exception:
+        # 🚨 ABSOLUTE SAFETY NET
+        logger.exception("Promotion HyperPay entry failed")
+
+        # Never leak errors to HyperPay / client
+        return JSONResponse(
+            status_code=200,
+            content={"status": "received"},
+        )
+
+
+async def initiate_promotion_payment(data: BuyPromotionPackage):
+    db: Session = get_db_session()
+    user = context_actor_user_data.get()
+
+    package = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.id == data.id,
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == "promotion",
+        )
+        .first()
+    )
+    if not package:
+        raise HTTPException(status_code=400, detail="Invalid package")
+
+    duration_days = {
+        "1 month": 30,
+        "3 months": 90,
+        "6 months": 180,
+        "12 months": 365,
+    }
+    end_date = datetime.now(timezone.utc) + timedelta(
+        days=duration_days[package.duration.value]
+    )
+
+    subscription = PromotionSubscriptionModel(
+        user_id=user.id,
+        package_id=package.id,
+        current_profile_count=package.profile_count,
+        status="inactive",
+        start_date=datetime.now(timezone.utc),
+        end_date=end_date,
+    )
+    db.add(subscription)
+    db.commit()
+    db.refresh(subscription)
+
+    payload = {
+        "entityId": settings.HYPERPAY_ENTITY_ID,
+        "amount": f"{package.price:.2f}",
+        "currency": "AED",
+        "paymentType": "DB",
+        "merchantTransactionId": str(subscription.id),
+        "shopperResultUrl": "https://marrir.com/employee/promotion",
+        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/hyper",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    res = requests.post(
+        "https://test.oppwa.com/v1/checkouts",
+        data=payload,
+        headers=headers,
+        timeout=30,
+    ).json()
+
+    checkout_id = res.get("id")
+    if not checkout_id:
+        raise HTTPException(status_code=500, detail="Payment init failed")
+
+    invoice = InvoiceModel(
+        reference=checkout_id,
+        amount=package.price,
+        buyer_id=user.id,
+        object_id=subscription.id,
+        status="pending",
+        type="promotion",
+    )
+    db.add(invoice)
+    db.commit()
+
+    return {
+        "checkoutId": checkout_id,
+        "redirectUrl": f"https://eu-test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
+    }
+
+
+def poll_pending_promotion_payments():
+    db = SessionLocal()
+    try:
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "promotion",
+        ).all()
+
+        for invoice in invoices:
+            res = requests.get(
+                "https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            for p in res.get("payments", []):
+                code = p.get("result", {}).get("code", "")
+                if not code.startswith(("000.000", "000.100", "000.200")):
+                    continue
+
+                if invoice.status == "paid":
+                    continue
+
+                invoice.status = "paid"
+                invoice.payment_id = p.get("id")
+
+                subscription = db.query(
+                    PromotionSubscriptionModel
+                ).get(invoice.object_id)
+                if subscription:
+                    subscription.status = "active"
+
+                db.commit()
+    except Exception:
+        logger.exception("Promotion polling failed")
+        db.rollback()
+    finally:
+        db.close()
+
+def process_promotion_payment_by_payment_id(payment_id: str):
+    db = SessionLocal()
+    try:
+        res = requests.get(
+            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            return
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.status != "paid",
+            InvoiceModel.type == "promotion",
+        ).first()
+
+        if not invoice:
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        subscription = db.query(
+            PromotionSubscriptionModel
+        ).get(invoice.object_id)
+        if subscription:
+            subscription.status = "active"
+
+        db.commit()
+
+    except Exception:
+        logger.exception("Promotion payment verification failed")
+        db.rollback()
+    finally:
+        db.close()
+
 '''
 @promotion_router.api_route("/packages/callback/hyper", methods=["GET", "POST"])
 async def buy_promotion_package_callback(
