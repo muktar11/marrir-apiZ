@@ -738,30 +738,15 @@ async def promotion_hyperpay_callback(
     except Exception:
         pass
 
-    logger.info("HyperPay PROMOTION callback received: %s", data)
+    logger.info("HyperPay PROMOTION webhook received: %s", data)
 
-    # Encrypted bulk callback
+    # 🔐 Encrypted callback → BLIND POLLING (same as transfer)
     if "encryptedBody" in data:
-        try:
-            decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
-            logger.info("HyperPay decrypted payload received")
-
-            payments = decrypted.get("payments", [])
-            for p in payments:
-                payment_id = p.get("id")
-                if payment_id:
-                    background_tasks.add_task(
-                        process_promotion_payment_by_payment_id,
-                        payment_id,
-                    )
-        except Exception:
-            logger.exception("HyperPay decryption failed — fallback polling")
-            background_tasks.add_task(poll_pending_promotion_payments)
-
+        logger.info("Encrypted PROMOTION webhook received — starting polling")
+        background_tasks.add_task(poll_pending_promotion_payments)
         return JSONResponse(status_code=200, content={"status": "received"})
 
-
-    # Single payment callback
+    # 🔁 Normal callback
     payment_id = data.get("id")
     if payment_id:
         background_tasks.add_task(
@@ -772,9 +757,11 @@ async def promotion_hyperpay_callback(
     return JSONResponse(status_code=200, content={"status": "received"})
 
 
+
 # ------------------------------------------------------------------
 # VERIFY SINGLE PAYMENT
 # ------------------------------------------------------------------
+'''
 def process_promotion_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
@@ -822,11 +809,56 @@ def process_promotion_payment_by_payment_id(payment_id: str):
         db.rollback()
     finally:
         db.close()
+'''
+def process_promotion_payment_by_payment_id(payment_id: str):
+    db = SessionLocal()
+    try:
+        res = requests.get(
+            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            return
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.status != "paid",
+            InvoiceModel.type == "promotion",
+        ).first()
+
+        if not invoice:
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        subscription = db.query(PromotionSubscriptionModel).get(
+            invoice.object_id
+        )
+        if subscription:
+            subscription.status = "active"
+
+        db.commit()
+
+    except Exception:
+        logger.exception("Promotion payment verification failed")
+        db.rollback()
+    finally:
+        db.close()
 
 
 # ------------------------------------------------------------------
 # POLL PENDING PAYMENTS (ENCRYPTED CALLBACK FALLBACK)
 # ------------------------------------------------------------------
+'''
 def poll_pending_promotion_payments():
     db = SessionLocal()
     try:
@@ -871,7 +903,51 @@ def poll_pending_promotion_payments():
         db.rollback()
     finally:
         db.close()
+'''
 
+def poll_pending_promotion_payments():
+    db = SessionLocal()
+    try:
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "promotion",
+        ).all()
+
+        for invoice in invoices:
+            res = requests.get(
+                "https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            for p in res.get("payments", []):
+                code = p.get("result", {}).get("code", "")
+                if not code.startswith(("000.000", "000.100", "000.200")):
+                    continue
+
+                if invoice.status == "paid":
+                    continue
+
+                invoice.status = "paid"
+                invoice.payment_id = p.get("id")
+
+                subscription = db.query(PromotionSubscriptionModel).get(
+                    invoice.object_id
+                )
+                if subscription:
+                    subscription.status = "active"
+
+                db.commit()
+
+    except Exception:
+        logger.exception("Promotion polling failed")
+        db.rollback()
+    finally:
+        db.close()
 
 '''
 @promotion_router.api_route("/packages/callback/hyper", methods=["GET", "POST"])
