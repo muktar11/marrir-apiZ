@@ -718,7 +718,7 @@ def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
 # ------------------------------------------------------------------
 # CALLBACK (ONLY CALLED BY HYPERPAY)
 # ------------------------------------------------------------------
-@promotion_router.post("/packages/callback/hyperpay")
+@promotion_router.post("/packages/callback/hyper")
 async def promotion_hyperpay_callback(
     request: Request,
     background_tasks: BackgroundTasks,
