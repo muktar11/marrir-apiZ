@@ -639,7 +639,7 @@ async def buy_promotion_package(
     res = requests.post(
         "https://test.oppwa.com/v1/checkouts",
         data=payload,
-        headers=headers,
+        headers=get_hyperpay_auth_header(),
     ).json()
 
     checkout_id = res.get("id")
