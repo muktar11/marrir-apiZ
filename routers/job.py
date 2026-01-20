@@ -1007,7 +1007,7 @@ async def job_application_hyperpay_callback(request: Request, background_tasks: 
     except:
         pass
 
-    logger.info("HyperPay webhook received: %s", data)
+    logger.info("Job HyperPay webhook received: %s", data)
 
     payment_id = data.get("id")
     if payment_id:
@@ -1059,7 +1059,7 @@ def process_job_payment_by_payment_id(payment_id: str):
 
 
 
-@job_router.get("/pay/status")
+@job_router.get("my-applications/status/callback/hyper" )
 async def pay_status(
     merchantTransactionId: str,
     db: Session = Depends(get_db_sessions),
