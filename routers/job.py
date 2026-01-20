@@ -992,7 +992,7 @@ async def update_job_application_status(
 
 
 # --- HyperPay webhook callback ---
-@job_router.post("packages/callback/hyper)")
+@job_router.post("packages/callback/hyper")
 async def job_application_hyperpay_callback(request: Request, background_tasks: BackgroundTasks):
     data = {}
     try:
@@ -1117,13 +1117,7 @@ async def hyperpay_job_application_callback(
         logger.error(f"Callback Error: {e}")
         return {"status": "failed", "message": str(e)}
 '''
-from fastapi import APIRouter, Response, status
-@job_router.post("/packages/callback/hyper")
-async def buy_promotion_package_callback():
-    return Response(
-        status_code=status.HTTP_200_OK,
-        content="OK"
-    )
+
 
 @job_router.post("/my-applications/payment/info")
 async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema, _=Depends(authentication_context),__=Depends(build_request_context)):
