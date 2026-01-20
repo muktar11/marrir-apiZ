@@ -991,8 +991,10 @@ async def update_job_application_status(
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
 
 
+
+
 # --- HyperPay webhook callback ---
-@job_router.post("packages/callback/hyper")
+@job_router.post("/packages/callback/hyper")
 async def job_application_hyperpay_callback(request: Request, background_tasks: BackgroundTasks):
     data = {}
     try:
