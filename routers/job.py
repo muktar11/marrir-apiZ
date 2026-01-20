@@ -1,1831 +1,1153 @@
-import {
-  Button,
-  Checkbox,
-  DatePicker,
-  Dropdown,
-  Input,
-  Menu,
-  MenuProps,
-  Modal,
-  Select,
-  Spin,
-  Table,
-  message,
-} from "antd";
-import { GoTriangleUp } from "react-icons/go";
-import { tw } from "typewind";
-import { useStores } from "../../../hooks/useStores";
-import {
-  ApplyJobSingleReadSchema,
-  JobReadSchema,
-  OfferTypeSchema,
-  UserCVFilterSchema,
-  UserReadSchema_Output,
-  UserRoleSchema,
-} from "../../../api/requests";
-import { useEffect, useState } from "react";
-import {
-  useCvServiceGenerateCvReportApiV1CvGenerateReportPost,
-  useCvServiceGenerateSaudiReportApiV1CvGenerateSaudiPost,
-  useJobServiceApplyForJobApiV1JobApplyPost,
-  useJobServiceCloseJobPostApiV1JobCloseDelete,
-  useJobServiceReadJobPostApiV1JobSinglePost,
-  useOfferServiceSendOfferApiV1OfferPost,
-  useUserServiceReadManagedUserCvsApiV1UserEmployeesCvPost,
-  useUserServiceReadManagedUsersApiV1UserEmployeesPost,
-} from "../../../api/queries";
-import { useNavigate, useParams } from "react-router-dom";
-import { snakeToCapitalized } from "../../../Utils/snakeToCapitalized";
-import moment from "moment";
-import { ColumnsType } from "antd/es/table";
-import { EllipsisOutlined } from "@ant-design/icons";
-import { Dayjs } from "dayjs";
-import UserFilter from "../../../components/common/UserFilter";
-import { CustomPagination } from "../../../types/Pagination";
-import { RangePickerProps } from "antd/es/date-picker/generatePicker/interface";
-import { useTranslation } from "react-i18next";
-import axios from "axios";
-import { toast, ToastContainer } from "react-toastify";
-import StatusCard from "../../../components/common/StatusCard";
+from datetime import datetime, timezone
+import json
+from typing import Any, List, Optional
+import uuid
+from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
+from starlette.requests import Request
+from core.auth import RBACAccessType, RBACResource, rbac_access_checker
+from models.db import authentication_context, build_request_context, get_db_session, get_db_sessions
+from models.invoicemodel import InvoiceModel
+from models.jobapplicationmodel import JobApplicationModel
+from models.jobmodel import JobModel
+from models.promotionmodel import PromotionPackagesModel
+from repositories.job import JobRepository
+from repositories.jobapplication import JobApplicationRepository
+from routers import version_prefix
+from core.context_vars import context_set_response_code_message, context_actor_user_data
+from schemas.base import GenericMultipleResponse, GenericSingleResponse
+from schemas.jobschema import (
+    ApplicationStatusUpdateSchema,
+    ApplyJobMultipleBaseSchema,
+    ApplyJobReadSchema,
+    ApplyJobSingleBaseSchema,
+    ApplyJobSingleReadSchema,
+    JobApplicationDeleteSchema,
+    JobApplicationPaymentInfoSchema,
+    JobBaseSchema,
+    JobCreateSchema,
+    JobReadSchema,
+    JobUpdateSchema,
+    JobsFilterSchema,
+    JobsSearchSchema,
+)
+import logging
+from telr_payment.api import Telr
 
-const { Search } = Input;
-const { RangePicker } = DatePicker;
-const { Option } = Select;
+from schemas.transferschema import TransferRequestPaymentCallback
+from utils.send_email import send_email
+from models.notificationmodel import Notifications
+from core.security import settings
+logger = logging.getLogger(__name__)
 
-interface DataType {
-  Photo?: any;
-  Name: string;
-  PassportNumber: string;
-  Email?: string | null;
-  PhoneNumber?: string;
-  Status?: string;
-  User: UserReadSchema_Output;
-}
+job_router_prefix = version_prefix + "job"
 
-interface ApplicationDataType {
-  Photo?: any;
-  Name?: string | null;
-  Status?: string;
-  User: UserReadSchema_Output;
-  JobApplication: ApplyJobSingleReadSchema;
-}
-/*
-const NewJobDetails = () => {
-  const { t } = useTranslation();
-  const { id } = useParams();
-  const { userStore } = useStores();
-  const router = useNavigate();
-  const acceptJobApplication = useOfferServiceSendOfferApiV1OfferPost();
-  const closeJobPost = useJobServiceCloseJobPostApiV1JobCloseDelete();
-  const applyForJob = useJobServiceApplyForJobApiV1JobApplyPost();
+job_router = APIRouter(prefix=job_router_prefix)
 
-  const navigate = useNavigate();
-  const [job, setJob] = useState<JobReadSchema | null>(null);
-  const [hasApplied, setHasApplied] = useState<Boolean>(false);
-  const role = userStore.user?.role;
-  const columns: ColumnsType<DataType> = [
-    {
-      title: "",
-      dataIndex: "Photo",
-      width: "5%",
-    },
-    {
-      title: t("job_detail_name"),
-      dataIndex: "Name",
-      width: "20%",
-    },
-    {
-      title: t("job_detail_cv_view"),
-      dataIndex: "ViewCV",
-      width: "20%",
-    },
-    {
-      title: t("job_detail_passport_number"),
-      dataIndex: "PassportNumber",
-      width: "15%",
-    },
-    
-    {
-      title: t("job_detail_email"),
-      dataIndex: "Email",
-      width: "20%",
-    },
-    {
-      title: t("job_detail_phone_number"),
-      dataIndex: "PhoneNumber",
-      width: "15%",
-    },
-  
-    {
-      title: t("job_detail_status"),
-      dataIndex: "Status",
-      width: "10%",
-      key: "Status",
-      render: (status: string) => (
-        <span
-          className={`inline-block px-3 py-1 text-sm rounded-full border 
-            ${
-              status === "approved"
-                ? "border-green-500 text-green-600 bg-green-50"
-                : "border-gray-400 text-gray-600 bg-gray-100"
-            }`}
-        >
-          {status.charAt(0).toUpperCase() + status.slice(1)}
-        </span>
-      ),
-    },
-  ];
+telr = Telr(auth_key=settings.TELR_AUTH_KEY, store_id=settings.TELR_STORE_ID, test=settings.TELR_TEST_MODE)
 
-  const generateCvData =
-    useCvServiceGenerateCvReportApiV1CvGenerateReportPost();
-  const saudiReport = useCvServiceGenerateSaudiReportApiV1CvGenerateSaudiPost();
+def send_notification(db, user_id, title, description, type):
+    notification = Notifications(
+        title=title,
+        description=description,
+        type=type,
+        user_id=user_id,
+    )
+    db.add(notification)
 
-  const items: MenuProps["items"] = [];
+    try:
+        db.commit()
+    except Exception as e:
+        logger.error(f"Failed to send notification: {e}")
+        db.rollback()
 
-  const menuProps = {
-    items,
-  };
 
-  const applicationColumns = [
-    {
-      title: "",
-      dataIndex: "select",
-      width: "5%",
-      render: (_, record) => (
-        <Checkbox
-          onChange={(e) => handleCheckboxChange(record.id, e.target.checked)}
-          checked={selectedJobIds.includes(record.id)}
-          disabled={record.status !== "pending"} // Enable only for pending applications
-        />
-      ),
-    },
-    {
-      title: t("Name"),
-      dataIndex: "name",
-      width: "20%",
-      render: (_, record) =>
-        record?.user?.cv.english_full_name
-          ? `${record.user.cv.english_full_name}`
-          : "N/A",
-    },
-    {
-      title: "CV",
-      key: "select",
-      width: "20%",
-      render: (_: any, record: any) => (
-        <button
-          className="px-4 py-2 mt-4 bg-blue-600 text-white rounded-lg text-lg font-semibold transition-all duration-300 hover:bg-blue-700"
-          onClick={() => handleNavigate(record.user_id)}
-        >
-          {t("View")}
-        </button>
-      ),
-    },
-    // {
-    //   title: "Status",
-    //   dataIndex: "status",
-    //   width: "10%",
-    //   render: (_, record) => record?.status || "N/A",
-    // },
-    // ... existing code ...
-    {
-      title: t("reserve_history_expanded_status"),
-      key: "status",
-      render: (text: any, reserve: any) => (
-        <div className="flex items-center gap-2">
-          <StatusCard status={reserve.status} />
-          {reserve.status === "accepted" && (
-            <Dropdown.Button
-              menu={menuProps}
-              onClick={() => {
-                generateCvData
-                  .mutateAsync({
-                    requestBody: {
-                      user_id: reserve?.user?.cv?.user_id,
-                    },
-                  })
-                  .then((r: any) => {
-                    let printWindow = window.open(
-                      "",
-                      "_blank",
-                      "toolbar=no,status=no,menubar=no,scrollbars=no,resizable=no,left=10000, top=10000, width=1920, height=1080, visible=none"
-                    );
-                    if (printWindow) {
-                      printWindow.document.write(r.data);
-                      printWindow.document.close();
-                      printWindow.print();
-                    }
-                  });
-              }}
-            >
-              {t("download_cv")}
-            </Dropdown.Button>
-          )}
-        </div>
-      ),
-      width: "15%",
-    },
+@job_router.post(
+    "/", response_model=GenericSingleResponse[JobReadSchema], status_code=201
+)
+@rbac_access_checker(resource=RBACResource.job, rbac_access_type=RBACAccessType.create)
+async def create_job_post(
+    *,
+    job_in: JobCreateSchema,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    create a new job post
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    new_job = job_repo.create(db, obj_in=job_in)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": new_job,
+    }
 
-  ];
 
-  const [selectedApplications, setSelectedApplications] = useState<number[]>(
-    []
-  );
-  const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
+@job_router.post("/bulk", response_model=None, status_code=201)
+async def bulk_create_job(
+    *,
+    file: UploadFile,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    create many new jobs.
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    job_created = job_repo.bulk_upload(db, file=file)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {}
 
-  
-  const handleCheckboxChange = (jobId: number, checked: boolean) => {
-    setSelectedJobIds((prevSelected) =>
-      checked
-        ? [...prevSelected, jobId]
-        : prevSelected.filter((id) => id !== jobId)
-    );
-  };
 
-  const [paymentData, setPaymentData] = useState(null);
+@job_router.post(
+    "/paginated", response_model=GenericMultipleResponse[JobReadSchema], status_code=200
+)
+@rbac_access_checker(
+    resource=RBACResource.job, rbac_access_type=RBACAccessType.read_multiple
+)
+async def read_job_posts(
+    *,
+    filters: Optional[JobsFilterSchema] = None,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    skip: int = 0,
+    limit: int = 10,
+    search: str = None,
+    start_date: str = None,
+    end_date: str = None,
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    Retrieve paginated job posts.
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    jobs_read = job_repo.get_some(
+        db,
+        skip=skip,
+        limit=limit,
+        search=search,
+        search_schema=JobsSearchSchema,
+        start_date=start_date,
+        end_date=end_date,
+        filters=filters,
+    )
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": jobs_read,
+        "count": res_data.count,
+    }
 
-  useEffect(() => {
-    const fetchApplications = async () => {
-      try {
-        const userToken = localStorage.getItem("accessToken");
-        if (!userToken) {
-          console.error("No access token found.");
-          return;
+
+@job_router.post(
+    "/single", response_model=GenericSingleResponse[JobReadSchema], status_code=200
+)
+@rbac_access_checker(resource=RBACResource.job, rbac_access_type=RBACAccessType.read)
+async def read_job_post(
+    *,
+    filters: Optional[JobsFilterSchema] = None,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    Retrieve single job post.
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    job_read = job_repo.get(db, filters=filters)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": job_read,
+    }
+
+
+@job_router.patch(
+    "/", response_model=GenericSingleResponse[JobReadSchema], status_code=200
+)
+@rbac_access_checker(resource=RBACResource.job, rbac_access_type=RBACAccessType.update)
+async def update_job_post(
+    *,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    job_update: JobUpdateSchema,
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    Update a job post
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    job_updated = job_repo.update(
+        db, filter_obj_in=job_update.filter, obj_in=job_update.update
+    )
+
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": job_updated,
+    }
+
+
+@job_router.delete(
+    "/close", response_model=GenericSingleResponse[JobReadSchema], status_code=200
+)
+@rbac_access_checker(
+    resource=RBACResource.job, rbac_access_type=RBACAccessType.soft_delete
+)
+async def close_job_post(
+    *,
+    filters: Optional[JobsFilterSchema] = None,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    close a job post
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    job_deleted = job_repo.soft_delete(db, filters)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": job_deleted,
+    }
+
+
+@job_router.delete(
+    "/", response_model=GenericSingleResponse[JobReadSchema], status_code=200
+)
+@rbac_access_checker(resource=RBACResource.job, rbac_access_type=RBACAccessType.delete)
+async def remove_job_post(
+    *,
+    filters: Optional[JobsFilterSchema] = None,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    delete a job post
+    """
+    db = get_db_session()
+    job_repo = JobRepository(entity=JobModel)
+    job_deleted = job_repo.delete(db, filters)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": job_deleted,
+    }
+
+
+@job_router.post(
+    "/apply",
+    response_model=GenericMultipleResponse[ApplyJobReadSchema],
+    status_code=200,
+)
+@rbac_access_checker(
+    resource=RBACResource.job_application, rbac_access_type=RBACAccessType.create
+)
+async def apply_for_job(
+    *,
+    job_in: ApplyJobMultipleBaseSchema,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    apply for a job post
+    """
+    db = get_db_session()
+    job_application_repo = JobApplicationRepository(entity=JobApplicationModel)
+    new_job_application = job_application_repo.apply(db, obj_in=job_in)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": new_job_application,
+    }
+
+
+@job_router.delete(
+    "/apply/remove",
+    response_model=GenericSingleResponse[ApplyJobSingleReadSchema],
+    status_code=200,
+)
+async def remove_job_application(
+    *,
+    filters: Optional[JobApplicationDeleteSchema] = None,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response
+) -> Any:
+    """
+    remove application for a job post
+    """
+    db = get_db_session()
+    job_application_repo = JobApplicationRepository(entity=JobApplicationModel)
+    job_application_deleted = job_application_repo.delete(db, filters)
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+    return {
+        # "status_code": 200,
+        # "message": "message",
+        # "error": False,
+        # "data": {
+        #     "user_email": "",
+        #     "job_id": 1
+        # },
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        "data": job_application_deleted,
+    }
+
+@job_router.get("/my-applications/{job_id}", response_model=list[ApplyJobReadSchema])
+async def get_my_applications(job_id: int,_=Depends(authentication_context),__=Depends(build_request_context)):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        if user.role != "recruitment" and user.role != "sponsor":
+            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+        
+        jobs = db.query(JobModel).filter(JobModel.id == job_id, JobModel.posted_by == user.id).first()
+
+        if not jobs:
+            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
+        
+        return jobs.job_applications
+
+    except Exception as e:
+        print(e)
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
+from datetime import datetime
+import uuid
+
+def generate_invoice_number():
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+import os
+
+from datetime import datetime
+import uuid
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from sqlalchemy.orm import Session
+
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+#from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+import os
+
+TEMPLATE_DIR = "templates"
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+
+env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+def generate_invoice_pdf(invoice):
+    template = env.get_template("invoice.html")
+
+    vat = round(invoice.amount * 0.05, 2)
+    total = invoice.amount + vat
+
+    html_content = template.render(
+        invoice={
+            "invoice_number": invoice.invoice_number,
+            "payment_id": invoice.payment_id,
+            "amount": f"{invoice.amount:.2f}",
+            "vat": f"{vat:.2f}",
+            "total": f"{total:.2f}",
+            "description": invoice.description or "Service",
+            "billing_email": invoice.billing_email,
+            "billing_country": invoice.billing_country,
+            "card_holder": invoice.card_holder,
+            "date": invoice.created_at.strftime("%d %B %Y"),
         }
-        const JobId = localStorage.getItem("jobId");
-        const response = await axios.get(
-          `${
-            import.meta.env.VITE_BASE_URL
-          }/api/v1/job/my-applications/${JobId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${userToken}`, 
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        const formattedData = response.data.map((app) => ({
-          ...app,
-          key: app.id, 
-        }));
-        setTableApplicationDataSources(formattedData);
-      } catch (error) {
-        console.error("Error fetching applications:", error);
-      }
-    };
-    fetchApplications();
-  }, []); 
+    )
 
-  const handlePayment = async (batch: any, setPaymentData: any) => {
-    try {
-      
-      const token = localStorage.getItem("accessToken");
-      if (!token) {
-        message.error("User not authenticated");
-        return;
-      }
-      if (selectedJobIds.length === 0) {
-        message.warning("Please select at least one job application.");
-        return;
-      }
-      const JobId = localStorage.getItem("jobId");
-      const requestData = {
-        job_application_ids: selectedJobIds,
-        job_id: parseInt(JobId, 10),
-      };
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+    HTML(string=html_content).write_pdf(file_path)
 
-      
-      const usetoken = localStorage.getItem("accessToken");
-      const response = await axios.post(
-        `${
-          import.meta.env.VITE_BASE_URL
-        }/api/v1/job/my-applications/payment/info`,
-        requestData, 
-        {
-          headers: {
-            Authorization: `Bearer ${usetoken}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
+    return file_path
 
-      if (!response.data) {
-        throw new Error("No payment data received.");
-      }
+def create_invoice(
+    db, reference: str, amount: float, user_id: uuid.UUID, job_id: str
+) -> InvoiceModel:
+    invoice = InvoiceModel(
+        reference=reference,       # <-- SAVE checkout_id HERE
+        status="pending",
+        amount=amount,
+        created_at=datetime.now(timezone.utc),
+        type="job_application",
+        buyer_id=user_id,
+        object_id=job_id,
+    )
+    db.add(invoice)
+    return invoice
 
-      setPaymentData(response.data); 
-      Modal.confirm({
-        title: "Reserve Payment Details",
-        content: (
-          <div>
-            <p>Number of Profiles: {response.data.profile}</p>
-            <p>Price per Profile: ${response.data.price.toFixed(2)}</p>
-            <p>Total Amount: ${response.data.total_amount.toFixed(2)}</p>
-          </div>
-        ),
-        onOk: async () => {
-          try {
-            
-            const JobId = localStorage.getItem("jobId");
-            const usetoken = localStorage.getItem("accessToken");
-            const jobIdNumber = JobId ? parseInt(JobId, 10) : null;
-            if (!jobIdNumber) {
-              message.error("Invalid Job ID.");
-              return;
-            }
+def update_invoice(invoice: InvoiceModel, reference: str) -> None:
+    invoice.reference = reference   # <-- UPDATE checkout_id here
 
-            if (!usetoken) {
-              message.error("User not authenticated.");
-              return;
-            }
+def generate_invoice_number():
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
-            if (selectedJobIds.length === 0) {
-              message.warning("Please select at least one job application.");
-              return;
-            }
 
-            
-            const requestedData = {
-              job_application_ids: selectedJobIds, 
-              status: "accepted",
-            };
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
 
-            const telrResponse = await axios.patch(
-              `${
-                import.meta.env.VITE_BASE_URL
-              }/api/v1/job/my-applications/${JobId}/status`,
-              requestedData,
-              {
-                headers: {
-                  Authorization: `Bearer ${usetoken}`,
-                  "Content-Type": "application/json",
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
+
+
+
+
+@job_router.patch("/my-applications/{job_id}/status")
+async def update_job_application_status(data: ApplicationStatusUpdateSchema, job_id: int, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        if user.role != "recruitment" and user.role != "sponsor":
+            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        job = db.query(JobModel).filter(JobModel.id == job_id).first()
+
+        if not job:
+            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
+
+        jobs_applications: List[JobApplicationModel] = db.query(JobApplicationModel).filter(JobApplicationModel.job_id == job_id, JobApplicationModel.id.in_(data.job_application_ids), JobApplicationModel.status == "pending").all()
+        
+        if not jobs_applications:
+            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
+
+        for job_application in jobs_applications:
+            if job_application.job.posted_by != user.id:
+                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        if data.status == "declined":
+            for job_application in jobs_applications:
+                job_application.status = "declined"
+                db.add(job_application)
+
+            db.commit()
+
+            title = "Job Application Declined"
+
+            description = f"{job.job_poster.first_name} {job.job_poster.last_name} has declined the job application for {job.name}"
+
+            background_tasks.add_task(send_notification, db, job_application.user_id, title, description, "job_application")
+
+            email = job_application.user.email or job_application.user.cv.email
+
+            background_tasks.add_task(send_email, email=email, title=title, description=description)
+
+            return {"message": "Job applications status updated successfully"}
+
+        if data.status == "accepted":
+            package = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.role == user.role, PromotionPackagesModel.category == "job_application").first()
+
+#            return_url = f"{settings.TELR_JOB_APPLICATION_RETURN_URL.replace("replace", user.role)}/{job_id}"
+            return_url = f"{settings.TELR_JOB_APPLICATION_RETURN_URL.replace('replace', user.role)}/{job_id}"
+
+            for job_application in jobs_applications:
+
+                job_application = db.query(JobApplicationModel).filter(JobApplicationModel.user_id == job_application.user_id, JobApplicationModel.status == "accepted").first()
+
+                if job_application:
+                    return Response(status_code=400, content=json.dumps({"message": f"{job_application.user.first_name} {job_application.user.last_name} has already been accepted for other job"}), media_type="application/json")
+
+            order_response = telr.order(
+                order_id=f"ORDER{uuid.uuid4().hex[:8]}",
+                amount=package.price * len(jobs_applications),
+                currency="AED",
+                return_url=return_url,
+                return_decl=return_url,
+                return_can=return_url,
+                description=f"Job Application"
+            )
+
+            ref = order_response.get("order", {}).get("ref")
+
+            if not ref:
+                return Response(status_code=400, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
+
+            ids = ",".join([str(tr.id) for tr in jobs_applications])
+
+            invoice = db.query(InvoiceModel).filter(
+                InvoiceModel.buyer_id == user.id,
+                InvoiceModel.status == "pending",
+                InvoiceModel.type == "job_application"
+            ).first()
+
+            if invoice:
+                update_invoice(invoice, ref)
+            else:
+                invoice = create_invoice(db, ref, len(jobs_applications) * 10, user.id, ids)
+                db.add(invoice)
+
+            db.commit()
+
+            return {
+                "method": order_response.get("method"),
+                "trace": order_response.get("trace"),
+                "order": {
+                    "ref": order_response.get("order", {}).get("ref"),
+                    "url": order_response.get("order", {}).get("url"),
                 },
-              }
-            );
-
-            if (telrResponse.data?.order?.url) {
-              localStorage.setItem("ref", telrResponse.data.order.ref);
-              window.location.href = telrResponse.data.order.url;
-            } else {
-              throw new Error("Invalid payment response");
             }
-          } catch (error: any) {
-            
-            message.error(
-              error?.response?.data?.detail ||
-                "Payment failed. Please try again."
-            );
-          }
-        },
-      });
-    } catch (error: any) {
-      console.error("Payment error:", error);
-      message.error(
-        error?.response?.data?.detail || "An error occurred. Please try again."
-      );
-    }
-  };
 
-  const handlePaymentCallback = async () => {
-    try {
-      
-      const token = localStorage.getItem("accessToken");
-      if (!token) {
-        message.error("User not authenticated");
-        return;
-      }
-      
-      const ref = localStorage.getItem("ref");
-      if (!ref) {
-        console.warn("No reference found in localStorage.");
-        return;
-      }
-      const requestData = {
-        ref: ref, 
-      };
-      
-      const response = await axios.post(
-        `${
-          import.meta.env.VITE_BASE_URL
-        }/api/v1/job/my-applications/status/callback`,
-        requestData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            "Content-Type": "application/json",
-          },
-        }
-      );
-      if (!response.data) {
-        throw new Error("No payment data received.");
-      }
-      
-      
-      if (response?.status && response.status === 200) {
-        message.success("Payment successful!");
-        localStorage.removeItem("ref");
-      }
-    } catch (error) {
-    
-      message.error("Failed to verify payment status.");
-    }
-  };
+    except Exception as e:
+        print(e)
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
 
-  
-  useEffect(() => {
-    const ref = localStorage.getItem("ref");
-    if (ref) {
-      handlePaymentCallback();
-    }
-  }, []);
 
-  const [searchTerm, setSearchTerm] = useState<string>("");
-  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([
-    null,
-    null,
-  ]);
-  const [pageSize, setPageSize] = useState(10);
-  const [pagination, setPagination] = useState<CustomPagination>({
-    limit: pageSize,
-    skip: 0,
-  });
-  const [tableDataSource, setTableDataSource] = useState<DataType[]>([]);
-  const [tableApplicationDataSource, setTableApplicationDataSource] = useState<
-    ApplicationDataType[]
-  >([]);
 
-  const [tableApplicationDataSources, setTableApplicationDataSources] =
-    useState<ApplicationDataType[]>([]);
-  const [paginatedUsers, setPaginatedUsers] = useState<any[]>([]);
-  const [filter, setFilter] = useState<UserCVFilterSchema>({});
-  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
 
-  const onSearch = (value: string) => {
-    setSearchTerm(value);
-    
-  };
 
-  const onSelectChange = (selectedRowKeys: any) => {
-    setSelectedRowKeys(selectedRowKeys);
-  };
 
-  const rowSelection = {
-    selectedRowKeys,
-    onChange: onSelectChange,
-    columnWidth: "3%",
-    getCheckboxProps: (record: any) => ({
-      disabled: record.hasApplied,
-    }),
-  };
-  const onDateRangeChange: RangePickerProps<Dayjs>["onChange"] = (dates) => {
-    setDateRange(dates as [Dayjs | null, Dayjs | null]);
-  };
+'''
+@job_router.patch("/my-applications/{job_id}/status/hyper")
+async def update_job_application_status(
+    data: ApplicationStatusUpdateSchema,
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context)
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
 
-  const handlePageSizeChange = (value: number) => {
-    setPagination({ ...pagination, limit: value });
-    setPageSize(value);
-  };
-
-  const handlePaginationChange = (page: number, pageSize?: number) => {
-    if (pageSize) {
-      setPagination({ limit: pageSize, skip: (page - 1) * pageSize });
-    }
-  };
-
-  const {
-    data: jobData,
-    isError: jobIsError,
-    isLoading: jobIsLoading,
-    mutateAsync,
-  } = useJobServiceReadJobPostApiV1JobSinglePost({
-    onSuccess: (data) => {
-      if (data) setJob(data.data);
-      data.data?.job_applications &&
-        setHasApplied(
-          data.data?.job_applications?.some(
-            (application) => application.user_id === userStore.user?.id
-          )
-        );
-    },
-    onError: (error, variables, context) => {},
-  });
-
-  const {
-    data: employeesData,
-    isError: employeeIsError,
-    isLoading: employeesIsLoading,
-    mutateAsync: employeesMutateAsync,
-  } = useUserServiceReadManagedUserCvsApiV1UserEmployeesCvPost({
-    onSuccess: (data) => {
-      if (data) {
-        setPaginatedUsers(data.data);
-      }
-    },
-    onError: (error, variables, context) => {},
-  });
-
-  const acceptApplication = async (userId: string, detail: string) => {
-    const response = await acceptJobApplication
-      .mutateAsync({
-        requestBody: {
-          job_id: parseInt(id!),
-          receiver_id: userId,
-          detail: detail,
-        },
-      })
-      .then((data) => {
-        message.success("Accepted Job Application");
-        window.location.reload();
-      })
-      .catch((error) => {
-        message.error(
-          error.body?.message || "Failed to accept job application"
-        );
-      });
-  };
-
-  const jobApply = async (userIds: string[]) => {
-    const response = await applyForJob
-      .mutateAsync({
-        requestBody: {
-          job_id: job?.id!,
-          user_id: userIds,
-        },
-      })
-      .then((data) => {
-        message.success("Applied for job successfully!");
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
-      })
-      .catch((error) => {
-        message.error(error.body.message || "Job application failed");
-      });
-  };
-
-  const closeJob = async () => {
-    await closeJobPost
-      .mutateAsync({
-        requestBody: {
-          id: parseInt(id!),
-        },
-      })
-      .then((data: any) => {
-        message.success("Job post closed successfully!");
-        router(-1);
-      })
-      .catch((error: any) => {
-        message.success("Unable to close job post successfully!");
-      });
-  };
-
-  useEffect(() => {
-    mutateAsync({
-      requestBody: {
-        id: parseInt(id!),
-      },
-    });
-  }, []);
-
-  useEffect(() => {
-    const fetchUsers = async () => {
-      const formattedStartDate = dateRange[0]?.format("YYYY-MM-DD");
-      const formattedEndDate = dateRange[1]?.format("YYYY-MM-DD");
-
-      const response = await employeesMutateAsync({
-        limit: pagination.limit,
-        skip: pagination.skip,
-        search: searchTerm,
-        startDate: formattedStartDate,
-        endDate: formattedEndDate,
-        managerId: userStore.user?.id!,
-        requestBody: filter,
-      });
-    };
-
-    {
-      userStore.user?.role !== UserRoleSchema.EMPLOYEE && fetchUsers();
-    }
-  }, [searchTerm, dateRange, pagination, filter]);
-
-  const handleNavigate = (user_id: string) => {
-    navigate(`/${role}/view/employees/${user_id}`);
-  };
-
-  const handleCVNavigate = (user_id: string) => {
-    navigate(`/${role}/employees/${user_id}`);
-  };
-
-  useEffect(() => {
-    if (paginatedUsers) {
-      const tableData: DataType[] = paginatedUsers.map((employee) => ({
-        hasApplied: jobData?.data?.job_applications?.some((application) => {
-          return application.user_id === employee.id;
-        }),
-        Photo:
-          employee.cv && employee.cv.head_photo ? (
-            <div className="w-10 h-10 rounded-full overflow-hidden">
-              <img
-                className="w-full h-full object-cover"
-                src={`${import.meta.env["VITE_BASE_URL"]}/static/${
-                  employee.cv.head_photo
-                }`}
-                alt="Profile Picture"
-              />
-            </div>
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-gray-400"></div>
-          ),
-        Name: employee.cv
-          ? employee.cv?.english_full_name
-          : employee.first_name || employee.last_name
-          ? employee.first_name + " " + employee.last_name
-          : "N/A",
-        PassportNumber: employee.cv ? employee.cv.passport_number : "N/A",
-        Email:
-          employee.cv && employee.cv?.email
-            ? employee.cv?.email
-            : employee.email
-            ? employee.email
-            : "N/A",
-        PhoneNumber: employee.phone_number?.split(":")[1] || "N/A",
-        Status: snakeToCapitalized(employee.status || ""),
-        ViewCV: employee.cv ? (
-          <button
-            className="px-4 py-2 mt-4 bg-blue-600 text-white rounded-lg text-lg font-semibold transition-all duration-300 hover:bg-blue-700"
-            onClick={() => handleCVNavigate(employee.cv.user_id)}
-          >
-            View
-          </button>
-        ) : (
-          <span className="text-gray-500">No CV</span>
-        ),
-
-        DownloadCV:
-          employee.cv && employee.cv.cv_file ? (
-            <a
-              href={`${import.meta.env["VITE_BASE_URL"]}/static/${
-                employee.cv.cv_file
-              }`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1 text-white bg-blue-500 rounded-md hover:bg-blue-600"
-            >
-              Download CV
-            </a>
-          ) : (
-            <span className="text-gray-500">No CV</span>
-          ),
-        User: employee,
-      }));
-
-      setTableDataSource(tableData);
-    }
-  }, [paginatedUsers]);
-
-  useEffect(() => {
-    if (jobData?.data?.job_applications) {
-      const applications = jobData?.data?.job_applications;
-      const tableData: ApplicationDataType[] = applications.map(
-        (application) => ({
-          Photo:
-            application.user?.cv && application.user.cv.head_photo ? (
-              <div className="w-10 h-10 rounded-full overflow-hidden">
-                <img
-                  className="w-full h-full object-cover"
-                  src={`${import.meta.env["VITE_BASE_URL"]}/static/${
-                    application.user.cv.head_photo
-                  }`}
-                  alt="Profile Picture"
-                />
-              </div>
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-gray-400"></div>
-            ),
-          Name: application.user?.cv
-            ? application.user.cv?.english_full_name
-            : application.user?.first_name || application.user?.last_name
-            ? application.user?.first_name + " " + application.user?.last_name
-            : "N/A",
-          Status: snakeToCapitalized(application.status || ""),
-          User: application.user!,
-          JobApplication: application,
-        })
-      );
-
-      setTableApplicationDataSource(tableData);
-    }
-  }, [jobData?.data?.job_applications]);
-
-  return (
-    <div className={tw.p_5.h_screen}>
-      {jobIsLoading ? (
-        <Spin />
-      ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-            <div>
-              <div className={tw.flex.flex_col.space_x_1.mb_8}>
-                <span>
-                  {jobData?.data?.deleted_at ? (
-                    <div className="w-fit bg-red-200 text-red-500 p-1 px-4 rounded-md">
-                      {t("job_detail_closed")}
-                    </div>
-                  ) : (
-                    <div className="w-fit bg-green-200 text-green-500 p-1 px-4">
-                      {t("job_detail_active")}
-                    </div>
-                  )}
-                </span>
-                <span className={tw.text_black}>
-                  {t("job_detail_posted_on")}:
-                  {moment(jobData?.data?.created_at).format("MMM DD, YYYY")}
-                </span>
-              </div>
-              <div
-                className={tw.flex.flex_col.space_x_0.space_y_4.justify_start.items_start.mb_10.md(
-                  tw.flex.flex_row.space_x_4.space_y_0
-                )}
-              >
-                <div
-                  className={
-                    tw.w_["260px"].h_["135px"].bg_white.rounded_md.py_6.px_8
-                      .shadow.flex.flex_col.space_y_1.items_start.justify_start
-                  }
-                >
-                  <span className={tw.text_gray_500.text_base}>
-                    {t("job_detail_number_of_applications")}
-                  </span>
-                  <span className={tw.text_2xl.font_bold}>
-                    {jobData?.data?.job_applications?.length}
-                  </span>
-                  <div
-                    className={tw.flex.flex_row.space_x_1.justify_end.items_end}
-                  >
-                    <span className={tw.text_sm}>Count </span>
-                    <GoTriangleUp className={tw.text_green_500} size={20} />
-                    <span className={tw.text_green_500}>0%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-10">
-              <h2 className="text-2xl font-semibold text-black mb-6">
-                {t("job_detail_info")}
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white shadow rounded-xl p-6">
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_description")}
-                  </p>
-                  <p className="text-base font-medium text-black">
-                    {jobData?.data?.description || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">{t("job_location")}</p>
-                  <p className="text-base font-medium text-black">
-                    {jobData?.data?.location || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_occupation")}
-                  </p>
-                  <p className="text-base font-medium text-black capitalize">
-                    {jobData?.data?.occupation?.replaceAll("_", " ") || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_education")}
-                  </p>
-                  <p className="text-base font-medium text-black capitalize">
-                    {jobData?.data?.education_status?.replaceAll("_", " ") ||
-                      "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">{t("job_type")}</p>
-                  <p className="text-base font-medium text-black capitalize">
-                    {jobData?.data?.type?.replaceAll("_", " ") || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_vacancies")}
-                  </p>
-                  <p className="text-base font-medium text-black">
-                    {jobData?.data?.amount || "-"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          
-
-          {job?.posted_by === userStore.user?.id ? (
-            <div className={tw.flex.flex_col.space_x_1.mb_8}>
-              <span className={tw.text_2xl.font_semibold.text_primaryBlue}>
-                {t("job_detail_applications")}
-              </span>
-              <div style={{ marginTop: 16, textAlign: "right" }}>
-                <Button
-                  type="primary"
-                  disabled={selectedJobIds.length === 0} 
-                  onClick={() => handlePayment(selectedJobIds, setPaymentData)} 
-                >
-                  Accept
-                </Button>
-              </div>
-
-              <Table
-                columns={applicationColumns}
-                dataSource={tableApplicationDataSources}
-                scroll={{ x: true }}
-              />
-
-              {!jobData?.data?.deleted_at && (
-                <div className={tw.flex.w_full.justify_end.mt_8.mb_8.gap_x_2}>
-                  <Button
-                    className={tw.border_0.bg_primaryBlue.w_[
-                      "1/4"
-                    ].h_10.rounded_sm.text_white.justify_end.items_end.mt_6.md(
-                      tw.mt_0
-                    )}
-                    onClick={() => router(`/sponsor/jobs/${id}/edit`)}
-                  >
-                    {t("job_detail_edit")}
-                  </Button>
-                  <Button
-                    className={tw.border_0.bg_red_400.w_[
-                      "1/4"
-                    ].h_10.rounded_sm.text_white.justify_end.items_end.mt_6.md(
-                      tw.mt_0
-                    )}
-                    onClick={closeJob}
-                  >
-                    {t("job_detail_close_job_post")}
-                  </Button>
-                </div>
-              )}
-            </div>
-          ) : userStore.user?.role !== UserRoleSchema.EMPLOYEE &&
-            userStore.user?.role !== UserRoleSchema.ADMIN ? (
-            <>
-              <div
-                className={tw.flex_col.space_y_4.space_x_0.justify_between.mb_4.lg(
-                  tw.flex.flex_row.space_y_0.space_x_4.mb_4
-                )}
-              >
-                <div className={tw.flex.flex_col.space_y_3.mb_3}>
-                  <span className={tw.text_black.font_medium.text_lg}>
-                    {t("job_detail_employee")}
-                  </span>
-                </div>
-                <div className={tw.flex.space_x_2.items_center}>
-                  <Search
-                    placeholder={t("job_detail_passport_number")}
-                    allowClear
-                    style={{ width: 300 }}
-                    onSearch={onSearch}
-                  />
-
-                  <UserFilter filter={filter} setFilter={setFilter} />
-                  <Button
-                    className="px-4 py-2 mt-4 bg-blue-600 text-white rounded-lg text-lg font-semibold transition-all duration-300 hover:bg-blue-700"
-                    size="large"
-                    onClick={async () => await jobApply(selectedRowKeys)}
-                  >{`${t("job_detail_apply")} (${
-                    selectedRowKeys.length
-                  })`}</Button>
-                </div>
-              </div>
-              {employeesIsLoading ? (
-                <Spin />
-              ) : (
-                <Table
-                  rowSelection={rowSelection}
-                  columns={columns}
-                  dataSource={tableDataSource}
-                  scroll={{ x: true }}
-                  pagination={{
-                    total: employeesData?.count || 0,
-                    pageSize: pagination.limit,
-                    current: pagination.skip / pagination.limit + 1,
-                    onChange: handlePaginationChange,
-                  }}
-                  rowKey={(record) => record.User.id!}
-                />
-              )}
-              <div className={tw.flex.justify_center}>
-                <Select
-                  defaultValue={pageSize}
-                  style={{ width: 120 }}
-                  onChange={handlePageSizeChange}
-                >
-                  <Option value={10}>10</Option>
-                  <Option value={20}>20</Option>
-                  <Option value={50}>50</Option>
-                  <Option value={100}>100</Option>
-                </Select>
-              </div>
-            </>
-          ) : (
-            userStore.user.role !== UserRoleSchema.ADMIN && (
-              <>
-                <Button
-                  disabled={hasApplied ? true : false}
-                  className="bg-[#1677ff] text-white"
-                  size="large"
-                  onClick={async () => await jobApply([userStore.user?.id!])}
-                >
-                  {applyForJob.isLoading ? (
-                    <Spin />
-                  ) : hasApplied ? (
-                    t("job_detail_applied")
-                  ) : (
-                    t("job_detail_apply")
-                  )}
-                </Button>
-              </>
+        if user.role not in ["recruitment", "sponsor"]:
+            return Response(status_code=403,
+                content=json.dumps({"message": "Unauthorized"}),
+                media_type="application/json"
             )
-          )}
-        </>
-      )}
-    </div>
-  );
-};
 
-export default NewJobDetails;
-*/
-
-
-
-
-
-import { extractToken } from "../../../Utils/extractToken";
-const NewJobDetails = () => {
-  const { t } = useTranslation();
-  const { id } = useParams();
-  const { userStore } = useStores();
-  const router = useNavigate();
-  const acceptJobApplication = useOfferServiceSendOfferApiV1OfferPost();
-  const closeJobPost = useJobServiceCloseJobPostApiV1JobCloseDelete();
-  const applyForJob = useJobServiceApplyForJobApiV1JobApplyPost();
-
-  const navigate = useNavigate();
-  const [job, setJob] = useState<JobReadSchema | null>(null);
-  const [hasApplied, setHasApplied] = useState<Boolean>(false);
-  
-  const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [checkoutId, setCheckoutId] = useState<string | null>(null);
-  const [pollingInterval, setPollingInterval] = useState<NodeJS.Timeout | null>(null);
-  const userData = extractToken(localStorage.getItem("accessToken")!);
-  
-  const role = userStore.user?.role;
-  const columns: ColumnsType<DataType> = [
-    {
-      title: "",
-      dataIndex: "Photo",
-      width: "5%",
-    },
-    {
-      title: t("job_detail_name"),
-      dataIndex: "Name",
-      width: "20%",
-    },
-    {
-      title: t("job_detail_cv_view"),
-      dataIndex: "ViewCV",
-      width: "20%",
-    },
-    {
-      title: t("job_detail_passport_number"),
-      dataIndex: "PassportNumber",
-      width: "15%",
-    },
-   
-    {
-      title: t("job_detail_email"),
-      dataIndex: "Email",
-      width: "20%",
-    },
-    {
-      title: t("job_detail_phone_number"),
-      dataIndex: "PhoneNumber",
-      width: "15%",
-    },
-   
-    {
-      title: t("job_detail_status"),
-      dataIndex: "Status",
-      width: "10%",
-      key: "Status",
-      render: (status: string) => (
-        <span
-          className={`inline-block px-3 py-1 text-sm rounded-full border 
-            ${
-              status === "approved"
-                ? "border-green-500 text-green-600 bg-green-50"
-                : "border-gray-400 text-gray-600 bg-gray-100"
-            }`}
-        >
-          {status.charAt(0).toUpperCase() + status.slice(1)}
-        </span>
-      ),
-    },
-  ];
-
-  const generateCvData =
-    useCvServiceGenerateCvReportApiV1CvGenerateReportPost();
-  const saudiReport = useCvServiceGenerateSaudiReportApiV1CvGenerateSaudiPost();
-
-  const items: MenuProps["items"] = [];
-
-  const menuProps = {
-    items,
-  };
-
-  const applicationColumns = [
-    {
-      title: "",
-      dataIndex: "select",
-      width: "5%",
-      render: (_, record) => (
-        <Checkbox
-          onChange={(e) => handleCheckboxChange(record.id, e.target.checked)}
-          checked={selectedJobIds.includes(record.id)}
-          disabled={record.status !== "pending"} // Enable only for pending applications
-        />
-      ),
-    },
-    {
-      title: t("Name"),
-      dataIndex: "name",
-      width: "20%",
-      render: (_, record) =>
-        record?.user?.cv.english_full_name
-          ? `${record.user.cv.english_full_name}`
-          : "N/A",
-    },
-    {
-      title: "CV",
-      key: "select",
-      width: "20%",
-      render: (_: any, record: any) => (
-        <button
-          className="px-4 py-2 mt-4 bg-blue-600 text-white rounded-lg text-lg font-semibold transition-all duration-300 hover:bg-blue-700"
-          onClick={() => handleNavigate(record.user_id)}
-        >
-          {t("View")}
-        </button>
-      ),
-    },
-    
-    {
-      title: t("reserve_history_expanded_status"),
-      key: "status",
-      render: (text: any, reserve: any) => (
-        <div className="flex items-center gap-2">
-          <StatusCard status={reserve.status} />
-          {reserve.status === "accepted" && (
-            <Dropdown.Button
-              menu={menuProps}
-              onClick={() => {
-                generateCvData
-                  .mutateAsync({
-                    requestBody: {
-                      user_id: reserve?.user?.cv?.user_id,
-                    },
-                  })
-                  .then((r: any) => {
-                    let printWindow = window.open(
-                      "",
-                      "_blank",
-                      "toolbar=no,status=no,menubar=no,scrollbars=no,resizable=no,left=10000, top=10000, width=1920, height=1080, visible=none"
-                    );
-                    if (printWindow) {
-                      printWindow.document.write(r.data);
-                      printWindow.document.close();
-                      printWindow.print();
-                    }
-                  });
-              }}
-            >
-              {t("download_cv")}
-            </Dropdown.Button>
-          )}
-        </div>
-      ),
-      width: "15%",
-    },
-    // ... existing code ...
-   
-  ];
-
-  const [selectedApplications, setSelectedApplications] = useState<number[]>(
-    []
-  );
-  const [selectedJobIds, setSelectedJobIds] = useState<number[]>([]);
-
-  // Handle checkbox selection
-  const handleCheckboxChange = (jobId: number, checked: boolean) => {
-    setSelectedJobIds((prevSelected) =>
-      checked
-        ? [...prevSelected, jobId]
-        : prevSelected.filter((id) => id !== jobId)
-    );
-  };
-
-  const [paymentData, setPaymentData] = useState(null);
-
-  useEffect(() => {
-    const fetchApplications = async () => {
-      try {
-        const userToken = localStorage.getItem("accessToken");
-        if (!userToken) {
-          console.error("No access token found.");
-          return;
-        }
-        const JobId = localStorage.getItem("jobId");
-        const response = await axios.get(
-          `${
-            import.meta.env.VITE_BASE_URL
-          }/api/v1/job/my-applications/${JobId}`,
-          {
-            headers: {
-              Authorization: `Bearer ${userToken}`, // Correct header placement
-              "Content-Type": "application/json",
-            },
-          }
-        );
-        const formattedData = response.data.map((app) => ({
-          ...app,
-          key: app.id, // Ensures each row has a unique key
-        }));
-        setTableApplicationDataSources(formattedData);
-      } catch (error) {
-        console.error("Error fetching applications:", error);
-      }
-    };
-    fetchApplications();
-  }, []); // Dependency array ensures it runs once on mount
-
-
-
-
-// Inside NewJobDetails.tsx (adjusted)
-const handlePayment = async () => {
-  try {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      message.error("User not authenticated");
-      return;
-    }
-
-    if (selectedJobIds.length === 0) {
-      message.warning("Please select at least one job application.");
-      return;
-    }
-
-    const JobId = id; // useParams id
-    const requestData = {
-      job_application_ids: selectedJobIds,
-      status: "accepted",
-    };
-
-    // Step 1 — Request payment initiation from backend
-    const response = await axios.patch(
-      `${import.meta.env.VITE_BASE_URL}/api/v1/job/my-applications/${JobId}/status/hyper`,
-      requestData,
-      {
-        headers: { Authorization: `Bearer ${token}` },
-      }
-    );
-
-    const payData = response.data;
-    if (!payData.checkoutId) throw new Error("Payment initialization failed");
-
-    // Save ref and show modal
-    setCheckoutId(payData.checkoutId);
-    localStorage.setItem("subscriptionRef", payData.ref);
-    setShowPaymentModal(true);
-
-  } catch (error: any) {
-    message.error(
-      error?.response?.data?.message || "Payment initialization failed"
-    );
-  }
-};
-
-    /* ---------------- LOAD HYPERPAY WIDGET ---------------- */
-
-
-    // --- Load HyperPay Widget dynamically ---
-    useEffect(() => {
-      if (!checkoutId || !showPaymentModal) return;
-
-      const oldScript = document.getElementById("hyperpay-script");
-      if (oldScript) oldScript.remove();
-
-      const script = document.createElement("script");
-      script.id = "hyperpay-script";
-      script.src = `https://test.oppwa.com/v1/paymentWidgets.js?checkoutId=${checkoutId}`;
-      script.async = true;
-      document.body.appendChild(script);
-
-    }, [checkoutId, showPaymentModal]);
-
-  const handlePaymentCallback = async () => {
-  try {
-    const token = localStorage.getItem("accessToken");
-    if (!token) {
-      message.error("User not authenticated");
-      return;
-    }
-
-    const ref = localStorage.getItem("subscriptionRef");
-    if (!ref) return;
-
-    const requestData = { ref };
-    const response = await axios.post(
-      `${import.meta.env.VITE_BASE_URL}/api/v1/job/my-applications/status/callback/hyper`,
-      requestData,
-      { headers: { Authorization: `Bearer ${token}` } }
-    );
-
-    if (response.status === 200) {
-      message.success("Payment successful!");
-      localStorage.removeItem("subscriptionRef");
-      setShowPaymentModal(false);
-    } else {
-      message.error("Payment verification failed");
-    }
-  } catch (error) {
-    localStorage.removeItem("subscriptionRef");
-    message.error("Failed to verify payment status");
-  }
-};
-
-  // Run the payment status check after page reload if `ref` exists
-  useEffect(() => {
-    const ref = localStorage.getItem("subscriptionRef");
-    if (ref) {
-      handlePaymentCallback();
-    }
-  }, []);
-
-  const [searchTerm, setSearchTerm] = useState<string>("");
-  const [dateRange, setDateRange] = useState<[Dayjs | null, Dayjs | null]>([
-    null,
-    null,
-  ]);
-  const [pageSize, setPageSize] = useState(10);
-  const [pagination, setPagination] = useState<CustomPagination>({
-    limit: pageSize,
-    skip: 0,
-  });
-  const [tableDataSource, setTableDataSource] = useState<DataType[]>([]);
-  const [tableApplicationDataSource, setTableApplicationDataSource] = useState<
-    ApplicationDataType[]
-  >([]);
-
-  const [tableApplicationDataSources, setTableApplicationDataSources] =
-    useState<ApplicationDataType[]>([]);
-  const [paginatedUsers, setPaginatedUsers] = useState<any[]>([]);
-  const [filter, setFilter] = useState<UserCVFilterSchema>({});
-  const [selectedRowKeys, setSelectedRowKeys] = useState([]);
-
-  const onSearch = (value: string) => {
-    setSearchTerm(value);
-    // setPagination((prev) => ({ ...prev, skip: 0 }));
-  };
-
-  const onSelectChange = (selectedRowKeys: any) => {
-    setSelectedRowKeys(selectedRowKeys);
-  };
-
-  const rowSelection = {
-    selectedRowKeys,
-    onChange: onSelectChange,
-    columnWidth: "3%",
-    getCheckboxProps: (record: any) => ({
-      disabled: record.hasApplied,
-    }),
-  };
-  const onDateRangeChange: RangePickerProps<Dayjs>["onChange"] = (dates) => {
-    setDateRange(dates as [Dayjs | null, Dayjs | null]);
-  };
-
-  const handlePageSizeChange = (value: number) => {
-    setPagination({ ...pagination, limit: value });
-    setPageSize(value);
-  };
-
-  const handlePaginationChange = (page: number, pageSize?: number) => {
-    if (pageSize) {
-      setPagination({ limit: pageSize, skip: (page - 1) * pageSize });
-    }
-  };
-
-  const {
-    data: jobData,
-    isError: jobIsError,
-    isLoading: jobIsLoading,
-    mutateAsync,
-  } = useJobServiceReadJobPostApiV1JobSinglePost({
-    onSuccess: (data) => {
-      if (data) setJob(data.data);
-      data.data?.job_applications &&
-        setHasApplied(
-          data.data?.job_applications?.some(
-            (application) => application.user_id === userStore.user?.id
-          )
-        );
-    },
-    onError: (error, variables, context) => {},
-  });
-
-  const {
-    data: employeesData,
-    isError: employeeIsError,
-    isLoading: employeesIsLoading,
-    mutateAsync: employeesMutateAsync,
-  } = useUserServiceReadManagedUserCvsApiV1UserEmployeesCvPost({
-    onSuccess: (data) => {
-      if (data) {
-        setPaginatedUsers(data.data);
-      }
-    },
-    onError: (error, variables, context) => {},
-  });
-
-  const acceptApplication = async (userId: string, detail: string) => {
-    const response = await acceptJobApplication
-      .mutateAsync({
-        requestBody: {
-          job_id: parseInt(id!),
-          receiver_id: userId,
-          detail: detail,
-        },
-      })
-      .then((data) => {
-        message.success("Accepted Job Application");
-        window.location.reload();
-      })
-      .catch((error) => {
-        message.error(
-          error.body?.message || "Failed to accept job application"
-        );
-      });
-  };
-
-  const jobApply = async (userIds: string[]) => {
-    const response = await applyForJob
-      .mutateAsync({
-        requestBody: {
-          job_id: job?.id!,
-          user_id: userIds,
-        },
-      })
-      .then((data) => {
-        message.success("Applied for job successfully!");
-        setTimeout(() => {
-          window.location.reload();
-        }, 1500);
-      })
-      .catch((error) => {
-        message.error(error.body.message || "Job application failed");
-      });
-  };
-
-  const closeJob = async () => {
-    await closeJobPost
-      .mutateAsync({
-        requestBody: {
-          id: parseInt(id!),
-        },
-      })
-      .then((data: any) => {
-        message.success("Job post closed successfully!");
-        router(-1);
-      })
-      .catch((error: any) => {
-        message.success("Unable to close job post successfully!");
-      });
-  };
-
-  useEffect(() => {
-    mutateAsync({
-      requestBody: {
-        id: parseInt(id!),
-      },
-    });
-  }, []);
-
-  useEffect(() => {
-    const fetchUsers = async () => {
-      const formattedStartDate = dateRange[0]?.format("YYYY-MM-DD");
-      const formattedEndDate = dateRange[1]?.format("YYYY-MM-DD");
-
-      const response = await employeesMutateAsync({
-        limit: pagination.limit,
-        skip: pagination.skip,
-        search: searchTerm,
-        startDate: formattedStartDate,
-        endDate: formattedEndDate,
-        managerId: userStore.user?.id!,
-        requestBody: filter,
-      });
-    };
-
-    {
-      userStore.user?.role !== UserRoleSchema.EMPLOYEE && fetchUsers();
-    }
-  }, [searchTerm, dateRange, pagination, filter]);
-
-  const handleNavigate = (user_id: string) => {
-    navigate(`/${role}/view/employees/${user_id}`);
-  };
-
-  const handleCVNavigate = (user_id: string) => {
-    navigate(`/${role}/employees/${user_id}`);
-  };
-
-  useEffect(() => {
-    if (paginatedUsers) {
-      const tableData: DataType[] = paginatedUsers.map((employee) => ({
-        hasApplied: jobData?.data?.job_applications?.some((application) => {
-          return application.user_id === employee.id;
-        }),
-        Photo:
-          employee.cv && employee.cv.head_photo ? (
-            <div className="w-10 h-10 rounded-full overflow-hidden">
-              <img
-                className="w-full h-full object-cover"
-                src={`${import.meta.env["VITE_BASE_URL"]}/static/${
-                  employee.cv.head_photo
-                }`}
-                alt="Profile Picture"
-              />
-            </div>
-          ) : (
-            <div className="w-10 h-10 rounded-full bg-gray-400"></div>
-          ),
-        Name: employee.cv
-          ? employee.cv?.english_full_name
-          : employee.first_name || employee.last_name
-          ? employee.first_name + " " + employee.last_name
-          : "N/A",
-        PassportNumber: employee.cv ? employee.cv.passport_number : "N/A",
-        Email:
-          employee.cv && employee.cv?.email
-            ? employee.cv?.email
-            : employee.email
-            ? employee.email
-            : "N/A",
-        PhoneNumber: employee.phone_number?.split(":")[1] || "N/A",
-        Status: snakeToCapitalized(employee.status || ""),
-        ViewCV: employee.cv ? (
-          <button
-            className="px-4 py-2 mt-4 bg-blue-600 text-white rounded-lg text-lg font-semibold transition-all duration-300 hover:bg-blue-700"
-            onClick={() => handleCVNavigate(employee.cv.user_id)}
-          >
-            View
-          </button>
-        ) : (
-          <span className="text-gray-500">No CV</span>
-        ),
-
-        DownloadCV:
-          employee.cv && employee.cv.cv_file ? (
-            <a
-              href={`${import.meta.env["VITE_BASE_URL"]}/static/${
-                employee.cv.cv_file
-              }`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="px-3 py-1 text-white bg-blue-500 rounded-md hover:bg-blue-600"
-            >
-              Download CV
-            </a>
-          ) : (
-            <span className="text-gray-500">No CV</span>
-          ),
-        User: employee,
-      }));
-
-      setTableDataSource(tableData);
-    }
-  }, [paginatedUsers]);
-
-  useEffect(() => {
-    if (jobData?.data?.job_applications) {
-      const applications = jobData?.data?.job_applications;
-      const tableData: ApplicationDataType[] = applications.map(
-        (application) => ({
-          Photo:
-            application.user?.cv && application.user.cv.head_photo ? (
-              <div className="w-10 h-10 rounded-full overflow-hidden">
-                <img
-                  className="w-full h-full object-cover"
-                  src={`${import.meta.env["VITE_BASE_URL"]}/static/${
-                    application.user.cv.head_photo
-                  }`}
-                  alt="Profile Picture"
-                />
-              </div>
-            ) : (
-              <div className="w-10 h-10 rounded-full bg-gray-400"></div>
-            ),
-          Name: application.user?.cv
-            ? application.user.cv?.english_full_name
-            : application.user?.first_name || application.user?.last_name
-            ? application.user?.first_name + " " + application.user?.last_name
-            : "N/A",
-          Status: snakeToCapitalized(application.status || ""),
-          User: application.user!,
-          JobApplication: application,
-        })
-      );
-
-      setTableApplicationDataSource(tableData);
-    }
-  }, [jobData?.data?.job_applications]);
-
-  return (
-    <div className={tw.p_5.h_screen}>
-       <ToastContainer />
-      {jobIsLoading ? (
-        <Spin />
-      ) : (
-        <>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-6">
-            <div>
-              <div className={tw.flex.flex_col.space_x_1.mb_8}>
-                <span>
-                     {/* ---------------- PAYMENT MODAL ---------------- */}
-
-
-      {showPaymentModal && (
-  <div className="fixed inset-0 bg-black bg-opacity-50 flex justify-center items-center z-50">
-    <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md relative">
-      <button
-        className="absolute top-2 right-2 text-gray-600 hover:text-black text-xl"
-        onClick={() => setShowPaymentModal(false)}
-      >
-        ✕
-      </button>
-
-      <h2 className="text-xl font-semibold text-center mb-4 text-purple-700">
-        Complete Your Payment
-      </h2>
-
-      <div id="payment-widget-container">
-        <form
-          action=""
-          className="paymentWidgets"
-          data-brands="VISA MASTER AMEX"
-        ></form>
-      </div>
-    </div>
-  </div>
-)}
-
-
-                  {jobData?.data?.deleted_at ? (
-                    <div className="w-fit bg-red-200 text-red-500 p-1 px-4 rounded-md">
-                      {t("job_detail_closed")}
-                    </div>
-                  ) : (
-                    <div className="w-fit bg-green-200 text-green-500 p-1 px-4">
-                      {t("job_detail_active")}
-                    </div>
-                  )}
-                </span>
-                <span className={tw.text_black}>
-                  {t("job_detail_posted_on")}:
-                  {moment(jobData?.data?.created_at).format("MMM DD, YYYY")}
-                </span>
-              </div>
-              <div
-                className={tw.flex.flex_col.space_x_0.space_y_4.justify_start.items_start.mb_10.md(
-                  tw.flex.flex_row.space_x_4.space_y_0
-                )}
-              >
-                <div
-                  className={
-                    tw.w_["260px"].h_["135px"].bg_white.rounded_md.py_6.px_8
-                      .shadow.flex.flex_col.space_y_1.items_start.justify_start
-                  }
-                >
-                  <span className={tw.text_gray_500.text_base}>
-                    {t("job_detail_number_of_applications")}
-                  </span>
-                  <span className={tw.text_2xl.font_bold}>
-                    {jobData?.data?.job_applications?.length}
-                  </span>
-                  <div
-                    className={tw.flex.flex_row.space_x_1.justify_end.items_end}
-                  >
-                    <span className={tw.text_sm}>Count </span>
-                    <GoTriangleUp className={tw.text_green_500} size={20} />
-                    <span className={tw.text_green_500}>0%</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <div className="mb-10">
-              <h2 className="text-2xl font-semibold text-black mb-6">
-                {t("job_detail_info")}
-              </h2>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 bg-white shadow rounded-xl p-6">
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_description")}
-                  </p>
-                  <p className="text-base font-medium text-black">
-                    {jobData?.data?.description || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">{t("job_location")}</p>
-                  <p className="text-base font-medium text-black">
-                    {jobData?.data?.location || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_occupation")}
-                  </p>
-                  <p className="text-base font-medium text-black capitalize">
-                    {jobData?.data?.occupation?.replaceAll("_", " ") || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_education")}
-                  </p>
-                  <p className="text-base font-medium text-black capitalize">
-                    {jobData?.data?.education_status?.replaceAll("_", " ") ||
-                      "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">{t("job_type")}</p>
-                  <p className="text-base font-medium text-black capitalize">
-                    {jobData?.data?.type?.replaceAll("_", " ") || "-"}
-                  </p>
-                </div>
-                <div>
-                  <p className="text-sm text-black mb-1">
-                    {t("job_vacancies")}
-                  </p>
-                  <p className="text-base font-medium text-black">
-                    {jobData?.data?.amount || "-"}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Job Information Section */}
-
-          {job?.posted_by === userStore.user?.id ? (
-            <div className={tw.flex.flex_col.space_x_1.mb_8}>
-              <span className={tw.text_2xl.font_semibold.text_primaryBlue}>
-                {t("job_detail_applications")}
-              </span>
-              <div style={{ marginTop: 16, textAlign: "right" }}>
-                <Button
-                  type="primary"
-                  disabled={selectedJobIds.length === 0} // Disable if no items are selected
-                  onClick={() => handlePayment(selectedJobIds, setPaymentData)} // Pass selected job IDs
-                >
-                  Accept
-                </Button>
-              </div>
-
-              <Table
-                columns={applicationColumns}
-                dataSource={tableApplicationDataSources}
-                scroll={{ x: true }}
-              />
-
-              {!jobData?.data?.deleted_at && (
-                <div className={tw.flex.w_full.justify_end.mt_8.mb_8.gap_x_2}>
-                  <Button
-                    className={tw.border_0.bg_primaryBlue.w_[
-                      "1/4"
-                    ].h_10.rounded_sm.text_white.justify_end.items_end.mt_6.md(
-                      tw.mt_0
-                    )}
-                    onClick={() => router(`/sponsor/jobs/${id}/edit`)}
-                  >
-                    {t("job_detail_edit")}
-                  </Button>
-                  <Button
-                    className={tw.border_0.bg_red_400.w_[
-                      "1/4"
-                    ].h_10.rounded_sm.text_white.justify_end.items_end.mt_6.md(
-                      tw.mt_0
-                    )}
-                    onClick={closeJob}
-                  >
-                    {t("job_detail_close_job_post")}
-                  </Button>
-                </div>
-              )}
-            </div>
-          ) : userStore.user?.role !== UserRoleSchema.EMPLOYEE &&
-            userStore.user?.role !== UserRoleSchema.ADMIN ? (
-            <>
-              <div
-                className={tw.flex_col.space_y_4.space_x_0.justify_between.mb_4.lg(
-                  tw.flex.flex_row.space_y_0.space_x_4.mb_4
-                )}
-              >
-                <div className={tw.flex.flex_col.space_y_3.mb_3}>
-                  <span className={tw.text_black.font_medium.text_lg}>
-                    {t("job_detail_employee")}
-                  </span>
-                </div>
-                <div className={tw.flex.space_x_2.items_center}>
-                  <Search
-                    placeholder={t("job_detail_passport_number")}
-                    allowClear
-                    style={{ width: 300 }}
-                    onSearch={onSearch}
-                  />
-
-                  <UserFilter filter={filter} setFilter={setFilter} />
-                  <Button
-                    className="px-4 py-2 mt-4 bg-blue-600 text-white rounded-lg text-lg font-semibold transition-all duration-300 hover:bg-blue-700"
-                    size="large"
-                    onClick={async () => await jobApply(selectedRowKeys)}
-                  >{`${t("job_detail_apply")} (${
-                    selectedRowKeys.length
-                  })`}</Button>
-                </div>
-              </div>
-              {employeesIsLoading ? (
-                <Spin />
-              ) : (
-                <Table
-                  rowSelection={rowSelection}
-                  columns={columns}
-                  dataSource={tableDataSource}
-                  scroll={{ x: true }}
-                  pagination={{
-                    total: employeesData?.count || 0,
-                    pageSize: pagination.limit,
-                    current: pagination.skip / pagination.limit + 1,
-                    onChange: handlePaginationChange,
-                  }}
-                  rowKey={(record) => record.User.id!}
-                />
-              )}
-              <div className={tw.flex.justify_center}>
-                <Select
-                  defaultValue={pageSize}
-                  style={{ width: 120 }}
-                  onChange={handlePageSizeChange}
-                >
-                  <Option value={10}>10</Option>
-                  <Option value={20}>20</Option>
-                  <Option value={50}>50</Option>
-                  <Option value={100}>100</Option>
-                </Select>
-              </div>
-            </>
-          ) : (
-            userStore.user.role !== UserRoleSchema.ADMIN && (
-              <>
-                <Button
-                  disabled={hasApplied ? true : false}
-                  className="bg-[#1677ff] text-white"
-                  size="large"
-                  onClick={async () => await jobApply([userStore.user?.id!])}
-                >
-                  {applyForJob.isLoading ? (
-                    <Spin />
-                  ) : hasApplied ? (
-                    t("job_detail_applied")
-                  ) : (
-                    t("job_detail_apply")
-                  )}
-                </Button>
-              </>
+        job = db.query(JobModel).filter(JobModel.id == job_id).first()
+        if not job:
+            return Response(status_code=404,
+                content=json.dumps({"message": "Job not found"}),
+                media_type="application/json"
             )
-          )}
-        </>
-      )}
-    </div>
-  );
-};
 
-export default NewJobDetails;
+        jobs_applications: List[JobApplicationModel] = (
+            db.query(JobApplicationModel)
+            .filter(
+                JobApplicationModel.job_id == job_id,
+                JobApplicationModel.id.in_(data.job_application_ids),
+                JobApplicationModel.status == "pending",
+            )
+            .all()
+        )
+
+        if not jobs_applications:
+            return Response(status_code=404,
+                content=json.dumps({"message": "Job applications not found"}),
+                media_type="application/json"
+            )
+
+        # 🔒 Permission check
+        for app in jobs_applications:
+            if app.job.posted_by != user.id:
+                return Response(status_code=403,
+                    content=json.dumps({"message": "Unauthorized"}),
+                    media_type="application/json"
+                )
+
+        # ❌ Decline logic stays unchanged
+        if data.status == "declined":
+            for app in jobs_applications:
+                app.status = "declined"
+                db.add(app)
+
+            db.commit()
+
+            title = "Job Application Declined"
+            description = (
+                f"{job.job_poster.first_name} {job.job_poster.last_name} "
+                f"has declined the job application for {job.name}"
+            )
+
+            background_tasks.add_task(
+                send_notification, db, app.user_id, title, description, "job_application"
+            )
+            email = app.user.email or app.user.cv.email
+            background_tasks.add_task(send_email, email, title, description)
+
+            return {"message": "Job applications status updated successfully"}
+
+        # 🔥 ACCEPT → PAYMENT REQUIRED
+        if data.status == "accepted":
+
+            # Get correct package
+            package = (
+                db.query(PromotionPackagesModel)
+                .filter(
+                    PromotionPackagesModel.role == user.role,
+                    PromotionPackagesModel.category == "job_application",
+                )
+                .first()
+            )
+
+            if not package:
+                return Response(status_code=404,
+                    content=json.dumps({"message": "Package not found"}),
+                    media_type="application/json"
+                )
+
+            # ❌ Prevent accepting user already accepted somewhere else
+            for app in jobs_applications:
+                existing = (
+                    db.query(JobApplicationModel)
+                    .filter(
+                        JobApplicationModel.user_id == app.user_id,
+                        JobApplicationModel.status == "accepted",
+                    )
+                    .first()
+                )
+                if existing:
+                    return Response(status_code=400,
+                        content=json.dumps({
+                            "message": f"{existing.user.first_name} {existing.user.last_name} is already accepted for another job"
+                        }),
+                        media_type="application/json"
+                    )
+
+            # Price × applicants count
+            total_amount = package.price * len(jobs_applications)
+
+            # 🔗 Return URL (MUST include job_id)
+            return_url = (
+                f"{settings.HYPERPAY_JOB_RETURN_URL.replace('replace', user.role)}/{job_id}"
+            )
+
+            # -----------------------------------------
+            # 🔥 Step 1 — Create HyperPay Checkout
+            # -----------------------------------------
+            merchant_ref = f"JOBAPP-{uuid.uuid4().hex[:10]}"
+
+
+            payload = {
+                "entityId": settings.HYPERPAY_ENTITY_ID,
+                "amount": f"{total_amount:.2f}",
+                "currency": "AED",
+                "paymentType": "DB",
+                "merchantTransactionId": merchant_ref,
+                "shopperResultUrl": f"https://marrir.com/sponsor/jobs/{job_id}?ref={merchant_ref}",
+                "notificationUrl": "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper",
+            }
+
+
+
+            import requests
+            headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+
+            hp_res = requests.post(
+                "https://test.oppwa.com/v1/checkouts",
+                data=payload,
+                headers=headers
+            ).json()
+
+            checkout_id = hp_res.get("id")
+
+            if not checkout_id:
+                return Response(
+                    status_code=400,
+                    content=json.dumps({"message": "Failed to initialize HyperPay payment"}),
+                    media_type="application/json"
+                )
+
+            object_ids = ",".join([str(a.id) for a in jobs_applications])
+
+            # 🔍 Look for existing pending invoice for same user + type
+            invoice = (
+                db.query(InvoiceModel)
+                .filter(
+                    InvoiceModel.buyer_id == user.id,
+                    InvoiceModel.status == "pending",
+                    InvoiceModel.type == "job_application",
+                )
+                .first()
+            )
+
+            if invoice:
+                # update invoice reference → checkout_id
+                update_invoice(invoice, checkout_id)
+            else:
+                # create invoice with reference → checkout_id
+                invoice = create_invoice(
+                    db, checkout_id, total_amount, user.id, object_ids
+                )
+                db.add(invoice)
+
+            db.commit()
+
+            return {
+                "checkoutId": checkout_id,
+                "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
+                "ref": checkout_id   # return checkout_id to frontend
+            }
+
+
+    except Exception as e:
+                    print(e)
+                    return Response(
+                        status_code=400,
+                        content=json.dumps({"message": str(e)}),
+                        media_type="application/json"
+                    )
+'''
+# --- Payment initiation for job applications ---
+'''
+@job_router.patch("/my-applications/{job_id}/status/hyper")
+async def update_job_application_status(
+    data: ApplicationStatusUpdateSchema,
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context)
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        if user.role not in ["recruitment", "sponsor"]:
+            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        job = db.query(JobModel).filter(JobModel.id == job_id).first()
+        if not job:
+            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
+
+        jobs_applications: List[JobApplicationModel] = (
+            db.query(JobApplicationModel)
+            .filter(
+                JobApplicationModel.job_id == job_id,
+                JobApplicationModel.id.in_(data.job_application_ids),
+                JobApplicationModel.status == "pending",
+            )
+            .all()
+        )
+        if not jobs_applications:
+            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
+
+        # Permission check
+        for app in jobs_applications:
+            if app.job.posted_by != user.id:
+                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        # DECLINED
+        if data.status == "declined":
+            for app in jobs_applications:
+                app.status = "declined"
+                db.add(app)
+            db.commit()
+
+            title = "Job Application Declined"
+            description = f"{job.job_poster.first_name} {job.job_poster.last_name} has declined the job application for {job.name}"
+
+            for app in jobs_applications:
+                background_tasks.add_task(send_notification, db, app.user_id, title, description, "job_application")
+                email = app.user.email or app.user.cv.email
+                background_tasks.add_task(send_email, email, title, description)
+
+            return {"message": "Job applications status updated successfully"}
+
+        # ACCEPTED → HyperPay payment initiation
+        if data.status == "accepted":
+            package = db.query(PromotionPackagesModel).filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "job_application",
+            ).first()
+            if not package:
+                return Response(status_code=404, content=json.dumps({"message": "Package not found"}), media_type="application/json")
+
+            # Prevent user already accepted elsewhere
+            for app in jobs_applications:
+                existing = db.query(JobApplicationModel).filter(
+                    JobApplicationModel.user_id == app.user_id,
+                    JobApplicationModel.status == "accepted",
+                ).first()
+                if existing:
+                    return Response(status_code=400, content=json.dumps({"message": f"{existing.user.first_name} {existing.user.last_name} is already accepted for another job"}), media_type="application/json")
+
+            total_amount = package.price * len(jobs_applications)
+            return_url = f"{settings.HYPERPAY_JOB_RETURN_URL.replace('replace', user.role)}/{job_id}"
+            merchant_ref = f"JOBAPP-{uuid.uuid4().hex[:10]}"
+
+            payload = {
+                "entityId": settings.HYPERPAY_ENTITY_ID,
+                "amount": f"{total_amount:.2f}",
+                "currency": "AED",
+                "paymentType": "DB",
+                "merchantTransactionId": merchant_ref,
+                "shopperResultUrl": f"https://marrir.com/sponsor/jobs/{job_id}?ref={merchant_ref}",
+                "notificationUrl": "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper",
+            }
+
+            headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+            hp_res = requests.post("https://test.oppwa.com/v1/checkouts", data=payload, headers=headers).json()
+            checkout_id = hp_res.get("id")
+
+            if not checkout_id:
+                return Response(status_code=400, content=json.dumps({"message": "Failed to initialize HyperPay payment"}), media_type="application/json")
+
+            object_ids = ",".join([str(a.id) for a in jobs_applications])
+
+            invoice = db.query(InvoiceModel).filter(
+                InvoiceModel.buyer_id == user.id,
+                InvoiceModel.status == "pending",
+                InvoiceModel.type == "job_application"
+            ).first()
+
+            if invoice:
+                update_invoice(invoice, checkout_id)
+            else:
+                invoice = create_invoice(db, checkout_id, total_amount, user.id, object_ids)
+                db.add(invoice)
+
+            db.commit()
+
+            return {
+                "checkoutId": checkout_id,
+                "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
+                "ref": checkout_id
+            }
+
+    except Exception as e:
+        logger.exception("Error in job application status update")
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
+'''
+import json
+import uuid
+import logging
+import requests
+from datetime import datetime, timezone
+from typing import List
+from fastapi import APIRouter, Depends, BackgroundTasks, Request, Response, HTTPException
+from fastapi.security import HTTPBearer
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+
+# --- Payment initiation for job applications ---
+@job_router.patch("/my-applications/{job_id}/status/hyper")
+async def update_job_application_status(
+    data: ApplicationStatusUpdateSchema,
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context)
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        if user.role not in ["recruitment", "sponsor"]:
+            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        job = db.query(JobModel).filter(JobModel.id == job_id).first()
+        if not job:
+            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
+
+        jobs_applications: List[JobApplicationModel] = (
+            db.query(JobApplicationModel)
+            .filter(
+                JobApplicationModel.job_id == job_id,
+                JobApplicationModel.id.in_(data.job_application_ids),
+                JobApplicationModel.status == "pending",
+            )
+            .all()
+        )
+        if not jobs_applications:
+            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
+
+        # Permission check
+        for app in jobs_applications:
+            if app.job.posted_by != user.id:
+                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        # DECLINED
+        if data.status == "declined":
+            for app in jobs_applications:
+                app.status = "declined"
+                db.add(app)
+            db.commit()
+
+            title = "Job Application Declined"
+            description = f"{job.job_poster.first_name} {job.job_poster.last_name} has declined the job application for {job.name}"
+
+            for app in jobs_applications:
+                background_tasks.add_task(send_notification, db, app.user_id, title, description, "job_application")
+                email = app.user.email or app.user.cv.email
+                background_tasks.add_task(send_email, email, title, description)
+
+            return {"message": "Job applications status updated successfully"}
+
+        # ACCEPTED → HyperPay payment initiation
+        if data.status == "accepted":
+            package = db.query(PromotionPackagesModel).filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "job_application",
+            ).first()
+            if not package:
+                return Response(status_code=404, content=json.dumps({"message": "Package not found"}), media_type="application/json")
+
+            # Prevent user already accepted elsewhere
+            for app in jobs_applications:
+                existing = db.query(JobApplicationModel).filter(
+                    JobApplicationModel.user_id == app.user_id,
+                    JobApplicationModel.status == "accepted",
+                ).first()
+                if existing:
+                    return Response(status_code=400, content=json.dumps({"message": f"{existing.user.first_name} {existing.user.last_name} is already accepted for another job"}), media_type="application/json")
+
+            total_amount = package.price * len(jobs_applications)
+            return_url = f"{settings.HYPERPAY_JOB_RETURN_URL.replace('replace', user.role)}/{job_id}"
+            merchant_ref = f"JOBAPP-{uuid.uuid4().hex[:10]}"
+
+            payload = {
+                "entityId": settings.HYPERPAY_ENTITY_ID,
+                "amount": f"{total_amount:.2f}",
+                "currency": "AED",
+                "paymentType": "DB",
+                "merchantTransactionId": merchant_ref,
+                "shopperResultUrl": f"https://marrir.com/sponsor/jobs/{job_id}?ref={merchant_ref}",
+                "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
+            }
+
+            headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
+            hp_res = requests.post("https://test.oppwa.com/v1/checkouts", data=payload, headers=headers).json()
+            checkout_id = hp_res.get("id")
+
+            if not checkout_id:
+                return Response(status_code=400, content=json.dumps({"message": "Failed to initialize HyperPay payment"}), media_type="application/json")
+
+            object_ids = ",".join([str(a.id) for a in jobs_applications])
+
+            invoice = db.query(InvoiceModel).filter(
+                InvoiceModel.buyer_id == user.id,
+                InvoiceModel.status == "pending",
+                InvoiceModel.type == "job_application"
+            ).first()
+
+            if invoice:
+                update_invoice(invoice, checkout_id)
+            else:
+                invoice = create_invoice(db, checkout_id, total_amount, user.id, object_ids)
+                db.add(invoice)
+
+            db.commit()
+
+            return {
+                "checkoutId": checkout_id,
+                "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
+                "ref": checkout_id
+            }
+
+    except Exception as e:
+        logger.exception("Error in job application status update")
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
+
+
+# --- HyperPay webhook callback ---
+@job_router.post("packages/callback/hyper)")
+async def job_application_hyperpay_callback(request: Request, background_tasks: BackgroundTasks):
+    data = {}
+    try:
+        form = await request.form()
+        data.update(form)
+    except:
+        pass
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            data.update(body)
+    except:
+        pass
+
+    logger.info("HyperPay webhook received: %s", data)
+
+    payment_id = data.get("id")
+    if payment_id:
+        background_tasks.add_task(process_job_payment_by_payment_id, payment_id)
+
+    return Response(status_code=200, content=json.dumps({"status": "received"}), media_type="application/json")
+
+def process_job_payment_by_payment_id(payment_id: str):
+    db = get_db_session()
+    try:
+        res = requests.get(
+            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers={"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"},
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            return
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.status != "paid",
+        ).first()
+        if not invoice:
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+        finalize_invoice(db, invoice)
+          # Optionally, mark applications as accepted
+        app_ids = invoice.object_id.split(",")
+        applications = db.query(JobApplicationModel).filter(JobApplicationModel.id.in_(app_ids)).all()
+        for app in applications:
+            app.status = "accepted"
+            db.add(app)
+        db.commit()
+
+    except Exception:
+        logger.exception("Job payment processing failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+
+
+from fastapi import Query
+from sqlalchemy.orm import Session
+'''
+@job_router.get("/my-applications/status/callback/hyper")
+async def hyperpay_job_application_callback(
+    background_tasks: BackgroundTasks,
+    ref: str = Query(...),
+ 
+    db: Session = Depends(get_db_sessions)
+):
+    try:
+        # Lookup invoice by merchantTransactionId
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == ref,
+            InvoiceModel.type == "job_application"
+        ).first()
+
+        if not invoice:
+            return {"status": "failed", "message": "Invoice not found"}
+      
+        invoice.status = "paid"
+        db.add(invoice)
+        db.commit()
+        # Find job applications linked to invoice
+        application_ids = list(map(int, invoice.object_id.split(",")))
+        job_applications = db.query(JobApplicationModel).filter(
+            JobApplicationModel.id.in_(application_ids)
+        ).all()
+
+        if not job_applications:
+            return {"status": "failed", "message": "Job applications not found"}
+
+        # Optionally, send notifications again if needed
+        first_app = job_applications[0]
+        job = db.query(JobModel).filter(JobModel.id == first_app.job_id).first()
+
+        title = "Job Application Accepted"
+        description = f"{job.job_poster.first_name} {job.job_poster.last_name} has accepted your application for {job.name}"
+
+        for app in job_applications:
+            background_tasks.add_task(
+                send_notification,
+                db,
+                app.user_id,
+                title,
+                description,
+                "job_application"
+            )
+            email = app.user.email or app.user.cv.email
+            background_tasks.add_task(send_email, email, title, description)
+
+        return {"status": "successful", "message": "Payment completed"}
+
+    except Exception as e:
+        logger.error(f"Callback Error: {e}")
+        return {"status": "failed", "message": str(e)}
+'''
+from fastapi import APIRouter, Response, status
+@job_router.post("/packages/callback/hyper")
+async def buy_promotion_package_callback():
+    return Response(
+        status_code=status.HTTP_200_OK,
+        content="OK"
+    )
+
+@job_router.post("/my-applications/payment/info")
+async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema, _=Depends(authentication_context),__=Depends(build_request_context)):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        jobs_applications: List[JobApplicationModel] = db.query(JobApplicationModel).filter(JobApplicationModel.job_id == data.job_id, JobApplicationModel.id.in_(data.job_application_ids), JobApplicationModel.status == "pending").all()
+        
+        if not jobs_applications:
+            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
+
+        for job_application in jobs_applications:
+            if job_application.job.posted_by != user.id:
+                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+
+        package = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.role == user.role, PromotionPackagesModel.category == "job_application").first()
+
+        return {
+            "price": package.price,
+            "total_amount": package.price * len(jobs_applications),
+            "profile": len(jobs_applications)
+        }
+
+    except Exception as e:
+        print(e)
+        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
