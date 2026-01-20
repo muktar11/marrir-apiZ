@@ -1059,6 +1059,25 @@ def process_job_payment_by_payment_id(payment_id: str):
 
 
 
+@job_router.get("/pay/status")
+async def pay_status(
+    merchantTransactionId: str,
+    db: Session = Depends(get_db_sessions),
+):
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchantTransactionId,
+        InvoiceModel.type == "transfer"
+    ).first()
+
+    if not invoice:
+        return {"status": "not_found"}
+
+    return {
+        "status": invoice.status,  # pending | paid
+        "amount": invoice.amount
+    }
+
+
 
 from fastapi import Query
 from sqlalchemy.orm import Session
