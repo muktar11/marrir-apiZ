@@ -1024,6 +1024,7 @@ async def job_application_hyperpay_callback(request: Request, background_tasks: 
 
     return Response(status_code=200, content=json.dumps({"status": "received"}), media_type="application/json")
 '''
+
 @job_router.post("/packages/callback/hyper")
 async def job_application_hyperpay_callback(
     request: Request,
@@ -1031,7 +1032,7 @@ async def job_application_hyperpay_callback(
 ):
     try:
         payload = await request.json()
-    except:
+    except Exception:
         payload = {}
 
     logger.info("Job HyperPay webhook received: %s", payload)
@@ -1040,7 +1041,8 @@ async def job_application_hyperpay_callback(
         logger.info("Encrypted JOB webhook received — starting polling")
         background_tasks.add_task(poll_job_hyperpay_invoices)
 
-    return Response(status_code=200, content=json.dumps({"status": "received"}))
+    return {"status": "received"}
+
 
 from models.db import SessionLocal  # adjust import
 from enum import Enum
@@ -1062,34 +1064,58 @@ class InvoiceStatus(str, Enum):
     PAID = "PAID"
     FAILED = "FAILED"
 
+def finalize_job_invoice(db, invoice: InvoiceModel):
+    invoice.status = "paid"
+    db.add(invoice)
 
-def poll_job_hyperpay_invoices(order_ref: str):
+    app_ids = [int(i) for i in invoice.object_id.split(",")]
+
+    applications = (
+        db.query(JobApplicationModel)
+        .filter(JobApplicationModel.id.in_(app_ids))
+        .all()
+    )
+
+    for app in applications:
+        app.status = "accepted"
+
+    db.commit()
+
+
+def poll_job_hyperpay_invoices():
     db = None
     try:
         db = SessionLocal()
 
-        invoice = (
+        invoices = (
             db.query(InvoiceModel)
-            .filter(InvoiceModel.merchant_transaction_id == order_ref)
-            .first()
+            .filter(
+                InvoiceModel.type == "job_application",
+                InvoiceModel.status == "pending",
+            )
+            .all()
         )
 
-        if not invoice:
-            logger.error(f"Invoice not found for ref={order_ref}")
-            return
+        for invoice in invoices:
+            order_ref = invoice.reference
 
-        status_response = hyperpay.status(order_ref)
-        state = status_response.get("result", {}).get("description", "").lower()
+            status_response = hyperpay.status(order_ref)
+            state = (
+                status_response
+                .get("result", {})
+                .get("description", "")
+                .lower()
+            )
 
-        if "success" in state:
-            invoice.status = InvoiceStatus.PAID
-            db.commit()
-            logger.info(f"Job invoice {order_ref} marked PAID")
+            if "success" in state:
+                invoice.status = "paid"
+                finalize_job_invoice(db, invoice)
+                logger.info(f"Job invoice {order_ref} marked PAID")
 
-        elif "failed" in state:
-            invoice.status = InvoiceStatus.FAILED
-            db.commit()
-            logger.warning(f"Job invoice {order_ref} marked FAILED")
+            elif "fail" in state:
+                invoice.status = "failed"
+                db.commit()
+                logger.warning(f"Job invoice {order_ref} marked FAILED")
 
     except Exception:
         logger.exception("Job HyperPay polling failed")
@@ -1097,6 +1123,7 @@ def poll_job_hyperpay_invoices(order_ref: str):
     finally:
         if db:
             db.close()
+
 
 
 
@@ -1175,6 +1202,7 @@ async def pay_status(
         "status": invoice.status,
         "amount": invoice.amount,
     }
+
 
 
 
