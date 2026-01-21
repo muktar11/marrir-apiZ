@@ -1008,11 +1008,10 @@ async def job_application_hyperpay_callback(request: Request, background_tasks: 
             data.update(body)
     except:
         pass
-
-    logger.info("Job HyperPay webhook received: %s", data)
-
+    logger.info("@@@@@@@@@Job HyperPay webhook received: %s", data)
     payment_id = data.get("id")
     if payment_id:
+        logger.info("@@@@@@@@@Job HyperPay web payment_id: %s", payment_id)
         background_tasks.add_task(process_job_payment_by_payment_id, payment_id)
 
     return Response(status_code=200, content=json.dumps({"status": "received"}), media_type="application/json")
@@ -1032,6 +1031,7 @@ def process_job_payment_by_payment_id(payment_id: str):
             return
 
         merchant_tx_id = res.get("merchantTransactionId")
+        logger.info("no merchant_tx found ")
         if not merchant_tx_id:
             return
 
