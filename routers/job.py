@@ -1042,40 +1042,66 @@ async def job_application_hyperpay_callback(
 
     return Response(status_code=200, content=json.dumps({"status": "received"}))
 
-def poll_job_hyperpay_invoices():
-    db = get_db_session()
+from models.db import SessionLocal  # adjust import
+from enum import Enum
+import requests
+import os
+
+class HyperPayClient:
+    def status(self, order_reference: str):
+        url = f"https://test.hyperpay.com/status/{order_reference}"
+        headers = {
+            "Authorization": f"Bearer {os.getenv('HYPERPAY_TOKEN')}"
+        }
+        return requests.get(url, headers=headers).json()
+
+hyperpay = HyperPayClient()
+
+class InvoiceStatus(str, Enum):
+    PENDING = "PENDING"
+    PAID = "PAID"
+    FAILED = "FAILED"
+
+
+def poll_job_hyperpay_invoices(order_ref: str):
+    db = None
     try:
-        invoices = (
+        db = SessionLocal()
+
+        invoice = (
             db.query(InvoiceModel)
-            .filter(
-                InvoiceModel.type == "job_application",
-                InvoiceModel.status == "pending",
-            )
-            .all()
+            .filter(InvoiceModel.merchant_transaction_id == order_ref)
+            .first()
         )
 
-        for invoice in invoices:
-            res = requests.get(
-                "https://test.oppwa.com/v1/payments",
-                params={
-                    "entityId": settings.HYPERPAY_ENTITY_ID,
-                    "merchantTransactionId": invoice.reference,
-                },
-                headers=get_hyperpay_auth_header(),
-                timeout=30,
-            ).json()
+        if not invoice:
+            logger.error(f"Invoice not found for ref={order_ref}")
+            return
 
-            payments = res.get("payments", [])
-            for payment in payments:
-                process_job_payment_by_payment_id(payment["id"])
+        status_response = hyperpay.status(order_ref)
+        state = status_response.get("result", {}).get("description", "").lower()
+
+        if "success" in state:
+            invoice.status = InvoiceStatus.PAID
+            db.commit()
+            logger.info(f"Job invoice {order_ref} marked PAID")
+
+        elif "failed" in state:
+            invoice.status = InvoiceStatus.FAILED
+            db.commit()
+            logger.warning(f"Job invoice {order_ref} marked FAILED")
 
     except Exception:
         logger.exception("Job HyperPay polling failed")
+
     finally:
-        db.close()
+        if db:
+            db.close()
+
 
 
 def process_job_payment_by_payment_id(payment_id: str):
+    
     db = get_db_session()
     try:
         res = requests.get(
@@ -1126,6 +1152,7 @@ def process_job_payment_by_payment_id(payment_id: str):
         db.rollback()
     finally:
         db.close()
+
 
 
 
