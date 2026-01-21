@@ -1001,6 +1001,7 @@ async def update_job_application_status(
 
 
 # --- HyperPay webhook callback ---
+'''
 @job_router.post("/packages/callback/hyper")
 async def job_application_hyperpay_callback(request: Request, background_tasks: BackgroundTasks):
     data = {}
@@ -1022,6 +1023,57 @@ async def job_application_hyperpay_callback(request: Request, background_tasks: 
         background_tasks.add_task(process_job_payment_by_payment_id, payment_id)
 
     return Response(status_code=200, content=json.dumps({"status": "received"}), media_type="application/json")
+'''
+@job_router.post("/packages/callback/hyper")
+async def job_application_hyperpay_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    try:
+        payload = await request.json()
+    except:
+        payload = {}
+
+    logger.info("Job HyperPay webhook received: %s", payload)
+
+    if "encryptedBody" in payload:
+        logger.info("Encrypted JOB webhook received — starting polling")
+        background_tasks.add_task(poll_job_hyperpay_payments)
+
+    return Response(status_code=200, content=json.dumps({"status": "received"}))
+
+def poll_job_hyperpay_payments():
+    db = get_db_session()
+    try:
+        pending_invoices = (
+            db.query(InvoiceModel)
+            .filter(
+                InvoiceModel.type == "job_application",
+                InvoiceModel.status == "pending",
+            )
+            .all()
+        )
+
+        for invoice in pending_invoices:
+            res = requests.get(
+                f"https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            payments = res.get("payments", [])
+            for payment in payments:
+                process_job_payment_by_payment_id(payment["id"])
+
+    except Exception:
+        logger.exception("Job HyperPay polling failed")
+    finally:
+        db.close()
+
 
 def process_job_payment_by_payment_id(payment_id: str):
     db = get_db_session()
@@ -1067,6 +1119,8 @@ def process_job_payment_by_payment_id(payment_id: str):
         db.close()
 
 
+'''
+
 
 @job_router.get("my-applications/status/callback/hyper" )
 async def pay_status(
@@ -1075,7 +1129,7 @@ async def pay_status(
 ):
     invoice = db.query(InvoiceModel).filter(
         InvoiceModel.reference == merchantTransactionId,
-        InvoiceModel.type == "transfer"
+        InvoiceModel.type == "job_application"
     ).first()
 
     if not invoice:
