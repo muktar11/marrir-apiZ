@@ -860,6 +860,7 @@ async def update_job_application_status(
         logger.exception("Error in job application status update")
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
 '''
+
 import json
 import uuid
 import logging
@@ -870,28 +871,33 @@ from fastapi import APIRouter, Depends, BackgroundTasks, Request, Response, HTTP
 from fastapi.security import HTTPBearer
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
-
+import secrets
 # --- Payment initiation for job applications ---
+def get_hyperpay_auth_header() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
     job_id: int,
     background_tasks: BackgroundTasks,
     _=Depends(authentication_context),
-    __=Depends(build_request_context)
+    __=Depends(build_request_context),
 ):
     try:
         db = get_db_session()
         user = context_actor_user_data.get()
 
         if user.role not in ["recruitment", "sponsor"]:
-            return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+            return Response(status_code=403, content="Unauthorized")
 
         job = db.query(JobModel).filter(JobModel.id == job_id).first()
         if not job:
-            return Response(status_code=404, content=json.dumps({"message": "Job not found"}), media_type="application/json")
+            return Response(status_code=404, content="Job not found")
 
-        jobs_applications: List[JobApplicationModel] = (
+        applications = (
             db.query(JobApplicationModel)
             .filter(
                 JobApplicationModel.job_id == job_id,
@@ -900,97 +906,98 @@ async def update_job_application_status(
             )
             .all()
         )
-        if not jobs_applications:
-            return Response(status_code=404, content=json.dumps({"message": "Job applications not found"}), media_type="application/json")
 
-        # Permission check
-        for app in jobs_applications:
+        if not applications:
+            return Response(status_code=404, content="Job applications not found")
+
+        for app in applications:
             if app.job.posted_by != user.id:
-                return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
+                return Response(status_code=403, content="Unauthorized")
 
-        # DECLINED
+        # ---------- DECLINED ----------
         if data.status == "declined":
-            for app in jobs_applications:
+            for app in applications:
                 app.status = "declined"
-                db.add(app)
             db.commit()
+            return {"message": "Job applications declined"}
 
-            title = "Job Application Declined"
-            description = f"{job.job_poster.first_name} {job.job_poster.last_name} has declined the job application for {job.name}"
-
-            for app in jobs_applications:
-                background_tasks.add_task(send_notification, db, app.user_id, title, description, "job_application")
-                email = app.user.email or app.user.cv.email
-                background_tasks.add_task(send_email, email, title, description)
-
-            return {"message": "Job applications status updated successfully"}
-
-        # ACCEPTED → HyperPay payment initiation
+        # ---------- ACCEPTED → PAY ----------
         if data.status == "accepted":
-            package = db.query(PromotionPackagesModel).filter(
-                PromotionPackagesModel.role == user.role,
-                PromotionPackagesModel.category == "job_application",
-            ).first()
+            package = (
+                db.query(PromotionPackagesModel)
+                .filter(
+                    PromotionPackagesModel.role == user.role,
+                    PromotionPackagesModel.category == "job_application",
+                )
+                .first()
+            )
             if not package:
-                return Response(status_code=404, content=json.dumps({"message": "Package not found"}), media_type="application/json")
+                return Response(status_code=404, content="Package not found")
 
-            # Prevent user already accepted elsewhere
-            for app in jobs_applications:
-                existing = db.query(JobApplicationModel).filter(
-                    JobApplicationModel.user_id == app.user_id,
-                    JobApplicationModel.status == "accepted",
-                ).first()
+            for app in applications:
+                existing = (
+                    db.query(JobApplicationModel)
+                    .filter(
+                        JobApplicationModel.user_id == app.user_id,
+                        JobApplicationModel.status == "accepted",
+                    )
+                    .first()
+                )
                 if existing:
-                    return Response(status_code=400, content=json.dumps({"message": f"{existing.user.first_name} {existing.user.last_name} is already accepted for another job"}), media_type="application/json")
+                    return Response(
+                        status_code=400,
+                        content=f"{existing.user.first_name} already accepted elsewhere",
+                    )
 
-            total_amount = package.price * len(jobs_applications)
-            return_url = f"{settings.HYPERPAY_JOB_RETURN_URL.replace('replace', user.role)}/{job_id}"
-            merchant_ref = f"JOBAPP-{uuid.uuid4().hex[:10]}"
+            amount = package.price * len(applications)
+            merchant_tx_id = f"JOBAPP-{secrets.token_hex(8)}"
 
             payload = {
                 "entityId": settings.HYPERPAY_ENTITY_ID,
-                "amount": f"{total_amount:.2f}",
+                "amount": f"{amount:.2f}",
                 "currency": "AED",
                 "paymentType": "DB",
-                "merchantTransactionId": merchant_ref,
-                "shopperResultUrl": f"https://marrir.com/sponsor/jobs/{job_id}?ref={merchant_ref}",
+
+                "merchantTransactionId": merchant_tx_id,
+                "customParameters[3DS2_enrolled]": "true",
+
+                "shopperResultUrl": f"https://marrir.com/sponsor/jobs/{job_id}?ref={merchant_tx_id}",
                 "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
             }
 
-            headers = {"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"}
-            hp_res = requests.post("https://test.oppwa.com/v1/checkouts", data=payload, headers=headers).json()
-            checkout_id = hp_res.get("id")
+            res = requests.post(
+                "https://test.oppwa.com/v1/checkouts",
+                data=payload,
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
 
+            checkout_id = res.get("id")
             if not checkout_id:
-                return Response(status_code=400, content=json.dumps({"message": "Failed to initialize HyperPay payment"}), media_type="application/json")
+                return Response(status_code=400, content=json.dumps(res))
 
-            object_ids = ",".join([str(a.id) for a in jobs_applications])
+            invoice = InvoiceModel(
+                reference=merchant_tx_id,
+                buyer_id=user.id,
+                amount=amount,
+                status="pending",
+                type="job_application",
+                object_id=",".join(str(a.id) for a in applications),
+            )
 
-            invoice = db.query(InvoiceModel).filter(
-                InvoiceModel.buyer_id == user.id,
-                InvoiceModel.status == "pending",
-                InvoiceModel.type == "job_application"
-            ).first()
-
-            if invoice:
-                update_invoice(invoice, checkout_id)
-            else:
-                invoice = create_invoice(db, checkout_id, total_amount, user.id, object_ids)
-                db.add(invoice)
-
+            db.add(invoice)
             db.commit()
+            db.refresh(invoice)
 
             return {
                 "checkoutId": checkout_id,
-                "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}",
-                "ref": checkout_id
+                "merchantTransactionId": merchant_tx_id,
+                "amount": amount,
             }
 
     except Exception as e:
-        logger.exception("Error in job application status update")
-        return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
-
-
+        logger.exception("Job HyperPay initiation failed")
+        return Response(status_code=500, content=str(e))
 
 
 # --- HyperPay webhook callback ---
