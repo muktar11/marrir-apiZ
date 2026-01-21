@@ -1038,14 +1038,14 @@ async def job_application_hyperpay_callback(
 
     if "encryptedBody" in payload:
         logger.info("Encrypted JOB webhook received — starting polling")
-        background_tasks.add_task(poll_job_hyperpay_payments)
+        background_tasks.add_task(poll_job_hyperpay_invoices)
 
     return Response(status_code=200, content=json.dumps({"status": "received"}))
 
-def poll_job_hyperpay_payments():
+def poll_job_hyperpay_invoices():
     db = get_db_session()
     try:
-        pending_invoices = (
+        invoices = (
             db.query(InvoiceModel)
             .filter(
                 InvoiceModel.type == "job_application",
@@ -1054,9 +1054,9 @@ def poll_job_hyperpay_payments():
             .all()
         )
 
-        for invoice in pending_invoices:
+        for invoice in invoices:
             res = requests.get(
-                f"https://test.oppwa.com/v1/payments",
+                "https://test.oppwa.com/v1/payments",
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
@@ -1081,35 +1081,44 @@ def process_job_payment_by_payment_id(payment_id: str):
         res = requests.get(
             f"https://test.oppwa.com/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers={"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"},
+            headers=get_hyperpay_auth_header(),
             timeout=30,
         ).json()
 
         code = res.get("result", {}).get("code", "")
-        if not code.startswith(("000.000", "000.100", "000.200")):
+        if not code.startswith(("000.000.", "000.100.", "000.200.")):
             return
 
         merchant_tx_id = res.get("merchantTransactionId")
-        logger.info("no merchant_tx found ")
         if not merchant_tx_id:
             return
 
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == merchant_tx_id,
-            InvoiceModel.status != "paid",
-        ).first()
+        invoice = (
+            db.query(InvoiceModel)
+            .filter(
+                InvoiceModel.reference == merchant_tx_id,
+                InvoiceModel.status == "pending",
+            )
+            .first()
+        )
+
         if not invoice:
             return
 
         invoice.status = "paid"
         invoice.payment_id = payment_id
         finalize_invoice(db, invoice)
-          # Optionally, mark applications as accepted
-        app_ids = invoice.object_id.split(",")
-        applications = db.query(JobApplicationModel).filter(JobApplicationModel.id.in_(app_ids)).all()
+
+        app_ids = [int(i) for i in invoice.object_id.split(",")]
+        applications = (
+            db.query(JobApplicationModel)
+            .filter(JobApplicationModel.id.in_(app_ids))
+            .all()
+        )
+
         for app in applications:
             app.status = "accepted"
-            db.add(app)
+
         db.commit()
 
     except Exception:
@@ -1119,25 +1128,25 @@ def process_job_payment_by_payment_id(payment_id: str):
         db.close()
 
 
-'''
 
 
-@job_router.get("my-applications/status/callback/hyper" )
+
+@job_router.get("/my-applications/status/callback/hyper")
 async def pay_status(
     merchantTransactionId: str,
-    db: Session = Depends(get_db_sessions),
+    db: Session = Depends(get_db_session),
 ):
     invoice = db.query(InvoiceModel).filter(
         InvoiceModel.reference == merchantTransactionId,
-        InvoiceModel.type == "job_application"
+        InvoiceModel.type == "job_application",
     ).first()
 
     if not invoice:
         return {"status": "not_found"}
 
     return {
-        "status": invoice.status,  # pending | paid
-        "amount": invoice.amount
+        "status": invoice.status,
+        "amount": invoice.amount,
     }
 
 
