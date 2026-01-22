@@ -980,12 +980,15 @@ async def update_job_application_status(
             ).json()
 
 
+
+
             checkout_id = res.get("id")
             if not checkout_id:
                 return Response(status_code=400, content=json.dumps(res))
 
             invoice = InvoiceModel(
                 reference=merchant_tx_id,
+                checkout_id=checkout_id,
                 buyer_id=user.id,
                 amount=amount,
                 status="pending",
