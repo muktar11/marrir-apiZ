@@ -874,10 +874,10 @@ from sqlalchemy.orm import Session
 import secrets
 # --- Payment initiation for job applications ---
 
-def get_hyperpay_checkout_headers():
+
+def get_hyperpay_auth_header() -> dict:
     return {
-        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
-        "Content-Type": "application/x-www-form-urlencoded",
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
 
@@ -967,10 +967,15 @@ async def update_job_application_status(
                 "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
             }
 
+            headers = {
+                "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+
             res = requests.post(
                 "https://test.oppwa.com/v1/checkouts",
                 data=payload,
-                headers=get_hyperpay_checkout_headers(),
+                headers=headers,
                 timeout=30,
             ).json()
 
