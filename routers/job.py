@@ -1008,8 +1008,26 @@ async def update_job_application_status(
         return Response(status_code=500, content=str(e))
 
 
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+import binascii
+import json
 
+HYPERPAY_ENCRYPTION_KEY="52C78392A3658DEC1CAA6AD8D98B1B78EE3FEB1CA7369FA3531E67FEDF9B0EBE"
+def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
+    encrypted_bytes = binascii.unhexlify(encrypted_hex)
 
+    iv = encrypted_bytes[:16]          # First 16 bytes
+    ciphertext = encrypted_bytes[16:]  # Rest is payload
+
+    cipher = AES.new(
+        HYPERPAY_ENCRYPTION_KEY,
+        AES.MODE_CBC,
+        iv
+    )
+
+    decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
+    return json.loads(decrypted.decode("utf-8"))
 
 
 @job_router.post("/packages/callback/hyper")
@@ -1020,12 +1038,6 @@ async def job_hyperpay_callback(
     data = {}
 
     try:
-        form = await request.form()
-        data.update(form)
-    except Exception:
-        pass
-
-    try:
         body = await request.json()
         if isinstance(body, dict):
             data.update(body)
@@ -1034,12 +1046,26 @@ async def job_hyperpay_callback(
 
     logger.info("HyperPay JOB webhook received: %s", data)
 
-    # 🔐 encrypted callback → polling
+    # 🔐 ENCRYPTED CALLBACK (REAL FIX)
     if "encryptedBody" in data:
-        background_tasks.add_task(poll_pending_job_payments)
+        try:
+            decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
+            logger.info("Decrypted JOB webhook: %s", decrypted)
+
+            payment_id = decrypted.get("id") or decrypted.get("paymentId")
+            if payment_id:
+                background_tasks.add_task(
+                    process_job_payment_by_payment_id,
+                    payment_id,
+                )
+                return {"status": "processed"}
+
+        except Exception:
+            logger.exception("Failed to decrypt encrypted JOB webhook")
+
         return {"status": "received"}
 
-    # 🔁 normal callback
+    # 🔁 NORMAL CALLBACK
     payment_id = data.get("id")
     if payment_id:
         background_tasks.add_task(
@@ -1048,6 +1074,7 @@ async def job_hyperpay_callback(
         )
 
     return {"status": "received"}
+
 
 def process_job_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
