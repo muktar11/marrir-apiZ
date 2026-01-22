@@ -953,7 +953,7 @@ async def update_job_application_status(
                     )
 
             amount = package.price * len(applications)
-            merchant_tx_id = "JOBAPP-" + ",".join(str(a.id) for a in applications)
+            merchant_tx_id = secrets.token_hex(12)
             payload = {
                 "entityId": settings.HYPERPAY_ENTITY_ID,
                 "amount": f"{amount:.2f}",
