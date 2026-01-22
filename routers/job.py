@@ -988,7 +988,7 @@ async def update_job_application_status(
 
             invoice = InvoiceModel(
                 reference=merchant_tx_id,
-                checkout_id=checkout_id,
+                payment_id=checkout_id,
                 buyer_id=user.id,
                 amount=amount,
                 status="pending",
@@ -1070,6 +1070,7 @@ async def job_hyperpay_callback(
 def process_job_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
+        # 🔹 Use webhook payment_id directly
         res = requests.get(
             f"https://test.oppwa.com/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
@@ -1095,7 +1096,7 @@ def process_job_payment_by_payment_id(payment_id: str):
             return
 
         invoice.status = "paid"
-        invoice.payment_id = payment_id
+        invoice.payment_id = payment_id  # now real payment_id
 
         app_ids = [int(i) for i in invoice.object_id.split(",")]
         applications = db.query(JobApplicationModel).filter(
@@ -1113,6 +1114,8 @@ def process_job_payment_by_payment_id(payment_id: str):
     finally:
         db.close()
 
+
+
 def poll_pending_job_payments():
     db = SessionLocal()
     try:
@@ -1122,25 +1125,32 @@ def poll_pending_job_payments():
         ).all()
 
         for invoice in invoices:
-            if not invoice.payment_id:
-                continue  # 👈 critical
-
             res = requests.get(
-                f"https://test.oppwa.com/v1/payments/{invoice.payment_id}",
-                params={"entityId": settings.HYPERPAY_ENTITY_ID},
+                "https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
                 headers=get_hyperpay_auth_header(),
                 timeout=30,
             ).json()
 
-            code = res.get("result", {}).get("code", "")
+            payments = res.get("payments", [])
+            if not payments:
+                continue
+
+            payment = payments[0]
+            code = payment.get("result", {}).get("code", "")
+
             if not code.startswith(("000.000", "000.100", "000.200")):
                 continue
 
             invoice.status = "paid"
+            invoice.payment_id = payment.get("id")  # ✅ now real payment_id
             db.commit()
+
     finally:
         db.close()
-
 
 
 
