@@ -1013,26 +1013,31 @@ from Crypto.Util.Padding import unpad
 import binascii
 import json
 
-HYPERPAY_ENCRYPTION_KEY="52C78392A3658DEC1CAA6AD8D98B1B78EE3FEB1CA7369FA3531E67FEDF9B0EBE"
+HYPERPAY_ENCRYPTION_KEY="9342978649CF8DCDDDF09DE606E94369F0E0F4FBC3E9EAE2D301327110FD0F10"
 
 
 
 
 
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+import base64
+import json
 
-
-def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
-    encrypted_bytes = binascii.unhexlify(encrypted_hex)
+def decrypt_hyperpay_payload(encrypted_b64: str) -> dict:
+    encrypted_bytes = base64.b64decode(encrypted_b64)
 
     iv = encrypted_bytes[:16]
     ciphertext = encrypted_bytes[16:]
-
-    key = binascii.unhexlify(HYPERPAY_ENCRYPTION_KEY)
-
+    key = bytes.fromhex(HYPERPAY_ENCRYPTION_KEY)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
 
     return json.loads(decrypted.decode("utf-8"))
+
+
+
+
 
 
 @job_router.post("/packages/callback/hyper")
@@ -1040,47 +1045,26 @@ async def job_hyperpay_callback(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    data = {}
+    body = await request.json()
+    logger.info("HyperPay JOB webhook received: %s", body)
 
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            data.update(body)
-    except Exception:
-        pass
-
-    logger.info("HyperPay JOB webhook received: %s", data)
-
-    # 🔐 ENCRYPTED CALLBACK (CORRECT WAY)
-    if "encryptedBody" in data:
+    if "encryptedBody" in body:
         try:
-            decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
+            decrypted = decrypt_hyperpay_payload(body["encryptedBody"])
             logger.info("Decrypted JOB webhook: %s", decrypted)
 
-            payment_id = decrypted.get("id") or decrypted.get("paymentId")
+            payment_id = decrypted.get("id")
             if payment_id:
                 background_tasks.add_task(
                     process_job_payment_by_payment_id,
-                    payment_id,
+                    payment_id
                 )
                 return {"status": "processed"}
 
         except Exception:
             logger.exception("Failed to decrypt JOB webhook")
 
-        return {"status": "received"}
-
-    # 🔁 NORMAL CALLBACK (fallback only)
-    payment_id = data.get("id")
-    if payment_id:
-        background_tasks.add_task(
-            process_job_payment_by_payment_id,
-            payment_id,
-        )
-
     return {"status": "received"}
-
-
 
 def process_job_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
