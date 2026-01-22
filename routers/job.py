@@ -1124,7 +1124,9 @@ def poll_pending_job_payments():
             InvoiceModel.type == "job_application",
         ).all()
 
+
         for invoice in invoices:
+            logger.info(f"Polling invoice {invoice.id} with reference {invoice.reference}")
             res = requests.get(
                 "https://test.oppwa.com/v1/payments",
                 params={
@@ -1134,18 +1136,17 @@ def poll_pending_job_payments():
                 headers=get_hyperpay_auth_header(),
                 timeout=30,
             ).json()
+            logger.info(f"HyperPay response: {res}")
 
             payments = res.get("payments", [])
             if not payments:
+                logger.info("No payments found")
                 continue
 
-            payment = payments[0]
-            code = payment.get("result", {}).get("code", "")
 
-            if not code.startswith(("000.000", "000.100", "000.200")):
-                continue
 
             invoice.status = "paid"
+            payment = payments[0] 
             invoice.payment_id = payment.get("id")  # ✅ now real payment_id
             db.commit()
 
