@@ -1035,6 +1035,12 @@ async def job_hyperpay_callback(
     data = {}
 
     try:
+        form = await request.form()
+        data.update(form)
+    except Exception:
+        pass
+
+    try:
         body = await request.json()
         if isinstance(body, dict):
             data.update(body)
