@@ -1017,13 +1017,21 @@ HYPERPAY_ENCRYPTION_KEY="52C78392A3658DEC1CAA6AD8D98B1B78EE3FEB1CA7369FA3531E67F
 
 
 
+
+
+
+
 def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
     encrypted_bytes = binascii.unhexlify(encrypted_hex)
+
     iv = encrypted_bytes[:16]
     ciphertext = encrypted_bytes[16:]
+
     key = binascii.unhexlify(HYPERPAY_ENCRYPTION_KEY)
+
     cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
+
     return json.loads(decrypted.decode("utf-8"))
 
 
@@ -1035,12 +1043,6 @@ async def job_hyperpay_callback(
     data = {}
 
     try:
-        form = await request.form()
-        data.update(form)
-    except Exception:
-        pass
-
-    try:
         body = await request.json()
         if isinstance(body, dict):
             data.update(body)
@@ -1049,19 +1051,26 @@ async def job_hyperpay_callback(
 
     logger.info("HyperPay JOB webhook received: %s", data)
 
-    # 🔐 ENCRYPTED CALLBACK (REAL FIX)
-    if "encryptedBody" in data:    
-        background_tasks.add_task(
+    # 🔐 ENCRYPTED CALLBACK (CORRECT WAY)
+    if "encryptedBody" in data:
+        try:
+            decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
+            logger.info("Decrypted JOB webhook: %s", decrypted)
+
+            payment_id = decrypted.get("id") or decrypted.get("paymentId")
+            if payment_id:
+                background_tasks.add_task(
                     process_job_payment_by_payment_id,
                     payment_id,
                 )
-        return {"status": "processed"}
+                return {"status": "processed"}
 
-        
+        except Exception:
+            logger.exception("Failed to decrypt JOB webhook")
 
-        
+        return {"status": "received"}
 
-    # 🔁 NORMAL CALLBACK
+    # 🔁 NORMAL CALLBACK (fallback only)
     payment_id = data.get("id")
     if payment_id:
         background_tasks.add_task(
@@ -1070,6 +1079,7 @@ async def job_hyperpay_callback(
         )
 
     return {"status": "received"}
+
 
 
 def process_job_payment_by_payment_id(payment_id: str):
