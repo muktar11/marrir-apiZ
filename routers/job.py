@@ -1044,23 +1044,16 @@ async def job_hyperpay_callback(
     logger.info("HyperPay JOB webhook received: %s", data)
 
     # 🔐 ENCRYPTED CALLBACK (REAL FIX)
-    if "encryptedBody" in data:
-        try:
-            decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
-            logger.info("Decrypted JOB webhook: %s", decrypted)
-
-            payment_id = decrypted.get("id") or decrypted.get("paymentId")
-            if payment_id:
-                background_tasks.add_task(
+    if "encryptedBody" in data:    
+        background_tasks.add_task(
                     process_job_payment_by_payment_id,
                     payment_id,
                 )
-                return {"status": "processed"}
+        return {"status": "processed"}
 
-        except Exception:
-            logger.exception("Failed to decrypt encrypted JOB webhook")
+        
 
-        return {"status": "received"}
+        
 
     # 🔁 NORMAL CALLBACK
     payment_id = data.get("id")
