@@ -1053,6 +1053,7 @@ async def job_hyperpay_callback(
         return {"status": "polling_started"}
 
     # 🔁 NORMAL CALLBACK
+
     payment_id = body.get("id")
     if payment_id:
         background_tasks.add_task(
@@ -1118,42 +1119,25 @@ def poll_pending_job_payments():
         ).all()
 
         for invoice in invoices:
+            if not invoice.payment_id:
+                continue  # 👈 critical
+
             res = requests.get(
-                "https://test.oppwa.com/v1/payments",
-                params={
-                    "entityId": settings.HYPERPAY_ENTITY_ID,
-                    "merchantTransactionId": invoice.reference,
-                },
+                f"https://test.oppwa.com/v1/payments/{invoice.payment_id}",
+                params={"entityId": settings.HYPERPAY_ENTITY_ID},
                 headers=get_hyperpay_auth_header(),
                 timeout=30,
             ).json()
 
-            for p in res.get("payments", []):
-                code = p.get("result", {}).get("code", "")
-                if not code.startswith(("000.000", "000.100", "000.200")):
-                    continue
+            code = res.get("result", {}).get("code", "")
+            if not code.startswith(("000.000", "000.100", "000.200")):
+                continue
 
-                if invoice.status == "paid":
-                    continue
-
-                invoice.status = "paid"
-                invoice.payment_id = p.get("id")
-
-                app_ids = [int(i) for i in invoice.object_id.split(",")]
-                applications = db.query(JobApplicationModel).filter(
-                    JobApplicationModel.id.in_(app_ids)
-                ).all()
-
-                for app in applications:
-                    app.status = "accepted"
-
-                db.commit()
-
-    except Exception:
-        logger.exception("Job polling failed")
-        db.rollback()
+            invoice.status = "paid"
+            db.commit()
     finally:
         db.close()
+
 
 
 
