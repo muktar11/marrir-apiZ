@@ -1038,8 +1038,6 @@ def decrypt_hyperpay_payload(encrypted_b64: str) -> dict:
 
 
 
-
-
 @job_router.post("/packages/callback/hyper")
 async def job_hyperpay_callback(
     request: Request,
@@ -1048,23 +1046,22 @@ async def job_hyperpay_callback(
     body = await request.json()
     logger.info("HyperPay JOB webhook received: %s", body)
 
+    # 🔐 ENCRYPTED CALLBACK → POLL
     if "encryptedBody" in body:
-        try:
-            decrypted = decrypt_hyperpay_payload(body["encryptedBody"])
-            logger.info("Decrypted JOB webhook: %s", decrypted)
+        logger.info("Encrypted JOB webhook received — starting polling")
+        background_tasks.add_task(poll_pending_job_payments)
+        return {"status": "polling_started"}
 
-            payment_id = decrypted.get("id")
-            if payment_id:
-                background_tasks.add_task(
-                    process_job_payment_by_payment_id,
-                    payment_id
-                )
-                return {"status": "processed"}
-
-        except Exception:
-            logger.exception("Failed to decrypt JOB webhook")
+    # 🔁 NORMAL CALLBACK
+    payment_id = body.get("id")
+    if payment_id:
+        background_tasks.add_task(
+            process_job_payment_by_payment_id,
+            payment_id
+        )
 
     return {"status": "received"}
+
 
 def process_job_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
