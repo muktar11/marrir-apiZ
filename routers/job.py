@@ -1014,18 +1014,15 @@ import binascii
 import json
 
 HYPERPAY_ENCRYPTION_KEY="52C78392A3658DEC1CAA6AD8D98B1B78EE3FEB1CA7369FA3531E67FEDF9B0EBE"
+
+
+
 def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
     encrypted_bytes = binascii.unhexlify(encrypted_hex)
-
-    iv = encrypted_bytes[:16]          # First 16 bytes
-    ciphertext = encrypted_bytes[16:]  # Rest is payload
-
-    cipher = AES.new(
-        HYPERPAY_ENCRYPTION_KEY,
-        AES.MODE_CBC,
-        iv
-    )
-
+    iv = encrypted_bytes[:16]
+    ciphertext = encrypted_bytes[16:]
+    key = binascii.unhexlify(HYPERPAY_ENCRYPTION_KEY)
+    cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
     return json.loads(decrypted.decode("utf-8"))
 
