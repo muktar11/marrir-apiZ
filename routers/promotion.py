@@ -657,7 +657,7 @@ async def buy_promotion_package(
         "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": merchant_tx_id,
-        "shopperResultUrl": "https://marrir.com/employee/promotion",
+        #"shopperResultUrl": "https://marrir.com/employee/promotion",
         "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyperpay",
     }
 
@@ -1598,3 +1598,4 @@ async def create_promotion_package(
         print(e)
         db.rollback()
         return Response(status_code=400, content=json.dumps({"message": "Failed to create promotion package"}), media_type="application/json")
+
