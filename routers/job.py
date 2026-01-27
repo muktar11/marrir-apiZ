@@ -2,7 +2,6 @@ from datetime import datetime, timezone
 import json
 from typing import Any, List, Optional
 import uuid
-from Marrir_API.schemas.enumschema import OfferTypeSchema
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
 from starlette.requests import Request
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
@@ -756,6 +755,7 @@ async def job_hyperpay_callback(
     return {"status": "received"}
 
 
+from schemas.offerschema import OfferTypeSchema
 def process_job_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
@@ -794,6 +794,8 @@ def process_job_payment_by_payment_id(payment_id: str):
 
         for app in applications:
             app.status = OfferTypeSchema.ACCEPTED
+
+
 
         db.commit()
 
