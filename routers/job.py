@@ -795,11 +795,6 @@ def process_job_payment_by_payment_id(payment_id: str):
 
         for app in applications:
             app.status = OfferTypeSchema.ACCEPTED
-        
-        logger.error(f"INVOICE OBJECT_ID = {invoice.object_id}")
-        logger.error(f"FOUND APPLICATIONS = {len(applications)}")
-        logger.error(f"SETTING STATUS TO = {OfferTypeSchema.ACCEPTED}")
-
 
 
 
@@ -846,6 +841,13 @@ def poll_pending_job_payments():
             invoice.status = "paid" 
             payment = payments[0] 
             invoice.payment_id = payment.get("id")  # ✅ now real payment_id
+            app_ids = [int(i) for i in invoice.object_id.split(",")]
+            applications = db.query(JobApplicationModel).filter(
+                JobApplicationModel.id.in_(app_ids)
+            ).all()
+
+            for app in applications:
+                app.status = OfferTypeSchema.ACCEPTED
             db.commit()
 
     finally:
