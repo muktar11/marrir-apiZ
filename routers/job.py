@@ -756,6 +756,7 @@ async def job_hyperpay_callback(
 
 
 from schemas.offerschema import OfferTypeSchema
+
 def process_job_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
@@ -794,10 +795,16 @@ def process_job_payment_by_payment_id(payment_id: str):
 
         for app in applications:
             app.status = OfferTypeSchema.ACCEPTED
+        
+        logger.error(f"INVOICE OBJECT_ID = {invoice.object_id}")
+        logger.error(f"FOUND APPLICATIONS = {len(applications)}")
+        logger.error(f"SETTING STATUS TO = {OfferTypeSchema.ACCEPTED}")
+
 
 
 
         db.commit()
+        logger.error("COMMIT DONE FOR JOB APPLICATION UPDATE")
 
     except Exception:
         logger.exception("Job payment verification failed")
