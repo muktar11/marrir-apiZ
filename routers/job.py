@@ -2,6 +2,7 @@ from datetime import datetime, timezone
 import json
 from typing import Any, List, Optional
 import uuid
+from Marrir_API.schemas.enumschema import OfferTypeSchema
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
 from starlette.requests import Request
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
@@ -650,7 +651,8 @@ async def update_job_application_status(
                 "merchantTransactionId": merchant_tx_id,
                 "customParameters[3DS2_enrolled]": "true",
 
-                "shopperResultUrl": "https://marrir.com/recruitment/jobs/return",
+                
+                "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}/return",
                 "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
             }
 
@@ -791,7 +793,7 @@ def process_job_payment_by_payment_id(payment_id: str):
         ).all()
 
         for app in applications:
-            app.status = "accepted"
+            app.status = OfferTypeSchema.ACCEPTED
 
         db.commit()
 
@@ -845,11 +847,10 @@ def poll_pending_job_payments():
 
 
 
-
 @job_router.get("/my-applications/status/callback/hyper")
 async def pay_status(
     merchantTransactionId: str,
-    db: Session = Depends(get_db_session),
+    db: Session = Depends(get_db_sessions),  # ← THIS IS THE FIX
 ):
     invoice = db.query(InvoiceModel).filter(
         InvoiceModel.reference == merchantTransactionId,
@@ -863,7 +864,6 @@ async def pay_status(
         "status": invoice.status,
         "amount": invoice.amount,
     }
-
 
 
 
