@@ -641,6 +641,15 @@ async def update_job_application_status(
 
             amount = package.price * len(applications)
             merchant_tx_id = secrets.token_hex(12)
+
+            user_email = app.user.email
+            user_first = app.user.first_name
+            user_last = app.user.last_name
+            user_address = app.user.cv.street if app.user.cv else "N/A"
+            user_city = app.user.cv.city if app.user.cv else "N/A"
+            user_state = app.user.cv.state if app.user.cv else "N/A"
+            user_country = app.user.cv.country if app.user.cv else "AE"  # default to AE if missing
+            user_postcode = app.user.cv.postcode if app.user.cv else "00000"
             payload = {
                 "entityId": settings.HYPERPAY_ENTITY_ID,
                 "amount": f"{amount:.2f}",
@@ -649,6 +658,14 @@ async def update_job_application_status(
 
                 "merchantTransactionId": merchant_tx_id,
                 "customParameters[3DS2_enrolled]": "true",
+                "customer.email": user_email,
+                "customer.givenName": user_first,
+                "customer.surname": user_last,
+                "billing.street1": user_address,
+                "billing.city": user_city,
+                "billing.state": user_state,
+                "billing.country": user_country,
+                "billing.postcode": user_postcode,
 
                 
                 "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}/return",
