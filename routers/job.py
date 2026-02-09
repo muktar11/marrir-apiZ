@@ -640,16 +640,22 @@ async def update_job_application_status(
                     )
 
             amount = package.price * len(applications)
-            merchant_tx_id = secrets.token_hex(12)
+            #merchant_tx_id = secrets.token_hex(2)
+            merchant_tx_id = uuid.uuid4().hex
+
 
             user_email = app.user.email
             user_first = app.user.first_name
             user_last = app.user.last_name
-            user_address = app.user.cv.street if app.user.cv else "N/A"
-            user_city = app.user.cv.city if app.user.cv else "N/A"
-            user_state = app.user.cv.state if app.user.cv else "N/A"
-            user_country = app.user.cv.country if app.user.cv else "AE"  # default to AE if missing
-            user_postcode = app.user.cv.postcode if app.user.cv else "00000"
+            
+            billing = data.billing
+
+            if data.status == "accepted" and not data.billing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Billing information is required to proceed with payment"
+                )
+
             payload = {
                 "entityId": settings.HYPERPAY_ENTITY_ID,
                 "amount": f"{amount:.2f}",
@@ -658,19 +664,27 @@ async def update_job_application_status(
 
                 "merchantTransactionId": merchant_tx_id,
                 "customParameters[3DS2_enrolled]": "true",
+                "integrity": "true",
                 "customer.email": user_email,
                 "customer.givenName": user_first,
                 "customer.surname": user_last,
-                "billing.street1": user_address,
-                "billing.city": user_city,
-                "billing.state": user_state,
-                "billing.country": user_country,
-                "billing.postcode": user_postcode,
+                "customer.email": user_email,
+                "customer.givenName": user_first,
+                "customer.surname": user_last,
+
+                "billing.street1": billing.street1,
+                "billing.city": billing.city,
+                "billing.state": billing.state or "N/A",
+                "billing.country": billing.country,
+                "billing.postcode": billing.postcode,
 
                 
                 "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}/return",
                 "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
             }
+
+
+
 
             headers = {
                 "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
@@ -688,6 +702,7 @@ async def update_job_application_status(
 
 
             checkout_id = res.get("id")
+            integrity_value = res.get("integrity")
             if not checkout_id:
                 return Response(status_code=400, content=json.dumps(res))
 
@@ -699,6 +714,7 @@ async def update_job_application_status(
                 status="pending",
                 type="job_application",
                 object_id=",".join(str(a.id) for a in applications),
+                integrity=integrity_value,
             )
 
             db.add(invoice)
@@ -708,6 +724,7 @@ async def update_job_application_status(
             return {
                 "checkoutId": checkout_id,
                 "merchantTransactionId": merchant_tx_id,
+                "integrity": integrity_value,
                 "amount": amount,
             }
 
