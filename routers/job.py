@@ -640,8 +640,9 @@ async def update_job_application_status(
                     )
 
             amount = package.price * len(applications)
-            #merchant_tx_id = secrets.token_hex(2)
-            merchant_tx_id = uuid.uuid4().hex
+            merchant_tx_id = secrets.token_hex(6)
+            
+            
 
 
             user_email = app.user.email
@@ -872,7 +873,13 @@ def poll_pending_job_payments():
 
 
 
-            invoice.status = "paid" 
+            #invoice.status = "paid"
+            payment = payments[0]
+            code = payment.get("result", {}).get("code", "")
+
+            if not code.startswith(("000.000", "000.100", "000.200")):
+                continue
+ 
             payment = payments[0] 
             invoice.payment_id = payment.get("id")  # ✅ now real payment_id
             app_ids = [int(i) for i in invoice.object_id.split(",")]
@@ -890,6 +897,67 @@ def poll_pending_job_payments():
 
 
 
+@job_router.get("/jobs/{job_id}/return")
+async def hyperpay_return(
+    request: Request,
+    job_id: int,
+):
+    db = SessionLocal()
+    try:
+        resource_path = request.query_params.get("resourcePath")
+
+        if not resource_path:
+            raise HTTPException(status_code=400, detail="Missing resourcePath")
+
+        url = f"https://test.oppwa.com{resource_path}"
+
+        res = requests.get(
+            url,
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        result_code = res.get("result", {}).get("code", "")
+        description = res.get("result", {}).get("description", "")
+
+        if result_code.startswith(("000.000", "000.100", "000.200")):
+            merchant_tx_id = res.get("merchantTransactionId")
+
+            invoice = db.query(InvoiceModel).filter(
+                InvoiceModel.reference == merchant_tx_id,
+                InvoiceModel.type == "job_application",
+            ).first()
+
+            if invoice and invoice.status != "paid":
+                invoice.status = "paid"
+                invoice.payment_id = res.get("id")
+
+                app_ids = [int(i) for i in invoice.object_id.split(",")]
+                applications = db.query(JobApplicationModel).filter(
+                    JobApplicationModel.id.in_(app_ids)
+                ).all()
+
+                for app in applications:
+                    app.status = OfferTypeSchema.ACCEPTED
+
+                db.commit()
+
+            return {
+                "status": "SUCCESS",
+                "description": description,
+            }
+
+        return {
+            "status": "FAILED",
+            "description": description,
+        }
+
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 @job_router.get("/my-applications/status/callback/hyper")
