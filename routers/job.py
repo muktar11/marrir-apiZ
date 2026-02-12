@@ -855,6 +855,7 @@ def poll_pending_job_payments():
 
         for invoice in invoices:
             logger.info(f"Polling invoice {invoice.id} with reference {invoice.reference}")
+
             res = requests.get(
                 "https://test.oppwa.com/v1/payments",
                 params={
@@ -864,6 +865,7 @@ def poll_pending_job_payments():
                 headers=get_hyperpay_auth_header(),
                 timeout=30,
             ).json()
+
             logger.info(f"HyperPay response: {res}")
 
             payments = res.get("payments", [])
@@ -871,17 +873,17 @@ def poll_pending_job_payments():
                 logger.info("No payments found")
                 continue
 
-
-
-            #invoice.status = "paid"
             payment = payments[0]
             code = payment.get("result", {}).get("code", "")
 
             if not code.startswith(("000.000", "000.100", "000.200")):
+                logger.info(f"Payment not successful. Code: {code}")
                 continue
- 
-            payment = payments[0] 
-            invoice.payment_id = payment.get("id")  # ✅ now real payment_id
+
+            # ✅ ONLY NOW mark as paid
+            invoice.status = "paid"
+            invoice.payment_id = payment.get("id")
+
             app_ids = [int(i) for i in invoice.object_id.split(",")]
             applications = db.query(JobApplicationModel).filter(
                 JobApplicationModel.id.in_(app_ids)
@@ -889,7 +891,9 @@ def poll_pending_job_payments():
 
             for app in applications:
                 app.status = OfferTypeSchema.ACCEPTED
+
             db.commit()
+            logger.info(f"Invoice {invoice.id} marked as PAID")
 
     finally:
         db.close()
@@ -1065,3 +1069,4 @@ async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema
     except Exception as e:
         print(e)
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
+
