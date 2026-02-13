@@ -5,7 +5,7 @@ import uuid
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
 from starlette.requests import Request
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
-from models.db import SessionLocal, authentication_context, build_request_context, get_db_session, get_db_sessions
+from models.db import SessionLocal, authentication_context, build_request_context, get_db, get_db_session, get_db_sessions
 from models.invoicemodel import InvoiceModel
 from models.jobapplicationmodel import JobApplicationModel
 from models.jobmodel import JobModel
@@ -569,17 +569,13 @@ def get_hyperpay_auth_header() -> dict:
 
 
 
-
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
     job_id: int,
-    _=Depends(authentication_context),
-    __=Depends(build_request_context),
+    db: Session = Depends(get_db),
+    user = context_actor_user_data.get(),  # ✅ REAL ORM USER
 ):
-    db = get_db_session()
-    user = context_actor_user_data.get()
-
     if user.role not in ["recruitment", "sponsor"]:
         raise HTTPException(status_code=403, detail="Unauthorized")
 
@@ -596,7 +592,6 @@ async def update_job_application_status(
     if not applications:
         raise HTTPException(status_code=404, detail="Applications not found")
 
-    # Package
     package = db.query(PromotionPackagesModel).filter(
         PromotionPackagesModel.role == user.role,
         PromotionPackagesModel.category == "job_application",
@@ -617,11 +612,9 @@ async def update_job_application_status(
         "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": merchant_tx_id,
-        "integrity": "true",
 
         "customer.email": user.email,
-        "customer.givenName": user.first_name,
-        "customer.surname": user.last_name,
+
 
         "billing.street1": data.billing.street1,
         "billing.city": data.billing.city,
@@ -629,16 +622,16 @@ async def update_job_application_status(
         "billing.country": data.billing.country,
         "billing.postcode": data.billing.postcode,
 
-        "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
+        "shopperResultUrl": f"https://marrir.com/payment-result?jobId={job_id}",
+
+        # 🔥 IMPORTANT – add this for callback
+        "notificationUrl": "https://marrir.com/api/v1/job/payment/callback/hyper",
     }
 
     res = requests.post(
-        f"{settings.HYPERPAY_BASE_URL}/v1/checkouts",
+        "https://test.oppwa.com/v1/checkouts",
         data=payload,
-        headers={
-            "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
-            "Content-Type": "application/x-www-form-urlencoded",
-        },
+        headers=get_hyperpay_auth_header(),
         timeout=30,
     ).json()
 
@@ -676,8 +669,9 @@ async def hyperpay_return(request: Request, job_id: int):
         raise HTTPException(status_code=400, detail="Missing resourcePath")
 
     # Verify with HyperPay
+    HYPERPAY_BASE_URL = "https://test.oppwa.com"
     res = requests.get(
-        f"{settings.HYPERPAY_BASE_URL}{resource_path}",
+        f"{HYPERPAY_BASE_URL}{resource_path}",
         params={"entityId": settings.HYPERPAY_ENTITY_ID},
         headers={"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"},
         timeout=30,
