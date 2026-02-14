@@ -693,7 +693,7 @@ async def update_job_application_status(
             }
 
             res = requests.post(
-                f"{HYPERPAY_BASE_URL}/v1/checkouts",
+                "https://test.oppwa.com/v1/checkouts",
                 data=payload,
                 headers=headers,
                 timeout=30,
