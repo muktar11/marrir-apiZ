@@ -572,101 +572,164 @@ HYPERPAY_BASE_URL = "https://test.oppwa.com"
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
     job_id: int,
-    db: Session = Depends(get_db),
+    background_tasks: BackgroundTasks,
     _=Depends(authentication_context),
     __=Depends(build_request_context),
 ):
     try:
+        db = get_db_session()
         user = context_actor_user_data.get()
 
         if user.role not in ["recruitment", "sponsor"]:
-            raise HTTPException(status_code=403, detail="Unauthorized")
+            return Response(status_code=403, content="Unauthorized")
 
         job = db.query(JobModel).filter(JobModel.id == job_id).first()
         if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+            return Response(status_code=404, content="Job not found")
 
-        applications = db.query(JobApplicationModel).filter(
-            JobApplicationModel.job_id == job_id,
-            JobApplicationModel.id.in_(data.job_application_ids),
-            JobApplicationModel.status == "pending",
-        ).all()
-
-        if not applications:
-            raise HTTPException(status_code=404, detail="Applications not found")
-
-        package = db.query(PromotionPackagesModel).filter(
-            PromotionPackagesModel.role == user.role,
-            PromotionPackagesModel.category == "job_application",
-        ).first()
-
-        if not package:
-            raise HTTPException(status_code=404, detail="Package not found")
-
-        if not data.billing:
-            raise HTTPException(status_code=400, detail="Billing required")
-
-        amount = package.price * len(applications)
-        merchant_tx_id = secrets.token_hex(12)
-
-        payload = {
-            "entityId": settings.HYPERPAY_ENTITY_ID,
-            "amount": f"{amount:.2f}",
-            "currency": "AED",
-            "paymentType": "DB",
-            "merchantTransactionId": merchant_tx_id,
-
-            "customer.email": user.email,
-
-            "billing.street1": data.billing.street1,
-            "billing.city": data.billing.city,
-            "billing.state": data.billing.state or "N/A",
-            "billing.country": data.billing.country,
-            "billing.postcode": data.billing.postcode,
-
-            "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
-            "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
-            
-        }
-
-        headers = {
-                "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
-                "Content-Type": "application/x-www-form-urlencoded",
-        }
-        res = requests.post(
-            "https://test.oppwa.com/v1/checkouts",
-            data=payload,
-            headers=headers,
-            timeout=30,
-        ).json()
-
-        checkout_id = res.get("id")
-        integrity = res.get("integrity")
-
-        if not checkout_id:
-            raise HTTPException(status_code=400, detail=res)
-
-        invoice = InvoiceModel(
-            reference=merchant_tx_id,
-            payment_id=checkout_id,
-            buyer_id=user.id,
-            amount=amount,
-            status="pending",
-            type="job_application",
-            object_id=",".join(str(a.id) for a in applications),
+        applications = (
+            db.query(JobApplicationModel)
+            .filter(
+                JobApplicationModel.job_id == job_id,
+                JobApplicationModel.id.in_(data.job_application_ids),
+                JobApplicationModel.status == "pending",
+            )
+            .all()
         )
 
-        db.add(invoice)
-        db.commit()
+        if not applications:
+            return Response(status_code=404, content="Job applications not found")
 
-        return {
-            "checkoutId": checkout_id,
-            "integrity": integrity,
-        }
+        for app in applications:
+            if app.job.posted_by != user.id:
+                return Response(status_code=403, content="Unauthorized")
 
-    except Exception:
+        # ---------- DECLINED ----------
+        if data.status == "declined":
+            for app in applications:
+                app.status = "declined"
+            db.commit()
+            return {"message": "Job applications declined"}
+
+        # ---------- ACCEPTED → PAY ----------
+        if data.status == "accepted":
+            package = (
+                db.query(PromotionPackagesModel)
+                .filter(
+                    PromotionPackagesModel.role == user.role,
+                    PromotionPackagesModel.category == "job_application",
+                )
+                .first()
+            )
+            if not package:
+                return Response(status_code=404, content="Package not found")
+
+            for app in applications:
+                existing = (
+                    db.query(JobApplicationModel)
+                    .filter(
+                        JobApplicationModel.user_id == app.user_id,
+                        JobApplicationModel.status == "accepted",
+                    )
+                    .first()
+                )
+                if existing:
+                    return Response(
+                        status_code=400,
+                        content=f"{existing.user.first_name} already accepted elsewhere",
+                    )
+
+            amount = package.price * len(applications)
+            merchant_tx_id = secrets.token_hex(6)
+            
+            
+
+
+            user_email = app.user.email
+            user_first = app.user.first_name
+            user_last = app.user.last_name
+            
+
+            billing = data.billing
+
+            if data.status == "accepted" and not data.billing:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Billing information is required to proceed with payment"
+                )
+
+            payload = {
+                "entityId": settings.HYPERPAY_ENTITY_ID,
+                "amount": f"{amount:.2f}",
+                "currency": "AED",
+                "paymentType": "DB",
+
+                "merchantTransactionId": merchant_tx_id,
+                "customParameters[3DS2_enrolled]": "true",
+                "integrity": "true",
+                "customer.email": user_email,
+                "customer.givenName": user_first,
+                "customer.surname": user_last,
+
+                "billing.street1": billing.street1,
+                "billing.city": billing.city,
+                "billing.state": billing.state or "N/A",
+                "billing.country": billing.country,
+                "billing.postcode": billing.postcode,
+
+                
+                "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
+                "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
+            }
+
+
+
+
+            headers = {
+                "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+                "Content-Type": "application/x-www-form-urlencoded",
+            }
+
+            res = requests.post(
+                "https://test.oppwa.com/v1/checkouts",
+                data=payload,
+                headers=headers,
+                timeout=30,
+            ).json()
+
+
+
+
+            checkout_id = res.get("id")
+            integrity_value = res.get("integrity")
+            if not checkout_id:
+                return Response(status_code=400, content=json.dumps(res))
+
+            invoice = InvoiceModel(
+                reference=merchant_tx_id,
+                payment_id=checkout_id,
+                buyer_id=user.id,
+                amount=amount,
+                status="pending",
+                type="job_application",
+                object_id=",".join(str(a.id) for a in applications),
+                integrity=integrity_value,
+            )
+
+            db.add(invoice)
+            db.commit()
+            db.refresh(invoice)
+
+            return {
+                "checkoutId": checkout_id,
+                "merchantTransactionId": merchant_tx_id,
+                "integrity": integrity_value,
+                "amount": amount,
+            }
+
+    except Exception as e:
         logger.exception("Job HyperPay initiation failed")
-        raise HTTPException(status_code=500, detail="Payment initiation failed")
+        return Response(status_code=500, content=str(e))
 
 
 
