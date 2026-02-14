@@ -567,97 +567,104 @@ def get_hyperpay_auth_header() -> dict:
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
-
-
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
     job_id: int,
     db: Session = Depends(get_db),
-    user = context_actor_user_data.get(),  # ✅ REAL ORM USER
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
 ):
-    if user.role not in ["recruitment", "sponsor"]:
-        raise HTTPException(status_code=403, detail="Unauthorized")
+    try:
+        user = context_actor_user_data.get()
 
-    job = db.query(JobModel).filter(JobModel.id == job_id).first()
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
+        if user.role not in ["recruitment", "sponsor"]:
+            raise HTTPException(status_code=403, detail="Unauthorized")
 
-    applications = db.query(JobApplicationModel).filter(
-        JobApplicationModel.job_id == job_id,
-        JobApplicationModel.id.in_(data.job_application_ids),
-        JobApplicationModel.status == "pending",
-    ).all()
+        job = db.query(JobModel).filter(JobModel.id == job_id).first()
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
 
-    if not applications:
-        raise HTTPException(status_code=404, detail="Applications not found")
+        applications = db.query(JobApplicationModel).filter(
+            JobApplicationModel.job_id == job_id,
+            JobApplicationModel.id.in_(data.job_application_ids),
+            JobApplicationModel.status == "pending",
+        ).all()
 
-    package = db.query(PromotionPackagesModel).filter(
-        PromotionPackagesModel.role == user.role,
-        PromotionPackagesModel.category == "job_application",
-    ).first()
+        if not applications:
+            raise HTTPException(status_code=404, detail="Applications not found")
 
-    if not package:
-        raise HTTPException(status_code=404, detail="Package not found")
+        package = db.query(PromotionPackagesModel).filter(
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == "job_application",
+        ).first()
 
-    if not data.billing:
-        raise HTTPException(status_code=400, detail="Billing required")
+        if not package:
+            raise HTTPException(status_code=404, detail="Package not found")
 
-    amount = package.price * len(applications)
-    merchant_tx_id = secrets.token_hex(12)
+        if not data.billing:
+            raise HTTPException(status_code=400, detail="Billing required")
 
-    payload = {
-        "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{amount:.2f}",
-        "currency": "AED",
-        "paymentType": "DB",
-        "merchantTransactionId": merchant_tx_id,
+        amount = package.price * len(applications)
+        merchant_tx_id = secrets.token_hex(12)
 
-        "customer.email": user.email,
+        payload = {
+            "entityId": settings.HYPERPAY_ENTITY_ID,
+            "amount": f"{amount:.2f}",
+            "currency": "AED",
+            "paymentType": "DB",
+            "merchantTransactionId": merchant_tx_id,
 
+            "customer.email": user.email,
+            "customer.givenName": user.first_name or "User",
+            "customer.surname": user.last_name or "User",
 
-        "billing.street1": data.billing.street1,
-        "billing.city": data.billing.city,
-        "billing.state": data.billing.state or "N/A",
-        "billing.country": data.billing.country,
-        "billing.postcode": data.billing.postcode,
+            "billing.street1": data.billing.street1,
+            "billing.city": data.billing.city,
+            "billing.state": data.billing.state or "N/A",
+            "billing.country": data.billing.country,
+            "billing.postcode": data.billing.postcode,
 
-        "shopperResultUrl": f"https://marrir.com/payment-result?jobId={job_id}",
+            "shopperResultUrl": f"https://marrir.com/payment-result?jobId={job_id}",
 
-        # 🔥 IMPORTANT – add this for callback
-        "notificationUrl": "https://marrir.com/api/v1/job/payment/callback/hyper",
-    }
+            "notificationUrl": "https://marrir.com/api/v1/job/payment/callback/hyper",
+        }
 
-    res = requests.post(
-        "https://test.oppwa.com/v1/checkouts",
-        data=payload,
-        headers=get_hyperpay_auth_header(),
-        timeout=30,
-    ).json()
+        res = requests.post(
+            f"{settings.HYPERPAY_BASE_URL}/v1/checkouts",
+            data=payload,
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
 
-    checkout_id = res.get("id")
-    integrity = res.get("integrity")
+        checkout_id = res.get("id")
+        integrity = res.get("integrity")
 
-    if not checkout_id:
-        raise HTTPException(status_code=400, detail=res)
+        if not checkout_id:
+            raise HTTPException(status_code=400, detail=res)
 
-    invoice = InvoiceModel(
-        reference=merchant_tx_id,
-        payment_id=checkout_id,
-        buyer_id=user.id,
-        amount=amount,
-        status="pending",
-        type="job_application",
-        object_id=",".join(str(a.id) for a in applications),
-    )
+        invoice = InvoiceModel(
+            reference=merchant_tx_id,
+            payment_id=checkout_id,
+            buyer_id=user.id,
+            amount=amount,
+            status="pending",
+            type="job_application",
+            object_id=",".join(str(a.id) for a in applications),
+        )
 
-    db.add(invoice)
-    db.commit()
+        db.add(invoice)
+        db.commit()
 
-    return {
-        "checkoutId": checkout_id,
-        "integrity": integrity,
-    }
+        return {
+            "checkoutId": checkout_id,
+            "integrity": integrity,
+        }
+
+    except Exception:
+        logger.exception("Job HyperPay initiation failed")
+        raise HTTPException(status_code=500, detail="Payment initiation failed")
+
 
 
 @job_router.get("/jobs/{job_id}/return")
