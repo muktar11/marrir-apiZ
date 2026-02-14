@@ -617,8 +617,6 @@ async def update_job_application_status(
             "merchantTransactionId": merchant_tx_id,
 
             "customer.email": user.email,
-            #"customer.givenName": user.first_name or "User",
-            #"customer.surname": user.last_name or "User",
 
             "billing.street1": data.billing.street1,
             "billing.city": data.billing.city,
@@ -628,12 +626,17 @@ async def update_job_application_status(
 
             "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
             "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
+            
         }
 
+        headers = {
+                "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+                "Content-Type": "application/x-www-form-urlencoded",
+        }
         res = requests.post(
-            f"{HYPERPAY_BASE_URL}/v1/checkouts",
+            "https://test.oppwa.com/v1/checkouts",
             data=payload,
-            headers=get_hyperpay_auth_header(),
+            headers=headers,
             timeout=30,
         ).json()
 
@@ -996,4 +999,3 @@ async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema
     except Exception as e:
         print(e)
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
-
