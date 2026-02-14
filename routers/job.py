@@ -617,8 +617,8 @@ async def update_job_application_status(
             "merchantTransactionId": merchant_tx_id,
 
             "customer.email": user.email,
-            "customer.givenName": user.first_name or "User",
-            "customer.surname": user.last_name or "User",
+            #"customer.givenName": user.first_name or "User",
+            #"customer.surname": user.last_name or "User",
 
             "billing.street1": data.billing.street1,
             "billing.city": data.billing.city,
@@ -626,8 +626,7 @@ async def update_job_application_status(
             "billing.country": data.billing.country,
             "billing.postcode": data.billing.postcode,
 
-            "shopperResultUrl": f"https://marrir.com/payment-result?jobId={job_id}",
-
+            "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
             "notificationUrl": "https://marrir.com/api/v1/job/payment/callback/hyper",
         }
 
