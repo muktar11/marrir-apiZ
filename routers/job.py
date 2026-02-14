@@ -567,7 +567,9 @@ def get_hyperpay_auth_header() -> dict:
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
-HYPERPAY_BASE_URL = "https://test.oppwa.com"
+
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
@@ -691,7 +693,7 @@ async def update_job_application_status(
             }
 
             res = requests.post(
-                "https://test.oppwa.com/v1/checkouts",
+                f"{HYPERPAY_BASE_URL}/v1/checkouts",
                 data=payload,
                 headers=headers,
                 timeout=30,
@@ -733,60 +735,6 @@ async def update_job_application_status(
 
 
 
-@job_router.get("/jobs/{job_id}/return")
-async def hyperpay_return(request: Request, job_id: int):
-    db = SessionLocal()
-
-    resource_path = request.query_params.get("resourcePath")
-    if not resource_path:
-        raise HTTPException(status_code=400, detail="Missing resourcePath")
-
-    # Verify with HyperPay
-    HYPERPAY_BASE_URL = "https://test.oppwa.com"
-    res = requests.get(
-        f"{HYPERPAY_BASE_URL}{resource_path}",
-        params={"entityId": settings.HYPERPAY_ENTITY_ID},
-        headers={"Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"},
-        timeout=30,
-    ).json()
-
-    result_code = res.get("result", {}).get("code", "")
-    merchant_tx_id = res.get("merchantTransactionId")
-
-    if not result_code.startswith(("000.000", "000.100", "000.200")):
-        return {"status": "FAILED"}
-
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.reference == merchant_tx_id,
-        InvoiceModel.status == "pending",
-        InvoiceModel.type == "job_application",
-    ).first()
-
-    if not invoice:
-        return {"status": "NOT_FOUND"}
-
-    # 🔒 CRITICAL VALIDATIONS
-    if (
-        str(res.get("amount")) != f"{invoice.amount:.2f}"
-        or res.get("currency") != "AED"
-    ):
-        return {"status": "INVALID_PAYMENT_DATA"}
-
-    # Mark paid
-    invoice.status = "paid"
-    invoice.payment_id = res.get("id")
-
-    app_ids = [int(i) for i in invoice.object_id.split(",")]
-    applications = db.query(JobApplicationModel).filter(
-        JobApplicationModel.id.in_(app_ids)
-    ).all()
-
-    for app in applications:
-        app.status = OfferTypeSchema.ACCEPTED
-
-    db.commit()
-
-    return {"status": "SUCCESS"}
 
 
 from Crypto.Cipher import AES
