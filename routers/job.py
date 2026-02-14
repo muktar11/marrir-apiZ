@@ -567,6 +567,7 @@ def get_hyperpay_auth_header() -> dict:
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
+HYPERPAY_BASE_URL = "https://test.oppwa.com"
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
@@ -631,7 +632,7 @@ async def update_job_application_status(
         }
 
         res = requests.post(
-            f"{settings.HYPERPAY_BASE_URL}/v1/checkouts",
+            f"{HYPERPAY_BASE_URL}/v1/checkouts",
             data=payload,
             headers=get_hyperpay_auth_header(),
             timeout=30,
