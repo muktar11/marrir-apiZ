@@ -627,7 +627,7 @@ async def update_job_application_status(
             "billing.postcode": data.billing.postcode,
 
             "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
-            "notificationUrl": "https://marrir.com/api/v1/job/payment/callback/hyper",
+            "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
         }
 
         res = requests.post(
@@ -996,3 +996,4 @@ async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema
     except Exception as e:
         print(e)
         return Response(status_code=400, content=json.dumps({"message": str(e)}), media_type="application/json")
+
