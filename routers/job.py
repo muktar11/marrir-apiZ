@@ -693,7 +693,7 @@ async def update_job_application_status(
             }
 
             res = requests.post(
-                "https://test.oppwa.com/v1/checkouts",
+                "https://eu-test.oppwa.com/v1/checkouts",
                 data=payload,
                 headers=headers,
                 timeout=30,
@@ -716,6 +716,13 @@ async def update_job_application_status(
                 type="job_application",
                 object_id=",".join(str(a.id) for a in applications),
                 integrity=integrity_value,
+
+                billing_email=billing.email,
+                billing_country=billing.country.upper(),
+                billing_street=billing.street1,
+                billing_city=billing.city,
+                billing_state=billing.state,
+                billing_postcode=billing.postcode,
             )
 
             db.add(invoice)
