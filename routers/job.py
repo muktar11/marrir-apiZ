@@ -568,7 +568,8 @@ def get_hyperpay_auth_header() -> dict:
     }
 
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
@@ -693,7 +694,7 @@ async def update_job_application_status(
             }
 
             res = requests.post(
-                "https://eu-test.oppwa.com/v1/checkouts",
+                f"{HYPERPAY_BASE_URL}/v1/checkouts",
                 data=payload,
                 headers=headers,
                 timeout=30,
@@ -717,7 +718,7 @@ async def update_job_application_status(
                 object_id=",".join(str(a.id) for a in applications),
                 integrity=integrity_value,
 
-                billing_email=billing.email,
+               
                 billing_country=billing.country.upper(),
                 billing_street=billing.street1,
                 billing_city=billing.city,
@@ -807,7 +808,7 @@ def process_job_payment_by_payment_id(payment_id: str):
     try:
         # 🔹 Use webhook payment_id directly
         res = requests.get(
-            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            f"{HYPERPAY_BASE_URL}/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
             headers=get_hyperpay_auth_header(),
             timeout=30,
@@ -867,7 +868,8 @@ def poll_pending_job_payments():
             logger.info(f"Polling invoice {invoice.id} with reference {invoice.reference}")
 
             res = requests.get(
-                "https://test.oppwa.com/v1/payments",
+                
+                f"{HYPERPAY_BASE_URL}/v1/payments"
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
