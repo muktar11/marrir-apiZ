@@ -776,48 +776,49 @@ def decrypt_hyperpay_payload(encrypted_b64: str) -> dict:
 from fastapi import Request, status
 from fastapi import Header, HTTPException
 from starlette.responses import JSONResponse
-
+from fastapi import Request, BackgroundTasks
+from fastapi.responses import JSONResponse
 
 @job_router.post("/packages/callback/hyper")
 async def job_hyperpay_callback(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-
-    data = {}
-
     try:
-        form = await request.form()
-        data.update(form)
-    except Exception:
-        pass
+        data = {}
 
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            data.update(body)
-    except Exception:
-        pass
+        try:
+            form = await request.form()
+            data.update(form)
+        except:
+            pass
 
+        try:
+            body = await request.json()
+            if isinstance(body, dict):
+                data.update(body)
+        except:
+            pass
 
+        data.update(dict(request.query_params))
 
-    # 🔐 ENCRYPTED CALLBACK → POLL
-    if "encryptedBody" in body:
-        logger.info("Encrypted JOB webhook received — starting polling")
-        background_tasks.add_task(poll_pending_job_payments)
-        return JSONResponse(status_code=200, content={"status": "received"})
+        # encrypted callback
+        if "encryptedBody" in data:
+            logger.info("Encrypted JOB webhook received — starting polling")
+            background_tasks.add_task(poll_pending_job_payments)
 
-    # 🔁 NORMAL CALLBACK
+        # normal callback
+        payment_id = data.get("id")
+        if payment_id:
+            background_tasks.add_task(
+                process_job_payment_by_payment_id,
+                payment_id
+            )
 
-    payment_id = body.get("id")
-    if payment_id:
-        background_tasks.add_task(
-            process_job_payment_by_payment_id,
-            payment_id
-        )
+    except Exception as e:
+        logger.error(f"Callback error: {e}")
 
     return JSONResponse(status_code=200, content={"status": "received"})
-
 
 from schemas.offerschema import OfferTypeSchema
 
