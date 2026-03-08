@@ -773,6 +773,9 @@ def decrypt_hyperpay_payload(encrypted_b64: str) -> dict:
     return json.loads(decrypted.decode("utf-8"))
 
 
+from fastapi import Request, status
+from fastapi import Header, HTTPException
+from starlette.responses import JSONResponse
 
 
 @job_router.post("/packages/callback/hyper")
@@ -780,14 +783,29 @@ async def job_hyperpay_callback(
     request: Request,
     background_tasks: BackgroundTasks,
 ):
-    body = await request.json()
-    logger.info("HyperPay JOB webhook received: %s", body)
+
+    data = {}
+
+    try:
+        form = await request.form()
+        data.update(form)
+    except Exception:
+        pass
+
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            data.update(body)
+    except Exception:
+        pass
+
+
 
     # 🔐 ENCRYPTED CALLBACK → POLL
     if "encryptedBody" in body:
         logger.info("Encrypted JOB webhook received — starting polling")
         background_tasks.add_task(poll_pending_job_payments)
-        return {"status": "polling_started"}
+        return JSONResponse(status_code=200, content={"status": "received"})
 
     # 🔁 NORMAL CALLBACK
 
@@ -798,7 +816,7 @@ async def job_hyperpay_callback(
             payment_id
         )
 
-    return {"status": "received"}
+    return JSONResponse(status_code=200, content={"status": "received"})
 
 
 from schemas.offerschema import OfferTypeSchema
