@@ -766,7 +766,7 @@ def decrypt_hyperpay_payload(encrypted_b64: str) -> dict:
 
     iv = encrypted_bytes[:16]
     ciphertext = encrypted_bytes[16:]
-    key = bytes.fromhex(HYPERPAY_ENCRYPTION_KEY)
+    key = bytes.fromhex(JOB_HYPERPAY_ENCRYPTION_KEY)
     cipher = AES.new(key, AES.MODE_CBC, iv)
     decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
 
@@ -778,7 +778,7 @@ from fastapi import Header, HTTPException
 from starlette.responses import JSONResponse
 from fastapi import Request, BackgroundTasks
 from fastapi.responses import JSONResponse
-'''
+
 @job_router.post("/packages/callback/hyper")
 async def job_hyperpay_callback(
     request: Request,
@@ -928,8 +928,8 @@ def poll_pending_job_payments():
     finally:
         db.close()
 
-'''
 
+'''
 from schemas.offerschema import OfferTypeSchema
 
 import logging
@@ -939,11 +939,7 @@ from fastapi import Request, BackgroundTasks
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from db.session import SessionLocal
-from models.invoice import InvoiceModel
-from models.job_application import JobApplicationModel
 from schemas.offerschema import OfferTypeSchema
-from core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -1221,6 +1217,7 @@ def poll_pending_job_payments():
     finally:
         db.close()
         logger.info("========== END POLLING PAYMENTS ==========")
+'''
 
 @job_router.get("/my-applications/status/callback/hyper")
 async def pay_status(
