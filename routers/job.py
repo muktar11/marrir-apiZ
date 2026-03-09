@@ -750,7 +750,7 @@ from Crypto.Util.Padding import unpad
 import binascii
 import json
 
-HYPERPAY_ENCRYPTION_KEY="9342978649CF8DCDDDF09DE606E94369F0E0F4FBC3E9EAE2D301327110FD0F10"
+JOB_HYPERPAY_ENCRYPTION_KEY="1C5B3C2E18A085E5BCAC566B8F7F8E9B23F8B35431F7C015CB356C20B1EAB997"
 
 
 
@@ -929,6 +929,7 @@ def poll_pending_job_payments():
         db.close()
 
 '''
+
 from schemas.offerschema import OfferTypeSchema
 
 import logging
@@ -1064,7 +1065,7 @@ def process_job_payment_by_payment_id(payment_id: str):
 
         logger.info(f"Processing payment id: {payment_id}")
 
-        url = f"{settings.HYPERPAY_BASE_URL}/v1/payments/{payment_id}"
+        url = f"{HYPERPAY_BASE_URL}/v1/payments/{payment_id}"
 
         logger.info(f"Calling HyperPay API: {url}")
 
@@ -1150,15 +1151,20 @@ def process_job_payment_by_payment_id(payment_id: str):
 # =========================================
 # POLL PENDING PAYMENTS (ENCRYPTED CALLBACK)
 # =========================================
+# Exact success codes
+SUCCESS_CODES = {
+    "000.000.000",
+    "000.100.110",
+    "000.100.111",
+    "000.100.112",
+    "000.200.000",
+}
 
 def poll_pending_job_payments():
-
     logger.info("========== START POLLING PAYMENTS ==========")
-
     db: Session = SessionLocal()
 
     try:
-
         invoices = db.query(InvoiceModel).filter(
             InvoiceModel.status == "pending",
             InvoiceModel.type == "job_application",
@@ -1167,13 +1173,10 @@ def poll_pending_job_payments():
         logger.info(f"Pending invoices count: {len(invoices)}")
 
         for invoice in invoices:
-
-            logger.info(
-                f"Polling invoice {invoice.id} reference {invoice.reference}"
-            )
+            logger.info(f"Polling invoice {invoice.id} reference {invoice.reference}")
 
             res = requests.get(
-                f"{settings.HYPERPAY_BASE_URL}/v1/payments",
+                f"{HYPERPAY_BASE_URL}/v1/payments",
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
@@ -1185,58 +1188,39 @@ def poll_pending_job_payments():
             logger.info(f"HyperPay response: {res}")
 
             payments = res.get("payments", [])
-
             if not payments:
-
                 logger.info("No payments found")
-
                 continue
 
             payment = payments[0]
-
             code = payment.get("result", {}).get("code", "")
 
             logger.info(f"Payment result code: {code}")
 
-            if not code.startswith(SUCCESS_CODES):
-
+            if code not in SUCCESS_CODES:
                 logger.info("Payment not successful yet")
-
                 continue
 
+            # Mark invoice paid
             invoice.status = "paid"
             invoice.payment_id = payment.get("id")
+            logger.info(f"Invoice {invoice.id} marked as PAID with payment {invoice.payment_id}")
 
-            logger.info(
-                f"Invoice {invoice.id} marked as PAID with payment {invoice.payment_id}"
-            )
-
+            # Update related applications
             app_ids = [int(i) for i in invoice.object_id.split(",")]
-
-            applications = db.query(JobApplicationModel).filter(
-                JobApplicationModel.id.in_(app_ids)
-            ).all()
-
+            applications = db.query(JobApplicationModel).filter(JobApplicationModel.id.in_(app_ids)).all()
             for app in applications:
-
                 logger.info(f"Updating application {app.id} → ACCEPTED")
-
                 app.status = OfferTypeSchema.ACCEPTED
 
             db.commit()
-
             logger.info(f"Invoice {invoice.id} updated successfully")
 
     except Exception:
-
         logger.exception("Polling failed")
-
     finally:
-
         db.close()
-
         logger.info("========== END POLLING PAYMENTS ==========")
-        
 
 @job_router.get("/my-applications/status/callback/hyper")
 async def pay_status(
