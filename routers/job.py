@@ -852,6 +852,7 @@ async def job_hyperpay_callback(
         if "encryptedBody" in data:
             try:
                 logger.info("Encrypted JOB webhook received — decrypting payload")
+                print("Encrypted payload:", data["encryptedBody"][:50] + "...")  # Log start of encrypted payload
                 decrypted = decrypt_hyperpay_payload(data["encryptedBody"])
 
                 # Merge decrypted data so you can inspect it if needed
@@ -860,6 +861,7 @@ async def job_hyperpay_callback(
 
                 payment_id = decrypted.get("id")
                 if payment_id:
+                    print("Decrypted payload:", decrypted)  # Log decrypted payload
                     logger.info(f"Decrypted JOB payment_id={payment_id}, queueing verification")
                     background_tasks.add_task(
                         process_job_payment_by_payment_id,
@@ -878,6 +880,7 @@ async def job_hyperpay_callback(
         # ---------- Plain callback with id ----------
         payment_id = data.get("id")
         if payment_id:
+            print("Plain callback data:", data)  # Log received data
             logger.info(f"Plain JOB webhook with payment_id={payment_id}, queueing verification")
             background_tasks.add_task(
                 process_job_payment_by_payment_id,
@@ -885,6 +888,7 @@ async def job_hyperpay_callback(
             )
 
     except Exception as e:
+        print(f"Error processing HyperPay callback: {e}")
         logger.error(f"Callback error: {e}")
 
     return JSONResponse(status_code=200, content={"status": "received"})
@@ -918,6 +922,7 @@ def process_job_payment_by_payment_id(payment_id: str):
         ).first()
 
         if not invoice:
+            print(f"No pending invoice found for merchantTransactionId: {merchant_tx_id}")
             return
 
         invoice.status = "paid"
@@ -952,6 +957,7 @@ def poll_pending_job_payments():
 
 
         for invoice in invoices:
+            print(f"Polling invoice {invoice.id} with reference {invoice.reference}")
             logger.info(f"Polling invoice {invoice.id} with reference {invoice.reference}")
 
             res = requests.get(                
@@ -965,7 +971,7 @@ def poll_pending_job_payments():
             ).json()
 
             logger.info(f"HyperPay response: {res}")
-
+            print(f"HyperPay response: {res}")
             payments = res.get("payments", [])
             if not payments:
                 logger.info("No payments found")
@@ -975,6 +981,7 @@ def poll_pending_job_payments():
             code = payment.get("result", {}).get("code", "")
 
             if not code.startswith(("000.000", "000.100", "000.200")):
+                print(f"Payment not successful. Code: {code}")
                 logger.info(f"Payment not successful. Code: {code}")
                 continue
 
@@ -991,6 +998,7 @@ def poll_pending_job_payments():
                 app.status = OfferTypeSchema.ACCEPTED
 
             db.commit()
+            print(f"Invoice {invoice.id} marked as PAID")
             logger.info(f"Invoice {invoice.id} marked as PAID")
 
     finally:
