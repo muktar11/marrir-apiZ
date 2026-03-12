@@ -1013,11 +1013,7 @@ import logging
 from Crypto.Cipher import AES
 from fastapi import APIRouter, Request, BackgroundTasks
 import requests
-from sqlalchemy.orm import Session
-from your_app.database import SessionLocal
-from your_app.models import InvoiceModel, JobApplicationModel
-from your_app.schemas import OfferTypeSchema
-from your_app.settings import settings
+from schemas.offerschema import OfferTypeSchema
 
 logger = logging.getLogger("routers.job")
 router = APIRouter()
