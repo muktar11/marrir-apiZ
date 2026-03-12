@@ -569,7 +569,7 @@ def get_hyperpay_auth_header() -> dict:
 
 
 
-HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
@@ -822,6 +822,20 @@ async def job_hyperpay_callback(
 
     return JSONResponse(status_code=200, content={"status": "received"})
 '''
+
+@job_router.post("/packages/callback/hyper")
+async def job_hyperpay_callback(request: Request):
+
+    logger.error("JOB CALLBACK TRIGGERED")
+
+    raw = await request.body()
+
+    logger.error(f"RAW BODY: {raw}")
+    logger.error(f"QUERY: {dict(request.query_params)}")
+    logger.error(f"HEADERS: {request.headers}")
+
+    return {"status": "received"}
+
 @job_router.post("/packages/callback/hyper")
 async def job_hyperpay_callback(
     request: Request,
