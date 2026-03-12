@@ -947,6 +947,9 @@ def process_job_payment_by_payment_id(payment_id: str):
     finally:
         db.close()
 '''
+
+
+
 from schemas.offerschema import OfferTypeSchema
 
 @job_router.post("/packages/callback/hyper")
@@ -1016,23 +1019,50 @@ async def job_hyperpay_callback(
     return JSONResponse(status_code=200, content={"status": "received"})
 
 
+import re
+import requests
+from sqlalchemy.orm import Session
+
+def is_successful_payment(result_code: str) -> bool:
+    """
+    HyperPay official success patterns
+    """
+    patterns = [
+        r"^000\.000\.",
+        r"^000\.100\.1",
+        r"^000\.[36]"
+    ]
+
+    for p in patterns:
+        if re.match(p, result_code):
+            return True
+
+    return False
+
+
 def process_job_payment_by_payment_id(payment_id: str):
-    db = SessionLocal()
+
+    db: Session = SessionLocal()
 
     try:
-        res = requests.get(
+
+        response = requests.get(
             f"{HYPERPAY_BASE_URL}/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
             headers=get_hyperpay_auth_header(),
             timeout=30,
-        ).json()
+        )
 
-        print("Verification response:", res)
+        res = response.json()
 
-        code = res.get("result", {}).get("code", "")
+        logger.info(f"Verification response: {res}")
 
-        if not code.startswith(("000.000", "000.100", "000.200")):
-            logger.info(f"Payment not successful: {code}")
+        result_code = res.get("result", {}).get("code", "")
+        payment_type = res.get("paymentType")
+
+        # ✅ Strict success validation
+        if not is_successful_payment(result_code) or payment_type != "DB":
+            logger.info(f"Payment not completed: {result_code}")
             return
 
         merchant_tx_id = (
@@ -1054,15 +1084,18 @@ def process_job_payment_by_payment_id(payment_id: str):
             logger.info(f"No pending invoice for {merchant_tx_id}")
             return
 
+        # ✅ Mark invoice paid
         invoice.status = "paid"
         invoice.payment_id = payment_id
 
+        # get application ids
         app_ids = [int(i) for i in invoice.object_id.split(",")]
 
         applications = db.query(JobApplicationModel).filter(
             JobApplicationModel.id.in_(app_ids)
         ).all()
 
+        # update applications
         for app in applications:
             app.status = OfferTypeSchema.ACCEPTED
 
@@ -1070,7 +1103,7 @@ def process_job_payment_by_payment_id(payment_id: str):
 
         logger.info(f"Invoice {invoice.id} marked PAID")
 
-    except Exception:
+    except Exception as e:
         logger.exception("Payment verification failed")
         db.rollback()
 
