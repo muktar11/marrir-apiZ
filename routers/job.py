@@ -1163,7 +1163,9 @@ router = APIRouter()
 
 @job_router.post("/payment/test")
 def create_test_checkout(db: Session = Depends(get_db)):
-
+    """
+    Create a test checkout with fake data
+    """
     merchant_tx_id = str(uuid.uuid4())
 
     payload = {
@@ -1179,24 +1181,26 @@ def create_test_checkout(db: Session = Depends(get_db)):
         "customer.email": "test@test.com",
     }
 
+    # Request HyperPay to create checkout
     res = requests.post(
         f"{HYPERPAY_BASE_URL}/v1/checkouts",
         data=payload,
         headers=get_hyperpay_auth_header(),
+        timeout=30
     ).json()
 
     checkout_id = res.get("id")
+    logger.info(f"Created test checkout: {checkout_id}")
 
-    # store invoice
+    # Store invoice in DB
     invoice = InvoiceModel(
         reference=merchant_tx_id,
         checkout_id=checkout_id,
-        amount=10.00, 
+        amount=10.00,
         status="pending",
         type="job_application",
-        object_id="1,2"  # fake application ids for testing
+        object_id="1,2"  # fake application IDs for testing
     )
-
     db.add(invoice)
     db.commit()
 
@@ -1204,15 +1208,14 @@ def create_test_checkout(db: Session = Depends(get_db)):
         "checkoutId": checkout_id,
         "merchantTransactionId": merchant_tx_id
     }
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
-logger = logging.getLogger("payment")
 
-@router.get("/payment/status")
-async def verify_payment(id: str, resourcePath: str):
+
+# --------------- Verify Payment Endpoint ----------------
+@job_router.get("/payment/verify")
+def verify_payment(id: str, resourcePath: str, db: Session = Depends(get_db)):
     """
     Verify HyperPay payment after redirection
     """
-    db = SessionLocal()
     try:
         # Request HyperPay for result
         res = requests.get(
@@ -1229,23 +1232,13 @@ async def verify_payment(id: str, resourcePath: str):
         invoice = db.query(InvoiceModel).filter(
             InvoiceModel.checkout_id == id
         ).first()
-
         if not invoice:
             return {"status": "not_found"}
 
-        # Check if payment is successful
+        # Update invoice status
         if result_code.startswith(("000.000", "000.100", "000.200")):
             invoice.status = "paid"
             invoice.payment_id = res.get("id")
-
-            # Update related job applications
-         #   app_ids = [int(i) for i in invoice.object_id.split(",")]
-         #   applications = db.query(JobApplicationModel).filter(
-         #       JobApplicationModel.id.in_(app_ids)
-         #   ).all()
-         #   for app in applications:
-         #       app.status = OfferTypeSchema.ACCEPTED
-
             db.commit()
             return {"status": "paid", "message": "Payment successful"}
         else:
@@ -1257,8 +1250,6 @@ async def verify_payment(id: str, resourcePath: str):
         logger.exception("Payment verification failed")
         db.rollback()
         return {"status": "error", "message": str(e)}
-    finally:
-        db.close()
 
 from fastapi import Query
 from sqlalchemy.orm import Session
