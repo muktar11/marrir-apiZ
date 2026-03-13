@@ -1179,29 +1179,58 @@ def create_test_checkout(db: Session = Depends(get_db)):
         "customer.email": "test@test.com",
     }
 
-    res = requests.post(
-        f"{HYPERPAY_BASE_URL}/v1/checkouts",
-        data=payload,
-        headers=get_hyperpay_auth_header(),
-    ).json()
+    logger.info("Creating HyperPay checkout...")
+    logger.info(f"Payload: {payload}")
 
-    checkout_id = res.get("id")
+    try:
 
-    invoice = InvoiceModel(
-        reference=merchant_tx_id,
-        checkout_id=checkout_id,
-        amount=10.00,
-        status="pending",
-        type="job_application",
-        object_id="1,2"
-    )
+        response = requests.post(
+            f"{HYPERPAY_BASE_URL}/v1/checkouts",
+            data=payload,
+            headers=get_hyperpay_auth_header(),
+            timeout=30
+        )
 
-    db.add(invoice)
-    db.commit()
+        logger.info(f"HyperPay response status: {response.status_code}")
 
-    return {
-        "checkoutId": checkout_id
-    }
+        res = response.json()
+
+        logger.info(f"HyperPay checkout response: {res}")
+
+        checkout_id = res.get("id")
+
+        if not checkout_id:
+            logger.error("HyperPay did not return checkout id")
+            return {"error": "Checkout creation failed"}
+
+        # save invoice
+        invoice = InvoiceModel(
+            reference=merchant_tx_id,
+            checkout_id=checkout_id,
+            amount=10.00,
+            status="pending",
+            type="job_application",
+            object_id="1,2"
+        )
+
+        db.add(invoice)
+        db.commit()
+
+        logger.info(f"Invoice created with checkout_id: {checkout_id}")
+
+        return {
+            "checkoutId": checkout_id
+        }
+
+    except Exception as e:
+
+        logger.exception("Error creating HyperPay checkout")
+
+        return {
+            "error": str(e)
+        }
+
+
 
 # --------------- Verify Payment Endpoint ----------------
 from fastapi import Query
@@ -1213,24 +1242,56 @@ def verify_payment(
     db: Session = Depends(get_db)
 ):
 
+    logger.info("Verifying HyperPay payment...")
+    logger.info(f"Checkout ID: {id}")
+    logger.info(f"Resource Path: {resourcePath}")
+
+    if not id or not resourcePath:
+        logger.error("Missing id or resourcePath")
+        return {"status": "failed"}
+
     try:
 
-        res = requests.get(
+        # call HyperPay API
+        response = requests.get(
             f"{HYPERPAY_BASE_URL}{resourcePath}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers=get_hyperpay_auth_header()
-        ).json()
+            headers=get_hyperpay_auth_header(),
+            timeout=30
+        )
+
+        logger.info(f"HyperPay verify HTTP status: {response.status_code}")
+
+        res = response.json()
+
+        logger.info(f"HYPERPAY FULL RESPONSE: {res}")
 
         result_code = res.get("result", {}).get("code", "")
+        description = res.get("result", {}).get("description", "")
 
+        logger.info(f"HyperPay result code: {result_code}")
+        logger.info(f"HyperPay description: {description}")
+
+        # find invoice
         invoice = db.query(InvoiceModel).filter(
             InvoiceModel.checkout_id == id
         ).first()
 
         if not invoice:
+            logger.error("Invoice not found")
             return {"status": "not_found"}
 
-        if result_code.startswith(("000.000", "000.100", "000.200")):
+        # HyperPay success codes
+        SUCCESS_CODES = [
+            "000.000.000",
+            "000.000.100",
+            "000.000.110",
+            "000.100.110"
+        ]
+
+        if result_code in SUCCESS_CODES:
+
+            logger.info("Payment SUCCESS")
 
             invoice.status = "paid"
             invoice.payment_id = res.get("id")
@@ -1238,19 +1299,27 @@ def verify_payment(
             db.commit()
 
             return {
-                "status": "paid"
+                "status": "paid",
+                "result_code": result_code
             }
 
         else:
 
+            logger.warning("Payment NOT successful")
+
             invoice.status = "failed"
+
             db.commit()
 
             return {
-                "status": "failed"
+                "status": "failed",
+                "result_code": result_code,
+                "description": description
             }
 
     except Exception as e:
+
+        logger.exception("Payment verification failed")
 
         db.rollback()
 
@@ -1258,7 +1327,7 @@ def verify_payment(
             "status": "error",
             "message": str(e)
         }
-
+    
 from fastapi import Query
 from sqlalchemy.orm import Session
 '''
