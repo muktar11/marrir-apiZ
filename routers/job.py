@@ -1163,9 +1163,7 @@ router = APIRouter()
 
 @job_router.post("/payment/test")
 def create_test_checkout(db: Session = Depends(get_db)):
-    """
-    Create a test checkout with fake data
-    """
+
     merchant_tx_id = str(uuid.uuid4())
 
     payload = {
@@ -1181,75 +1179,85 @@ def create_test_checkout(db: Session = Depends(get_db)):
         "customer.email": "test@test.com",
     }
 
-    # Request HyperPay to create checkout
     res = requests.post(
         f"{HYPERPAY_BASE_URL}/v1/checkouts",
         data=payload,
         headers=get_hyperpay_auth_header(),
-        timeout=30
     ).json()
 
     checkout_id = res.get("id")
-    logger.info(f"Created test checkout: {checkout_id}")
 
-    # Store invoice in DB
     invoice = InvoiceModel(
         reference=merchant_tx_id,
         checkout_id=checkout_id,
         amount=10.00,
         status="pending",
         type="job_application",
-        object_id="1,2"  # fake application IDs for testing
+        object_id="1,2"
     )
+
     db.add(invoice)
     db.commit()
 
     return {
-        "checkoutId": checkout_id,
-        "merchantTransactionId": merchant_tx_id
+        "checkoutId": checkout_id
     }
 
-
 # --------------- Verify Payment Endpoint ----------------
+from fastapi import Query
+
 @job_router.get("/payment/verify")
-def verify_payment(id: str, resourcePath: str, db: Session = Depends(get_db)):
-    """
-    Verify HyperPay payment after redirection
-    """
+def verify_payment(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    db: Session = Depends(get_db)
+):
+
     try:
-        # Request HyperPay for result
+
         res = requests.get(
             f"{HYPERPAY_BASE_URL}{resourcePath}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers=get_hyperpay_auth_header(),
-            timeout=30
+            headers=get_hyperpay_auth_header()
         ).json()
 
         result_code = res.get("result", {}).get("code", "")
-        logger.info(f"Payment verification {id}: {result_code}")
 
-        # Find invoice
         invoice = db.query(InvoiceModel).filter(
             InvoiceModel.checkout_id == id
         ).first()
+
         if not invoice:
             return {"status": "not_found"}
 
-        # Update invoice status
         if result_code.startswith(("000.000", "000.100", "000.200")):
+
             invoice.status = "paid"
             invoice.payment_id = res.get("id")
+
             db.commit()
-            return {"status": "paid", "message": "Payment successful"}
+
+            return {
+                "status": "paid"
+            }
+
         else:
+
             invoice.status = "failed"
             db.commit()
-            return {"status": "failed", "message": "Payment failed"}
+
+            return {
+                "status": "failed"
+            }
 
     except Exception as e:
-        logger.exception("Payment verification failed")
+
         db.rollback()
-        return {"status": "error", "message": str(e)}
+
+        return {
+            "status": "error",
+            "message": str(e)
+        }
 
 from fastapi import Query
 from sqlalchemy.orm import Session
