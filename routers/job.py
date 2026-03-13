@@ -1106,7 +1106,7 @@ def poll_checkout(checkout_id: str):
         db.close()
 
 
-@router.post("/packages/callback/hyper")
+@router.post("/packages/callback/hypers")
 async def hyperpay_callback(request: Request, background_tasks: BackgroundTasks):
     """
     HyperPay webhook callback
@@ -1152,6 +1152,72 @@ async def pay_status(
         "amount": invoice.amount,
     }
 
+
+
+from fastapi import APIRouter, Depends
+import requests
+import uuid
+from sqlalchemy.orm import Session
+
+router = APIRouter()
+
+@router.post("/packages/callback/hyper")
+def create_test_checkout(db: Session = Depends(get_db)):
+
+    merchant_tx_id = str(uuid.uuid4())
+
+    payload = {
+        "entityId": settings.HYPERPAY_ENTITY_ID,
+        "amount": "10.00",
+        "currency": "EUR",
+        "paymentType": "DB",
+        "merchantTransactionId": merchant_tx_id,
+        "billing.street1": "Test Street",
+        "billing.city": "Dubai",
+        "billing.country": "AE",
+        "billing.postcode": "00000",
+        "customer.email": "test@test.com",
+    }
+
+    res = requests.post(
+        f"{HYPERPAY_BASE_URL}/v1/checkouts",
+        data=payload,
+        headers=get_hyperpay_auth_header(),
+    ).json()
+
+    checkout_id = res.get("id")
+
+    # store invoice
+    invoice = InvoiceModel(
+        reference=merchant_tx_id,
+        checkout_id=checkout_id,
+        status="pending",
+        type="job_application",
+        object_id="1,2"  # fake application ids for testing
+    )
+
+    db.add(invoice)
+    db.commit()
+
+    return {
+        "checkoutId": checkout_id,
+        "merchantTransactionId": merchant_tx_id
+    }
+
+@router.get("/api/v1/job/payment/status")
+def check_payment_status(
+    merchantTransactionId: str,
+    db: Session = Depends(get_db)
+):
+
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchantTransactionId
+    ).first()
+
+    if not invoice:
+        return {"status": "not_found"}
+
+    return {"status": invoice.status}
 
 
 from fastapi import Query
