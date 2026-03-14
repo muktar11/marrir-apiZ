@@ -1018,7 +1018,7 @@ from schemas.offerschema import OfferTypeSchema
 logger = logging.getLogger("routers.job")
 router = APIRouter()
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 
 def get_hyperpay_auth_header():
@@ -1169,7 +1169,7 @@ def create_test_checkout(db: Session = Depends(get_db)):
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
         "amount": "10.00",
-        "currency": "EUR",
+        "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": merchant_tx_id,
         "billing.street1": "Test Street",
