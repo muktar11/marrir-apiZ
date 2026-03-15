@@ -1022,7 +1022,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("routers.job")
 
 
-HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
 
 
@@ -1105,7 +1105,7 @@ def create_test_checkout(db: Session = Depends(get_db)):
 # --------------- Verify Payment Endpoint ----------------
 from fastapi import Query
 
-@job_router.get("/payment/verify")
+@job_router.get("/hyper/payment/verify")
 def verify_payment(
     id: str = Query(None),
     resourcePath: str = Query(None),
