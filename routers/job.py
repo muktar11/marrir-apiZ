@@ -1259,9 +1259,10 @@ async def update_job_application_status(
     amount = package.price * len(applications)
 
     merchant_tx_id = secrets.token_hex(6)
-    user_email = app.user.email
-    user_first = app.user.first_name
-    user_last = app.user.last_name
+    for app in applications:
+        user_email = app.user.email
+        user_first = app.user.first_name
+        user_last = app.user.last_name
 
     payload = {
 
