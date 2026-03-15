@@ -568,9 +568,9 @@ def get_hyperpay_auth_header() -> dict:
     }
 
 
-
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 '''
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
@@ -682,7 +682,7 @@ async def update_job_application_status(
 
                 
                 "shopperResultUrl": f"https://marrir.com/recruitment/jobs/{job_id}",
-                "notificationUrl": "https://api.marrir.com/api/v1/job/packages/callback/hyper",
+             
             }
 
 
@@ -742,8 +742,8 @@ async def update_job_application_status(
         return Response(status_code=500, content=str(e))
 
 
-'''
 
+'''
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -1259,6 +1259,9 @@ async def update_job_application_status(
     amount = package.price * len(applications)
 
     merchant_tx_id = secrets.token_hex(6)
+    user_email = app.user.email
+    user_first = app.user.first_name
+    user_last = app.user.last_name
 
     payload = {
 
@@ -1267,10 +1270,12 @@ async def update_job_application_status(
         "paymentType": "DB",
 
         "merchantTransactionId": merchant_tx_id,
+        "customParameters[3DS2_enrolled]": "true",
+        "integrity": "true",
 
-        "customer.email": user.email,
-        "customer.givenName": user.first_name,
-        "customer.surname": user.last_name,
+        "customer.email": user_email,
+        "customer.givenName": user_first,
+        "customer.surname": user_last,
 
         "billing.street1": data.billing.street1,
         "billing.city": data.billing.city,
