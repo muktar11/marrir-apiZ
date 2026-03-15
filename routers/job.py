@@ -570,7 +570,7 @@ def get_hyperpay_auth_header() -> dict:
 
 
 HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
-
+'''
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
     data: ApplicationStatusUpdateSchema,
@@ -742,7 +742,7 @@ async def update_job_application_status(
         return Response(status_code=500, content=str(e))
 
 
-
+'''
 
 
 from Crypto.Cipher import AES
