@@ -1015,149 +1015,19 @@ from fastapi import APIRouter, Request, BackgroundTasks
 import requests
 from schemas.offerschema import OfferTypeSchema
 
-logger = logging.getLogger("routers.job")
-router = APIRouter()
-
-HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
-
-
-def get_hyperpay_auth_header():
-    return {
-        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
-    }
-
-
-def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
-    """
-    Decrypt HyperPay's encryptedBody
-    """
-    try:
-        # Convert hex to bytes
-        data_bytes = bytes.fromhex(encrypted_hex)
-
-        key = JOB_HYPERPAY_ENCRYPTION_KEY.encode("utf-8")  # 16/24/32 bytes
-        iv = JOB_HYPERPAY_ENCRYPTION_KEY.encode("utf-8")    # 16 bytes
-
-        cipher = AES.new(key, AES.MODE_CBC, iv)
-        decrypted = cipher.decrypt(data_bytes)
-
-        # Remove PKCS7 padding
-        pad_len = decrypted[-1]
-        decrypted = decrypted[:-pad_len]
-
-        return json.loads(decrypted.decode("utf-8"))
-    except Exception as e:
-        logger.error(f"Decryption failed: {e}")
-        return {}
-
-
-def is_successful_payment(code: str) -> bool:
-    return code.startswith(("000.000", "000.100", "000.200"))
-
-
-def poll_checkout(checkout_id: str):
-    """
-    Poll a single checkout to verify payment
-    """
-    db: Session = SessionLocal()
-    try:
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.checkout_id == checkout_id,
-            InvoiceModel.status == "pending"
-        ).first()
-
-        if not invoice:
-            logger.info(f"No pending invoice for checkout {checkout_id}")
-            return
-
-        res = requests.get(
-            f"{HYPERPAY_BASE_URL}/v1/checkouts/{checkout_id}/payment",
-            params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers=get_hyperpay_auth_header(),
-            timeout=30
-        ).json()
-
-        result_code = res.get("result", {}).get("code", "")
-
-        if not is_successful_payment(result_code):
-            logger.info(f"Payment not completed for checkout {checkout_id}: {result_code}")
-            return
-
-        # Mark invoice as paid
-        invoice.status = "paid"
-        invoice.payment_id = res.get("id")
-
-        # Update related job applications
-        app_ids = [int(i) for i in invoice.object_id.split(",")]
-        applications = db.query(JobApplicationModel).filter(
-            JobApplicationModel.id.in_(app_ids)
-        ).all()
-
-        for app in applications:
-            app.status = OfferTypeSchema.ACCEPTED
-
-        db.commit()
-        logger.info(f"Invoice {invoice.id} marked PAID for checkout {checkout_id}")
-
-    except Exception:
-        logger.exception(f"Polling checkout failed: {checkout_id}")
-        db.rollback()
-    finally:
-        db.close()
-
-
-@router.post("/packages/callback/hypers")
-async def hyperpay_callback(request: Request, background_tasks: BackgroundTasks):
-    """
-    HyperPay webhook callback
-    """
-    body = await request.json()
-    encrypted_body = body.get("encryptedBody")
-
-    if not encrypted_body:
-        logger.warning("Missing encryptedBody in HyperPay callback")
-        return {"status": "ok"}
-
-    payload = decrypt_hyperpay_payload(encrypted_body)
-    if not payload:
-        return {"status": "ok"}  # just acknowledge, don't block webhook
-
-    checkout_id = payload.get("id")
-    if not checkout_id:
-        logger.warning("Missing checkout_id in decrypted payload")
-        return {"status": "ok"}
-
-    logger.info(f"HyperPay callback received for checkout {checkout_id}")
-
-    # Poll only this checkout
-    background_tasks.add_task(poll_checkout, checkout_id)
-
-    return {"status": "ok"}
-
-@job_router.get("/my-applications/status/callback/hyper")
-async def pay_status(
-    merchantTransactionId: str,
-    db: Session = Depends(get_db_sessions),  # ← THIS IS THE FIX
-):
-    invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.reference == merchantTransactionId,
-        InvoiceModel.type == "job_application",
-    ).first()
-
-    if not invoice:
-        return {"status": "not_found"}
-
-    return {
-        "status": invoice.status,
-        "amount": invoice.amount,
-    }
-
-
-
 from fastapi import APIRouter, Depends
 import requests
 import uuid
 from sqlalchemy.orm import Session
+logger = logging.getLogger("routers.job")
+
+
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+
+
+
+
+
 
 router = APIRouter()
 
@@ -1168,7 +1038,7 @@ def create_test_checkout(db: Session = Depends(get_db)):
 
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": "10.00",
+        "amount": "0.02",
         "currency": "AED",
         "paymentType": "DB",
         "merchantTransactionId": merchant_tx_id,
@@ -1328,64 +1198,270 @@ def verify_payment(
             "message": str(e)
         }
     
+
 from fastapi import Query
 from sqlalchemy.orm import Session
-'''
-@job_router.get("/my-applications/status/callback/hyper")
-async def hyperpay_job_application_callback(
-    background_tasks: BackgroundTasks,
-    ref: str = Query(...),
- 
-    db: Session = Depends(get_db_sessions)
-):
-    try:
-        # Lookup invoice by merchantTransactionId
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == ref,
-            InvoiceModel.type == "job_application"
-        ).first()
 
-        if not invoice:
-            return {"status": "failed", "message": "Invoice not found"}
-      
-        invoice.status = "paid"
-        db.add(invoice)
+@job_router.patch("/my-applications/{job_id}/status/hyper")
+async def update_job_application_status(
+    data: ApplicationStatusUpdateSchema,
+    job_id: int,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    if user.role not in ["recruitment", "sponsor"]:
+        return Response(status_code=403, content="Unauthorized")
+
+    job = db.query(JobModel).filter(JobModel.id == job_id).first()
+    if not job:
+        return Response(status_code=404, content="Job not found")
+
+    applications = (
+        db.query(JobApplicationModel)
+        .filter(
+            JobApplicationModel.job_id == job_id,
+            JobApplicationModel.id.in_(data.job_application_ids),
+            JobApplicationModel.status == "pending",
+        )
+        .all()
+    )
+
+    if not applications:
+        return Response(status_code=404, content="Applications not found")
+
+    # ---------------- DECLINE ----------------
+
+    if data.status == "declined":
+
+        for app in applications:
+            app.status = "declined"
+
         db.commit()
-        # Find job applications linked to invoice
-        application_ids = list(map(int, invoice.object_id.split(",")))
-        job_applications = db.query(JobApplicationModel).filter(
-            JobApplicationModel.id.in_(application_ids)
+
+        return {"message": "Applications declined"}
+
+    # ---------------- ACCEPT → PAYMENT ----------------
+
+    package = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == "job_application",
+        )
+        .first()
+    )
+
+    amount = package.price * len(applications)
+
+    merchant_tx_id = secrets.token_hex(6)
+
+    payload = {
+
+        "amount": f"{amount:.2f}",
+        "currency": "AED",
+        "paymentType": "DB",
+
+        "merchantTransactionId": merchant_tx_id,
+
+        "customer.email": user.email,
+        "customer.givenName": user.first_name,
+        "customer.surname": user.last_name,
+
+        "billing.street1": data.billing.street1,
+        "billing.city": data.billing.city,
+        "billing.country": data.billing.country,
+        "billing.postcode": data.billing.postcode,
+
+        "shopperResultUrl": "https://marrir.com/payment/result",
+    }
+
+    res = requests.post(
+        f"{HYPERPAY_BASE_URL}/v1/checkouts",
+        params={"entityId": settings.HYPERPAY_ENTITY_ID},
+        data=payload,
+        headers=get_hyperpay_auth_header(),
+        timeout=30,
+    ).json()
+
+    checkout_id = res.get("id")
+
+    if not checkout_id:
+        return Response(status_code=400, content=json.dumps(res))
+
+    invoice = InvoiceModel(
+        reference=merchant_tx_id,
+        checkout_id=checkout_id,
+        buyer_id=user.id,
+        amount=amount,
+        status="pending",
+        type="job_application",
+        object_id=",".join(str(a.id) for a in applications),
+    )
+
+    db.add(invoice)
+    db.commit()
+
+    return {
+        "checkoutId": checkout_id,
+        "merchantTransactionId": merchant_tx_id,
+    }
+
+
+@job_router.get("/payment/verify")
+def verify_payment(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    background_tasks: BackgroundTasks = None
+):
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    db = SessionLocal()
+
+    res = requests.get(
+        f"{HYPERPAY_BASE_URL}{resourcePath}",
+        params={"entityId": settings.HYPERPAY_ENTITY_ID},
+        headers=get_hyperpay_auth_header(),
+        timeout=30,
+    ).json()
+
+    code = res.get("result", {}).get("code", "")
+
+    success = (
+        code.startswith("000.")
+        or code.startswith("000.100.1")
+        or code.startswith("000.36")
+    )
+
+    merchant_tx_id = res.get("merchantTransactionId")
+    payment_id = res.get("id")
+
+    if not success:
+        return {"status": "failed"}
+
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchant_tx_id
+    ).first()
+
+    if not invoice:
+        return {"status": "failed"}
+
+    if invoice.status != "paid":
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        if invoice.type == "job_application":
+
+            app_ids = [int(i) for i in invoice.object_id.split(",")]
+
+            applications = db.query(JobApplicationModel).filter(
+                JobApplicationModel.id.in_(app_ids)
+            ).all()
+
+            for app in applications:
+                app.status = OfferTypeSchema.ACCEPTED
+
+        db.commit()
+
+    if background_tasks:
+        background_tasks.add_task(poll_pending_job_payments)
+
+    return {
+        "status": "paid",
+        "payment_id": payment_id
+    }
+def poll_pending_job_payments():
+
+    db = SessionLocal()
+
+    try:
+
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "job_application",
         ).all()
 
-        if not job_applications:
-            return {"status": "failed", "message": "Job applications not found"}
+        if not invoices:
+            logger.info("No pending job invoices to poll")
+            return
 
-        # Optionally, send notifications again if needed
-        first_app = job_applications[0]
-        job = db.query(JobModel).filter(JobModel.id == first_app.job_id).first()
+        for invoice in invoices:
 
-        title = "Job Application Accepted"
-        description = f"{job.job_poster.first_name} {job.job_poster.last_name} has accepted your application for {job.name}"
-
-        for app in job_applications:
-            background_tasks.add_task(
-                send_notification,
-                db,
-                app.user_id,
-                title,
-                description,
-                "job_application"
+            logger.info(
+                f"Polling invoice {invoice.id} with reference {invoice.reference}"
             )
-            email = app.user.email or app.user.cv.email
-            background_tasks.add_task(send_email, email, title, description)
 
-        return {"status": "successful", "message": "Payment completed"}
+            try:
 
-    except Exception as e:
-        logger.error(f"Callback Error: {e}")
-        return {"status": "failed", "message": str(e)}
-'''
+                res = requests.get(
+                    f"{HYPERPAY_BASE_URL}/v1/payments",
+                    params={
+                        "entityId": settings.HYPERPAY_ENTITY_ID,
+                        "merchantTransactionId": invoice.reference,
+                    },
+                    headers=get_hyperpay_auth_header(),
+                    timeout=30,
+                ).json()
 
+                logger.info(f"HyperPay polling response: {res}")
+
+                payments = res.get("payments", [])
+
+                if not payments:
+                    logger.info("No payments found yet")
+                    continue
+
+                payment = payments[0]
+
+                result_code = payment.get("result", {}).get("code", "")
+
+                success = (
+                    result_code.startswith("000.")
+                    or result_code.startswith("000.100.1")
+                    or result_code.startswith("000.36")
+                )
+
+                if not success:
+                    logger.info(
+                        f"Payment not successful yet. Code: {result_code}"
+                    )
+                    continue
+
+                # ---------------- MARK INVOICE PAID ----------------
+
+                invoice.status = "paid"
+                invoice.payment_id = payment.get("id")
+
+                # ---------------- UPDATE APPLICATIONS ----------------
+
+                app_ids = [int(i) for i in invoice.object_id.split(",")]
+
+                applications = db.query(JobApplicationModel).filter(
+                    JobApplicationModel.id.in_(app_ids)
+                ).all()
+
+                for app in applications:
+                    app.status = OfferTypeSchema.ACCEPTED
+
+                db.commit()
+
+                logger.info(
+                    f"Invoice {invoice.id} marked as PAID and applications updated"
+                )
+
+            except Exception as e:
+                logger.error(
+                    f"Polling failed for invoice {invoice.id}: {str(e)}"
+                )
+    finally:
+        db.close()
 
 @job_router.post("/my-applications/payment/info")
 async def get_job_application_payment_info(data: JobApplicationPaymentInfoSchema, _=Depends(authentication_context),__=Depends(build_request_context)):
