@@ -21,6 +21,7 @@ from schemas.base import GenericMultipleResponse, GenericSingleResponse
 from schemas.cvschema import CVSearchSchema
 from schemas.promotionschema import (
     BuyPromotionPackage,
+    CategoryEnum,
     PromotionCreate,
     PromotionCreateSchema,
     PromotionFilterSchema,
@@ -261,7 +262,7 @@ def create_invoice_hyper(db, reference, amount, buyer_id, object_id):
 def update_invoice(invoice: InvoiceModel, ref: str) -> None:
     invoice.stripe_session_id = ref
 
-
+'''
 @promotion_router.get("/packages")
 async def get_all_promotion_packages(
     _=Depends(authentication_context),
@@ -272,7 +273,7 @@ async def get_all_promotion_packages(
 
     promotions = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.role == user.role, PromotionPackagesModel.category == "promotion").all()
 
-    print(PromotionPackagesModel.category == "promotion")
+    
 
     promotion_data = []
 
@@ -291,6 +292,39 @@ async def get_all_promotion_packages(
 
     return {"data": promotion_data}
 
+'''
+@promotion_router.get("/packages")
+async def get_all_promotion_packages(
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    promotions = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == CategoryEnum.promotion
+        )
+        .all()
+    )
+
+    promotion_data = []
+
+    for promotion in promotions:
+        promotion_data.append(
+            {
+                "id": promotion.id,
+                "role": promotion.role.value,
+                "duration": promotion.duration.value if promotion.duration else None,
+                "profile_count": promotion.profile_count,
+                "price": promotion.price,
+                "category": promotion.category.value
+            }
+        )
+
+    return {"data": promotion_data}
 
 @promotion_router.post("/packages")
 async def buy_promotion_package(
