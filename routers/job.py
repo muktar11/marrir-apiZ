@@ -1265,7 +1265,7 @@ async def update_job_application_status(
         user_last = app.user.last_name
 
     payload = {
-
+        "entityId": settings.HYPERPAY_ENTITY_ID,
         "amount": f"{amount:.2f}",
         "currency": "AED",
         "paymentType": "DB",
@@ -1283,12 +1283,11 @@ async def update_job_application_status(
         "billing.country": data.billing.country,
         "billing.postcode": data.billing.postcode,
 
-        "shopperResultUrl": "https://marrir.com/payment/result",
+       
     }
 
     res = requests.post(
         f"{HYPERPAY_BASE_URL}/v1/checkouts",
-        params={"entityId": settings.HYPERPAY_ENTITY_ID},
         data=payload,
         headers=get_hyperpay_auth_header(),
         timeout=30,
@@ -1314,7 +1313,6 @@ async def update_job_application_status(
 
     return {
         "checkoutId": checkout_id,
-        "merchantTransactionId": merchant_tx_id,
     }
 
 
