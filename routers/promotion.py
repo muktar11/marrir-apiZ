@@ -305,24 +305,22 @@ async def get_all_promotion_packages(
         db.query(PromotionPackagesModel)
         .filter(
             PromotionPackagesModel.role == user.role,
-            PromotionPackagesModel.category == CategoryEnum.promotion
+            PromotionPackagesModel.category == CategoryEnum.promotion.value
         )
         .all()
     )
 
-    promotion_data = []
-
-    for promotion in promotions:
-        promotion_data.append(
-            {
-                "id": promotion.id,
-                "role": promotion.role.value,
-                "duration": promotion.duration.value if promotion.duration else None,
-                "profile_count": promotion.profile_count,
-                "price": promotion.price,
-                "category": promotion.category.value
-            }
-        )
+    promotion_data = [
+        {
+            "id": p.id,
+            "role": p.role.value if p.role else None,
+            "duration": p.duration.value if p.duration else None,
+            "profile_count": p.profile_count,
+            "price": float(p.price),
+            "category": p.category.value if hasattr(p.category, "value") else p.category
+        }
+        for p in promotions
+    ]
 
     return {"data": promotion_data}
 
