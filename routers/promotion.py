@@ -692,8 +692,8 @@ async def buy_promotion_package(
 
     # ---------------- USER INFO ----------------
     user_email = user.email
-    user_first = getattr(user, "first_name", "User")
-    user_last = getattr(user, "last_name", "User")
+    user_first = user.first_name
+    user_last = user.last_name
 
     # ---------------- BILLING (SAFE ACCESS) ----------------
     billing = data.billing
