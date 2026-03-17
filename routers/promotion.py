@@ -2,7 +2,6 @@ import json
 import pprint
 from typing import Any, Optional
 import uuid
-from Marrir_API.routers import user
 from  models.reservemodel import RecruitmentSetReserveModel
 from fastapi import APIRouter, Depends, Response, BackgroundTasks
 from starlette.requests import Request
@@ -943,7 +942,7 @@ def poll_pending_promotion_payments():
         db.close()
 '''
 
-@promotion_router.post("/packages/callback/hyper")
+@promotion_router.post("/packages/callback/hyper/verify")
 async def promotion_hyperpay_callback(
     id: str = Query(None),
     resourcePath: str = Query(None),
