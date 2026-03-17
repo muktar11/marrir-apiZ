@@ -2,6 +2,7 @@ import json
 import pprint
 from typing import Any, Optional
 import uuid
+from Marrir_API.routers import user
 from  models.reservemodel import RecruitmentSetReserveModel
 from fastapi import APIRouter, Depends, Response, BackgroundTasks
 from starlette.requests import Request
@@ -692,8 +693,8 @@ async def buy_promotion_package(
 
     # ---------------- USER INFO ----------------
     user_email = user.email
-    user_first = user.first_name
-    user_last = user.last_name
+    user_first = getattr(user, "first_name", "User")
+    user_last = getattr(user, "last_name", "User")
 
     # ---------------- BILLING (SAFE ACCESS) ----------------
     billing = data.billing
