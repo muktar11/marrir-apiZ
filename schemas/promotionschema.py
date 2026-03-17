@@ -1,104 +1,106 @@
 from datetime import datetime
 from enum import Enum, unique
-from typing import List, Optional, TypeVar
+import enum
+from typing import Annotated, List, Optional, TypeVar
 import uuid
 
-from pydantic import BaseModel, EmailStr
-from pydantic_extra_types.phone_numbers import PhoneNumber
+from fastapi import File, UploadFile
 
 from schemas.base import BaseProps
-from schemas.companyinfoschema import CompanyInfoBaseSchema
-from schemas.enumschema import EducationStatusSchema, JobTypeSchema, OccupationTypeSchema, OfferTypeSchema
+from schemas.enumschema import PromotionPackageTypeSchema
 from schemas.userschema import UserReadSchema
 
+from pydantic import BaseModel
 
-class ApplyJobReadSchema(BaseProps):
-    id: int
-    job_id: int
+class CategoryEnum(enum.Enum):
+    promotion = "promotion"
+    transfer = "transfer"
+    reservation = "reservation"
+    employee = "employee_process"
+    job_application = 'job_application'
+
+class RoleEnum(enum.Enum):
+    employee = "employee"
+    agent = "agent"
+    recruitment= "recruitment"
+    sponsor = "sponsor"
+    selfsponsor = "selfsponsor"
+
+class DurationEnum(enum.Enum):
+    ONE_MONTH = "1 month"
+
+    THREE_MONTHS = "3 months"
+
+    SIX_MONTHS = "6 months"
+
+    TWELVE_MONTHS = "12 months"
+
+
+@unique
+class PromotionStatusSchema(str, Enum):
+    ACTIVE = "active"
+    EXPIRED = "expired"
+    CANCELLED = "cancelled"
+
+    def __str__(self):
+        return super().__str__()
+
+
+class PromotionBaseSchema(BaseProps):
+    package: Optional[PromotionPackageTypeSchema] = None
+    status: Optional[PromotionStatusSchema] = None
+
+
+EntityBaseSchema = TypeVar("EntityBaseSchema", bound=PromotionBaseSchema)
+
+
+class PromotionCreateSchema(PromotionBaseSchema):
+    user_ids: List[uuid.UUID]
+    package: PromotionPackageTypeSchema
+
+
+class SinglePromotionCreateSchema(PromotionBaseSchema):
     user_id: uuid.UUID
-    user: Optional[UserReadSchema] = None
-    status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
-    is_open: Optional[bool] = None
+    package: PromotionPackageTypeSchema
 
 
-class ApplyJobSingleBaseSchema(BaseProps):
-    job_id: int
-    user_id: uuid.UUID
-    status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
-
-class ApplyJobSingleReadSchema(ApplyJobSingleBaseSchema):
-    user: Optional[UserReadSchema] = None
-
-class JobPosterSchema(BaseProps):
-    id: Optional[uuid.UUID]
-    first_name: Optional[str]
-    last_name: Optional[str]
-    email: Optional[EmailStr]
-    phone_number: Optional[PhoneNumber]
-    company: Optional[CompanyInfoBaseSchema]
-
-
-class ApplyJobMultipleBaseSchema(BaseProps):
-    job_id: int
-    user_id: List[uuid.UUID] = []
-    status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
-
-
-class JobBaseSchema(BaseProps):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    amount: Optional[int] = None
-    location: Optional[str] = None
-    occupation: Optional[OccupationTypeSchema] = None
-    education_status: Optional[EducationStatusSchema] = None
-    type: Optional[JobTypeSchema] = None
-    posted_by: Optional[uuid.UUID] = None
-    is_open: Optional[bool] = None
-
-
-EntityBaseSchema = TypeVar("EntityBaseSchema", bound=JobBaseSchema)
-
-
-class JobCreateSchema(JobBaseSchema):
-    pass
-
-
-class JobReadSchema(JobBaseSchema):
+class PromotionReadSchema(PromotionBaseSchema):
     id: int
-    job_applications: List[ApplyJobSingleReadSchema] = []
-    job_poster: Optional[JobPosterSchema] = None
-    created_at: datetime
-    updated_at: Optional[datetime] = None
-    deleted_at: Optional[datetime] = None
+    user_id: uuid.UUID
+    user: UserReadSchema
 
 
-class JobUpdatePayload(BaseProps):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    amount: Optional[int] = None
-    location: Optional[str] = None
-    occupation: Optional[OccupationTypeSchema] = None
-    education_status: Optional[EducationStatusSchema] = None
-    type: Optional[JobTypeSchema] = None
+class MultiplePromotionReadSchema(PromotionBaseSchema):
+    id: int
+    user_ids: List[uuid.UUID]
 
 
-class JobsFilterSchema(JobBaseSchema):
+class PromotionFilterSchema(BaseProps):
     id: Optional[int] = None
+    user_id: Optional[uuid.UUID] = None
+    package: Optional[PromotionPackageTypeSchema] = None
 
 
-class JobsSearchSchema(BaseProps):
-    name: Optional[str] = None
-    description: Optional[str] = None
-    location: Optional[str] = None
+class PromotionPackageCreateSchema(BaseModel):
+    category: CategoryEnum
+
+    role: RoleEnum
+
+    duration: DurationEnum | None = None
+
+    profile_count: int | None = None
+
+    price: float
 
 
-class JobUpdateSchema(BaseProps):
-    filter: JobsFilterSchema
-    update: JobUpdatePayload
+class PromotionPackageUpdateSchema(BaseModel):
+    id : int
+    category: CategoryEnum | None = None
+    role: RoleEnum | None = None
+    duration: DurationEnum | None = None
+    profile_count: int | None = None
+    price: float | None = None
 
-
-class JobApplicationDeleteSchema(ApplyJobSingleBaseSchema):
-    pass
 
 from pydantic import BaseModel, Field
 
@@ -108,16 +110,11 @@ class BillingSchema(BaseModel):
     state: str | None = None
     country: str = Field(..., min_length=2, max_length=2)
     postcode: str
-
-
-class ApplicationStatusUpdateSchema(BaseModel):
-    status: OfferTypeSchema
-
-    job_application_ids: list[int]
+    
+class BuyPromotionPackage(BaseModel):
+    id: int
     billing: BillingSchema | None = None
 
 
-class JobApplicationPaymentInfoSchema(BaseModel):
-    job_application_ids: list[int]
-
-    job_id: int
+class PromotionCreate(BaseModel):
+    user_ids: list[uuid.UUID]
