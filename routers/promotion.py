@@ -616,10 +616,13 @@ def get_hyperpay_auth_header_promotion():
         "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
     }
 
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+
 
 # ------------------------------------------------------------------
 # INITIATE PAYMENT (ONLY ENTRY FROM FRONTEND)
 # ------------------------------------------------------------------
+
 @promotion_router.post("/packages/hyper")
 async def buy_promotion_package(
     data: BuyPromotionPackage,
@@ -629,6 +632,7 @@ async def buy_promotion_package(
     db: Session = get_db_session()
     user = context_actor_user_data.get()
 
+    # ---------------- FIND PACKAGE ----------------
     package = (
         db.query(PromotionPackagesModel)
         .filter(
@@ -638,9 +642,11 @@ async def buy_promotion_package(
         )
         .first()
     )
+
     if not package:
         raise HTTPException(status_code=400, detail="Invalid package")
 
+    # ---------------- SAFE DURATION ----------------
     duration_days = {
         "1 month": 30,
         "3 months": 90,
@@ -648,10 +654,11 @@ async def buy_promotion_package(
         "12 months": 365,
     }
 
-    end_date = datetime.now(timezone.utc) + timedelta(
-        days=duration_days[package.duration.value]
-    )
+    duration = duration_days.get(package.duration.value, 30)
 
+    end_date = datetime.now(timezone.utc) + timedelta(days=duration)
+
+    # ---------------- CREATE / UPDATE SUBSCRIPTION ----------------
     subscription = (
         db.query(PromotionSubscriptionModel)
         .filter(
@@ -683,14 +690,34 @@ async def buy_promotion_package(
 
     merchant_tx_id = str(subscription.id)
 
+    # ---------------- USER INFO ----------------
+    user_email = user.email
+    user_first = getattr(user, "first_name", "User")
+    user_last = getattr(user, "last_name", "User")
+
+    # ---------------- BILLING (SAFE ACCESS) ----------------
+    billing = data.billing
+
+    # ---------------- HYPERPAY PAYLOAD ----------------
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
         "amount": f"{package.price:.2f}",
         "currency": "AED",
         "paymentType": "DB",
+
         "merchantTransactionId": merchant_tx_id,
-        "shopperResultUrl": "https://marrir.com/employee/promotion",
-        "notificationUrl": "https://api.marrir.com/api/v1/promotion/packages/callback/hyperpay",
+        "customParameters[3DS2_enrolled]": "true",
+
+        "customer.email": user_email,
+        "customer.givenName": user_first,
+        "customer.surname": user_last,
+
+        # ✅ BILLING DATA FROM FRONTEND
+        "billing.street1": billing.street1,
+        "billing.city": billing.city,
+        "billing.state": billing.state or "",
+        "billing.country": billing.country,
+        "billing.postcode": billing.postcode,
     }
 
     headers = {
@@ -698,32 +725,48 @@ async def buy_promotion_package(
         "Content-Type": "application/x-www-form-urlencoded",
     }
 
-    res = requests.post(
-        "https://test.oppwa.com/v1/checkouts",
-        data=payload,
-        headers=headers,
-        timeout=30,
-    ).json()
+    # ---------------- CALL HYPERPAY ----------------
+    try:
+        response = requests.post(
+            f"{HYPERPAY_BASE_URL}/v1/checkouts",
+            data=payload,
+            headers=headers,
+            timeout=30,
+        )
+
+        res = response.json()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="HyperPay connection failed")
 
     checkout_id = res.get("id")
-    if not checkout_id:
-        raise HTTPException(status_code=500, detail="Payment initialization failed")
 
+    if not checkout_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Payment initialization failed: {res}",
+        )
+
+    # ---------------- CREATE INVOICE ----------------
     invoice = InvoiceModel(
         reference=merchant_tx_id,
+        checkout_id=checkout_id,
         amount=package.price,
         buyer_id=user.id,
         object_id=subscription.id,
         status="pending",
         type="promotion",
     )
+
     db.add(invoice)
     db.commit()
 
+    # ---------------- RESPONSE ----------------
     return {
         "checkoutId": checkout_id,
-        "subscriptionId": subscription.id,
+        "merchantTransactionId": merchant_tx_id,
     }
+
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -746,48 +789,66 @@ def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
     decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
     return json.loads(decrypted.decode("utf-8"))
 
+from fastapi import Query
 
 # ------------------------------------------------------------------
 # CALLBACK (ONLY CALLED BY HYPERPAY)
 # ------------------------------------------------------------------
+'''
 @promotion_router.post("/packages/callback/hyper")
 async def promotion_hyperpay_callback(
-    request: Request,
-    background_tasks: BackgroundTasks,
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    background_tasks: BackgroundTasks = None
+
 ):
-    data = {}
 
-    try:
-        form = await request.form()
-        data.update(form)
-    except Exception:
-        pass
+    if not id or not resourcePath:
+        return {"status": "failed"}
+    
+    db = SessionLocal()
 
-    try:
-        body = await request.json()
-        if isinstance(body, dict):
-            data.update(body)
-    except Exception:
-        pass
+    res = requests.get(
+        f"{HYPERPAY_BASE_URL}{resourcePath}",
+        params={"entityId": settings.HYPERPAY_ENTITY_ID},
+        headers=get_hyperpay_auth_header(),
+        timeout=30,
+    ).json()
+    code = res.get("result", {}).get("code", "")
+    success = (
+        code.startswith("000.")
+        or code.startswith("000.100.1")
+        or code.startswith("000.36")
+    )
+    merchant_tx_id = res.get("merchantTransactionId")
+    payment_id = res.get("id")
 
-    logger.info("HyperPay PROMOTION webhook received: %s", data)
+    if not success:
+        return {"status": "failed"}
 
-    # 🔐 Encrypted callback → BLIND POLLING (same as transfer)
-    if "encryptedBody" in data:
-        logger.info("Encrypted PROMOTION webhook received — starting polling")
-        background_tasks.add_task(poll_pending_promotion_payments)
-        return JSONResponse(status_code=200, content={"status": "received"})
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchant_tx_id
+    ).first()
 
-    # 🔁 Normal callback
-    payment_id = data.get("id")
-    if payment_id:
-        background_tasks.add_task(
-            process_promotion_payment_by_payment_id,
-            payment_id,
-        )
+    if not invoice:
+        return {"status": "failed"}
+    
+    if invoice.status != "paid":
 
-    return JSONResponse(status_code=200, content={"status": "received"})
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
 
+        db.commit()
+
+    if background_tasks:
+        background_tasks.add_task(process_promotion_payment_by_payment_id)
+
+    return {
+        "status": "paid",
+        "payment_id": payment_id
+    }
+    
+    
 
 
 def process_promotion_payment_by_payment_id(payment_id: str):
@@ -879,7 +940,123 @@ def poll_pending_promotion_payments():
         db.rollback()
     finally:
         db.close()
+'''
 
+@promotion_router.post("/packages/callback/hyper")
+async def promotion_hyperpay_callback(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    db = SessionLocal()
+
+    try:
+
+        res = requests.get(
+            f"{HYPERPAY_BASE_URL}{resourcePath}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+
+        success = (
+            code.startswith("000.")
+            or code.startswith("000.100.1")
+            or code.startswith("000.36")
+        )
+
+        if not success:
+            return {"status": "failed"}
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        payment_id = res.get("id")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id
+        ).first()
+
+        if not invoice:
+            return {"status": "failed"}
+
+        if invoice.status != "paid":
+
+            invoice.status = "paid"
+            invoice.payment_id = payment_id
+            db.commit()
+
+        background_tasks.add_task(
+            process_promotion_payment_by_payment_id,
+            payment_id
+        )
+
+        return {
+            "status": "paid",
+            "payment_id": payment_id
+        }
+
+    finally:
+        db.close()
+
+def process_promotion_payment_by_payment_id(payment_id: str):
+
+    db = SessionLocal()
+
+    try:
+
+        res = requests.get(
+            f"{HYPERPAY_BASE_URL}/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+
+        success = (
+            code.startswith("000.")
+            or code.startswith("000.100.1")
+            or code.startswith("000.36")
+        )
+
+        if not success:
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.type == "promotion",
+        ).first()
+
+        if not invoice:
+            return
+
+        if invoice.status == "paid":
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        subscription = db.get(PromotionSubscriptionModel, invoice.object_id)
+
+        if subscription:
+            subscription.status = "active"
+
+        db.commit()
+
+    except Exception:
+        logger.exception("Promotion payment verification failed")
+        db.rollback()
+
+    finally:
+        db.close()
+        
 '''
 @promotion_router.api_route("/packages/callback/hyper", methods=["GET", "POST"])
 async def buy_promotion_package_callback(
