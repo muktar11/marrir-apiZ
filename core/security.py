@@ -61,6 +61,15 @@ class Settings(BaseSettings):
     TELR_TEST_MODE: int = 1
     FRONTEND_PUBLIC_CV_URL: str = "https://api.marrir.com/public/cv"
     BASE_URL: str = "http://localhost:8000"
+
+
+
+    HYPERPAY_ENTITY_ID: str
+    HYPERPAY_ACCESS_TOKEN: str
+    HYPERPAY_JOB_RETURN_URL: str = "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper"
+    HYPERPAY_JOB_NOTIFY_URL: str = "https://marrir.com/api/v1/http://localhost:5173/recruitment/jobs/"
+    HYPERPAY_JOB_RETURN_URL: str = "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper"
+    HYPERPAY_JOB_NOTIFY_URL: str = "https://marrir.com//recruitment/transfer-history"
     # PROFILE_TRANSFER_PRICE: str
 
 
