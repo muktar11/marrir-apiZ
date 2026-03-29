@@ -1365,12 +1365,8 @@ def verify_payment(
                     logger.error("Reserve not found")
                     return {"status": "failed", "reason": "reserve_not_found"}
 
-                # already processed safeguard
-                if reserve.is_paid:
-                    logger.info("Reserve already paid")
-                    return {"status": "already_processed"}
 
-                reserve.is_paid = True
+
                 reserve.payment_id = res.get("id")
 
                 # ===============================
