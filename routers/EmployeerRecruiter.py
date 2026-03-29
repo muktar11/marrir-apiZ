@@ -1380,7 +1380,7 @@ def verify_payment(
 
                 # 🔹 CV (agent side)
                 cv_agent = db.query(CVModel).filter(
-                    CVModel.user_id == employee_uuid
+                    CVModel.user_id == str(reserve.employee_id)
                 ).first()
 
                 if not cv_agent:
@@ -1403,7 +1403,6 @@ def verify_payment(
 
                 # 🔥 FINAL STATUS UPDATE
                 reserve.status = TransferStatusSchema.ACCEPTED
-
                 db.add(cv_employee)
                 db.add(cv_agent)
                 db.add(reserve)
