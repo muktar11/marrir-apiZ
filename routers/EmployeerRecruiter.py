@@ -1366,11 +1366,8 @@ def verify_payment(
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
 
-                # ✅ validate employee_id
-                if not reserve.buyer_id:
-                    raise HTTPException(status_code=400, detail="Employee ID missing")
 
-                employeer_id = reserve.buyer_id
+                employeer_id = invoice.buyer_id
                 # ✅ CV lookup (UUID match)
                 cv_agent = db.query(CVModel).filter(
                     CVModel.user_id == employeer_id
