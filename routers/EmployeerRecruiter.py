@@ -1214,7 +1214,8 @@ class ReservePaymentSchema(BaseModel):
 def create_reserve_checkout(
     payload: ReservePaymentSchema,
     db: Session = Depends(get_db),
-    _=Depends(authentication_context),  # ✅ get logged user
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),  # ✅ get logged user
 ):
     logger.info("Creating reserve payment...")
 
@@ -1285,7 +1286,7 @@ def create_reserve_checkout(
             status="pending",
             type="reserve",
             object_id=str(reserve_id),
-           # buyer_id=user.id,   # ✅ VERY IMPORTANT
+            buyer_id=user.id,   # ✅ VERY IMPORTANT
         )
 
         db.add(invoice)
@@ -1358,7 +1359,7 @@ def verify_payment(
             if invoice.type == "reserve":
                 reserve_id = int(invoice.object_id)
                 reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.id == reserve_id
+                    RecruitmentAgentPrivateReserveModel.agent_id == reserve_id
                 ).first()
 
                 if not reserve:
@@ -1377,6 +1378,8 @@ def verify_payment(
                     employee_uuid = UUID(reserve.employee_id)
                 except ValueError:
                     raise HTTPException(status_code=400, detail="Invalid employee UUID")
+
+
 
                 # 🔹 CV (agent side)
                 cv_agent = db.query(CVModel).filter(
