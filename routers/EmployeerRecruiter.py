@@ -1382,7 +1382,13 @@ def verify_payment(
 
                 if not cv_agent:
                     raise HTTPException(status_code=404, detail="CV not found")
-                cv_agent.creator_id = recruitment_id  # string field ✅
+                
+                print("BEFORE UPDATE:", cv_agent.creator_id)
+
+                cv_agent.creator_id = recruitment_id
+
+                print("AFTER UPDATE:", cv_agent.creator_id)
+                print("DIRTY OBJECTS:", db.dirty)
                 # ✅ APPROVE RESERVE
                 reserve.status = TransferStatusSchema.ACCEPTED
                 db.add(cv_agent)
