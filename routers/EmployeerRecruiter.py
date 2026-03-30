@@ -1365,9 +1365,14 @@ def verify_payment(
 
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
+                
+                
 
                 employeer_id = reserve.agent_id
                 recruitment_id = reserve.recruitment_id
+
+                print(f"Recruitment ID (buyer): {employeer_id}")
+                print(f"Agent ID (employer): {recruitment_id}")
 
 
                 # ✅ CV lookup (UUID match)
