@@ -1357,13 +1357,15 @@ def verify_payment(
             
 
             if invoice.type == "reserve":
-                reserve_id = int(invoice.object_id)
+                reserve_id = invoice.object_id
 
                 print(f"Processing reserve payment for reserve_id: {reserve_id}")
 
                 reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.id == reserve_id
+                    RecruitmentAgentPrivateReserveModel.agent_id == reserve_id
                 ).first()
+
+                
 
                 if reserve:
                     print(f"Reserve.id: {reserve.id}")
