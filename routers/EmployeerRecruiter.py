@@ -1359,11 +1359,13 @@ def verify_payment(
             if invoice.type == "reserve":
                 # ✅ get reserve id (int)
                 reserve_id = int(invoice.object_id)
-
+                print(f"Processing reserve payment for reserve_id: {reserve_id}")
+                print(f"RecruitmentAgentPrivateReserveModel.id: {RecruitmentAgentPrivateReserveModel.id}")
                 # ✅ correct lookup (NOT agent_id)
                 reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
                     RecruitmentAgentPrivateReserveModel.id == reserve_id
                 ).first()
+
 
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
