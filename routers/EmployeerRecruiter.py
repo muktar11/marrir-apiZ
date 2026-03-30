@@ -1366,8 +1366,10 @@ def verify_payment(
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
 
+                employeer_id = reserve.agent_id
+                recruitment_id = reserve.recruitment_id
 
-                employeer_id = invoice.buyer_id
+
                 # ✅ CV lookup (UUID match)
                 cv_agent = db.query(CVModel).filter(
                     CVModel.user_id == employeer_id
@@ -1375,8 +1377,7 @@ def verify_payment(
 
                 if not cv_agent:
                     raise HTTPException(status_code=404, detail="CV not found")
-                cv_agent.creator_id = employeer_id  # string field ✅
-
+                cv_agent.creator_id = recruitment_id  # string field ✅
                 # ✅ APPROVE RESERVE
                 reserve.status = TransferStatusSchema.ACCEPTED
                 db.add(cv_agent)
