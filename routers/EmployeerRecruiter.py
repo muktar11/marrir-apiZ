@@ -1377,7 +1377,7 @@ def verify_payment(
 
                 # ✅ CV lookup (UUID match)
                 cv_agent = db.query(CVModel).filter(
-                    CVModel.creator_id == recruitment_id
+                    CVModel.creator_id == employeer_id
                 ).first()
 
                 if not cv_agent:
