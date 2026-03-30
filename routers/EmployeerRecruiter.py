@@ -1357,62 +1357,31 @@ def verify_payment(
             
 
             if invoice.type == "reserve":
-                reserve_id = invoice.object_id
-
-                print(f"Processing reserve payment for reserve_id: {reserve_id}")
-
                 reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.agent_id == reserve_id
+                    RecruitmentAgentPrivateReserveModel.recruitment_id == invoice.buyer_id
                 ).first()
 
                 
-
-                if reserve:
-                    print(f"Reserve.id: {reserve.id}")
-                    print(f"Reserve.employee_id: {reserve.employee_id}")
-                    print(f"Reserve.agent_id: {reserve.agent_id}")
-                    print(f"Reserve.status: {reserve.status}")
-                else:
-                    print("Reserve not found ❌")
-
 
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
 
                 # ✅ validate employee_id
-                if not reserve.employee_id:
+                if not reserve.buyer_id:
                     raise HTTPException(status_code=400, detail="Employee ID missing")
 
-                # ✅ convert to UUID
-                try:
-                    employee_uuid = UUID(reserve.employee_id)
-                except Exception:
-                    raise HTTPException(status_code=400, detail="Invalid employee UUID")
-
+                employeer_id = reserve.buyer_id
                 # ✅ CV lookup (UUID match)
                 cv_agent = db.query(CVModel).filter(
-                    CVModel.user_id == employee_uuid
+                    CVModel.user_id == employeer_id
                 ).first()
 
                 if not cv_agent:
                     raise HTTPException(status_code=404, detail="CV not found")
-
-                # ✅ Employee lookup
-                cv_employee = db.query(EmployeeModel).filter(
-                    EmployeeModel.user_id == employee_uuid
-                ).first()
-
-                if not cv_employee:
-                    raise HTTPException(status_code=404, detail="Employee record not found")
-
-                # ✅ APPLY OWNERSHIP
-                cv_employee.manager_id = reserve.agent_id  # UUID → UUID ✅
-                cv_agent.creator_id = str(reserve.agent_id)  # string field ✅
+                cv_agent.creator_id = employeer_id  # string field ✅
 
                 # ✅ APPROVE RESERVE
                 reserve.status = TransferStatusSchema.ACCEPTED
-
-                db.add(cv_employee)
                 db.add(cv_agent)
                 db.add(reserve)
 
