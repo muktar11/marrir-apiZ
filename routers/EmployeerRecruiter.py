@@ -1368,8 +1368,8 @@ def verify_payment(
                 
                 
 
-                employeer_id = reserve.agent_id
-                recruitment_id = reserve.recruitment_id
+                employeer_id = str(reserve.agent_id)
+                recruitment_id = str(reserve.recruitment_id)
 
                 print(f"Recruitment ID (buyer): {employeer_id}")
                 print(f"Agent ID (employer): {recruitment_id}")
@@ -1377,7 +1377,7 @@ def verify_payment(
 
                 # ✅ CV lookup (UUID match)
                 cv_agent = db.query(CVModel).filter(
-                    CVModel.user_id == employeer_id
+                    CVModel.creator_id == recruitment_id
                 ).first()
 
                 if not cv_agent:
