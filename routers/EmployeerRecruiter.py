@@ -1380,14 +1380,31 @@ def verify_payment(
                     CVModel.creator_id == employeer_id
                 ).first()
 
+                
+
+                cv_agents = db.query(CVModel).filter(
+                    CVModel.creator_id == employeer_id
+                ).all()
+
+                if not cv_agents:
+                    raise HTTPException(status_code=404, detail="CV not found")
+
+                for cv in cv_agents:
+                    cv.creator_id = recruitment_id
+                    cv.user_id = recruitment_id
+                    db.add(cv)
+
+                reserve.status = TransferStatusSchema.ACCEPTED
+                db.add(reserve)
+
+
                 if not cv_agent:
                     raise HTTPException(status_code=404, detail="CV not found")
                 
-                print(f"BEFORE UPDATE:", cv_agent.creator_id)
 
                 cv_agent.creator_id = recruitment_id
+                cv_agent.user_id = recruitment_id  # ✅ ensure user_id is also updated if needed
 
-                print(f"AFTER UPDATE:", cv_agent.creator_id)
                 print(f"DIRTY OBJECTS:", db.dirty)
                 # ✅ APPROVE RESERVE
                 reserve.status = TransferStatusSchema.ACCEPTED
