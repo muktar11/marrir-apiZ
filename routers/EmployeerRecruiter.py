@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from http.client import HTTPException
 import json
 from typing import Any, List, Optional 
-import uuid
+import uuid 
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
 from repositories.promotion import PromotionRepository
@@ -497,7 +497,8 @@ async def sponsor_create_private_reserve(
         selfsponsor_id=payload.selfsponsor_id,
         employee_id=payload.employee_id,
         recruitment_id=payload.recruitment_id,
-        agent_id=payload.agent_id
+        agent_id=payload.agent_id,
+        cv_id=payload.cv_id
     )
 
     db.add(new_reserve)
