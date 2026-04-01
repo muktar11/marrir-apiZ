@@ -470,11 +470,7 @@ async def sponsor_create_private_reserve(
 
     # Check duplicate correctly based on type
     existing = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.sponsor_id == payload.sponsor_id,
-        RecruitmentAgentPrivateReserveModel.selfsponsor_id == payload.selfsponsor_id,
-        RecruitmentAgentPrivateReserveModel.employee_id == payload.employee_id,
-        RecruitmentAgentPrivateReserveModel.recruitment_id == payload.recruitment_id,
-        RecruitmentAgentPrivateReserveModel.agent_id == payload.agent_id,
+        RecruitmentAgentPrivateReserveModel.cv_id == payload.cv_id,
     ).first()
 
     if existing:
@@ -1157,6 +1153,7 @@ async def get_accepted_reserves_by_role(
             "agent_id": reserve.agent_id,
             "sponsor_id": reserve.sponsor_id,
             "selfsponsor_id": reserve.selfsponsor_id,
+            "cv_id": reserve.cv_id,
             "employee_id": reserve.employee_id,
             "status": reserve.status,
             "with_passport": reserve.with_passport,
@@ -1223,6 +1220,7 @@ def create_reserve_checkout(
     user = context_actor_user_data.get()  # ✅ current user
 
     reserve_id = payload.reserve_id
+    cv_id = payload.cv_id
 
     reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
         RecruitmentAgentPrivateReserveModel.id == reserve_id,
@@ -1255,7 +1253,6 @@ def create_reserve_checkout(
         "customer.email": "test@test.com",  
         "customer.givenName": "first",
         "customer.surname": "last",
-
         "billing.street1": "Reserve Payment",
         "billing.city": "Dubai",
         "billing.country": "AE",
@@ -1288,6 +1285,7 @@ def create_reserve_checkout(
             type="reserve",
             object_id=str(reserve_id),
             buyer_id=user.id,   # ✅ VERY IMPORTANT
+            cv_id=cv_id
         )
 
         db.add(invoice)
@@ -1359,7 +1357,7 @@ def verify_payment(
 
             if invoice.type == "reserve":
                 reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.recruitment_id == invoice.buyer_id
+                    RecruitmentAgentPrivateReserveModel.cv_id == invoice.cv_id
                 ).first()
 
                 
