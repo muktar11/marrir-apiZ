@@ -1364,13 +1364,14 @@ def verify_payment(
 
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
-                recruitment_id = str(reserve.recruitment_id)
+                recruitment_id_str = str(reserve.recruitment_id)
+                recruitment_id = reserve.recruitment_id
                 cv = db.query(CVModel).filter(   
                     CVModel.user_id == invoice.cv_id
                 ).first()
                 if not cv:
                     raise HTTPException(status_code=404, detail="CV not found")
-                cv.creator_id = recruitment_id
+                cv.creator_id = recruitment_id_str
                 cv.user_id = recruitment_id
                 employee = db.query(EmployeeModel).filter(
                     EmployeeModel.user_id == invoice.cv_id
