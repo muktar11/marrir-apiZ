@@ -1369,26 +1369,24 @@ def verify_payment(
                 
                 recruitment_id = str(reserve.recruitment_id)
                 cv = db.query(CVModel).filter(
-                   # CVModel.creator_id == invoice.cv_id
-                     CVModel.user_id  == invoice.cv_id
+                    CVModel.creator_id == invoice.cv_id
+                    
                 ).first()
                 if not cv:
                     raise HTTPException(status_code=404, detail="CV not found")
-
                 cv.creator_id = recruitment_id
-                db.add(cv)
+                cv.user_id = recruitment_id
+                employee = db.query(EmployeeModel).filter(
+                    EmployeeModel.user_id == invoice.cv_id
+                ).first()
+                if not employee:
+                    raise HTTPException(status_code=404, detail="Employee not found")
 
+                employee.manager_id = recruitment_id
                 reserve.status = TransferStatusSchema.ACCEPTED
                 db.add(reserve)
-
-
-
-                
-                # ✅ APPROVE RESERVE
-                reserve.status = TransferStatusSchema.ACCEPTED
                 db.add(cv)
-                db.add(reserve)
-
+                db.add(employee)
                 db.commit()
 
             return {
