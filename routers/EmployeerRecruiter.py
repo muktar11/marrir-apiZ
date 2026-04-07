@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from http.client import HTTPException
 import json
 from typing import Any, List, Optional 
-import uuid 
+import uuid  
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
 from repositories.promotion import PromotionRepository
@@ -494,7 +494,8 @@ async def sponsor_create_private_reserve(
         employee_id=payload.employee_id,
         recruitment_id=payload.recruitment_id,
         agent_id=payload.agent_id,
-        cv_id=payload.cv_id
+        cv_id=payload.cv_id,
+        passport_number=payload.passport_number
     )
 
     db.add(new_reserve)
@@ -1056,6 +1057,10 @@ async def get_accepted_reserves_by_role(
         query = query.filter(
             RecruitmentAgentPrivateReserveModel.sponsor_id == cast(user_uuid, pgUUID)
         )
+    elif role == "employee":
+        query = query.filter(
+            RecruitmentAgentPrivateReserveModel.employee_id == cast(user_uuid, pgUUID)
+        )
 
     else:
         raise HTTPException(status_code=400, detail="Invalid role")
@@ -1080,6 +1085,7 @@ async def get_accepted_reserves_by_role(
             "employee_id": reserve.employee_id,
             "status": reserve.status,
             "with_passport": reserve.with_passport,
+            "passport_number": reserve.passport_number,
             "price": reserve.price,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
@@ -1158,6 +1164,9 @@ async def get_accepted_reserves_by_role(
             "employee_id": reserve.employee_id,
             "status": reserve.status,
             "with_passport": reserve.with_passport,
+            "passport_number": reserve.passport_number,
+            "is_paid": getattr(reserve, "is_paid", False),
+            "is_reserved": getattr(reserve, "is_reserved", False),  # in case you added this field
             "price": reserve.price,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
@@ -1380,7 +1389,10 @@ def verify_payment(
                     raise HTTPException(status_code=404, detail="Employee not found")
 
                 employee.manager_id = recruitment_id
+                employee.user_id = recruitment_id
                 reserve.status = TransferStatusSchema.ACCEPTED
+                reserve.is_paid = True  # ✅ mark as paid
+                reserve.is_reserved = True  # ✅ mark as reserved
                 db.add(reserve)
                 db.add(cv)
                 db.add(employee)
