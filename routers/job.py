@@ -1356,6 +1356,12 @@ def verify_payment(
 
         invoice.status = "paid"
         invoice.payment_id = payment_id
+        
+        # ✅ GENERATE PDF INVOICE
+        file_path = generate_invoice_pdf(invoice)
+
+        # ✅ SAVE FILE PATH
+        invoice.invoice_file = file_path
 
         if invoice.type == "job_application":
 
