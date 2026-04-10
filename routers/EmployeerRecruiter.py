@@ -1038,6 +1038,7 @@ async def get_accepted_reserves_by_role(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
+    user_uuid_employee = uuid.UUID(user_id)
     # Base query: only ACCEPTED reserves
 
     user_uuid = str(uuid.UUID(user_id))
@@ -1057,11 +1058,11 @@ async def get_accepted_reserves_by_role(
         query = query.filter(
             RecruitmentAgentPrivateReserveModel.sponsor_id == cast(user_uuid, pgUUID)
         )
+
     elif role == "employee":
         query = query.filter(
-            RecruitmentAgentPrivateReserveModel.employee_id == cast(user_uuid, pgUUID)
+            RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
         )
-
     else:
         raise HTTPException(status_code=400, detail="Invalid role")
 
@@ -1311,6 +1312,55 @@ def create_reserve_checkout(
         raise HTTPException(status_code=500, detail=str(e))
     
     
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+import os
+
+from datetime import datetime
+import uuid
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from sqlalchemy.orm import Session
+
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+#from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+import os
+
+TEMPLATE_DIR = "templates"
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+
+env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+def generate_invoice_pdf(invoice):
+    template = env.get_template("invoice.html")
+
+    vat = round(invoice.amount * 0.05, 2)
+    total = invoice.amount + vat
+
+    html_content = template.render(
+        invoice={
+            "invoice_number": invoice.invoice_number,
+            "payment_id": invoice.payment_id,
+            "amount": f"{invoice.amount:.2f}",
+            "vat": f"{vat:.2f}",
+            "total": f"{total:.2f}",
+            "description": invoice.description or "Service",
+            "billing_email": invoice.billing_email,
+            "billing_country": invoice.billing_country,
+            "card_holder": invoice.card_holder,
+            "date": invoice.created_at.strftime("%d %B %Y"),
+        }
+    )
+
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+    HTML(string=html_content).write_pdf(file_path)
+
+    return file_path
+
+
 @recruiter_reserve_employeer_router.get("/hyper/payment/verify")
 def verify_payment(
     id: str = Query(None),
@@ -1360,6 +1410,10 @@ def verify_payment(
 
             invoice.status = "paid"
             invoice.payment_id = res.get("id")
+            file_path = generate_invoice_pdf(invoice)
+
+            # ✅ SAVE FILE PATH
+            invoice.invoice_file = file_path
 
             # ===============================
             # 🔥 JOB APPLICATION PAYMENT
