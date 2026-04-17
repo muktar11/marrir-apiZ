@@ -1585,6 +1585,56 @@ def verify_payment_sponsor_reserve(
         raise HTTPException(status_code=500, detail=str(e))
     
 
+@recruiter_reserve_employeer_router.put(
+    "/sponsor/selecting/recruiter", status_code=200
+)
+async def sponsor_selecting_recruiter_on_behalf(
+    reserve_id: int,
+    recruitment_id: uuid.UUID,
+    employee_id: uuid.UUID,
+    db: Session = Depends(get_db_raw),
+):
+    reserve = (
+        db.query(RecruitmentAgentPrivateReserveModel)
+        .filter(
+            RecruitmentAgentPrivateReserveModel.id == reserve_id,
+            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
+            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
+        )
+        .first()
+    )
+
+    if not reserve:
+        raise HTTPException(
+            status_code=404,
+            detail="Pending reservation not found"
+        )
+
+    # ✅ Set transfer request fields
+    reserve.transfer_recruitment_id = recruitment_id
+    reserve.transfer_employee_id = employee_id
+    reserve.is_transfer_requested = True
+
+
+    try:
+        db.commit()
+        db.refresh(reserve)
+    except SQLAlchemyError as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    return {
+        "status_code": 200,
+        "message": "Transfer request created successfully",
+        "error": False,
+        "data": {
+            "reserve_id": reserve.id,
+            "transfer_recruitment_id": reserve.transfer_recruitment_id,
+            "transfer_employee_id": reserve.transfer_employee_id,
+            "is_transfer_requested": reserve.is_transfer_requested,
+        },
+    }
+
 @recruiter_reserve_employeer_router.get("/reserve/{reserve_id}/cv")
 def download_cv(
     reserve_id: int,
