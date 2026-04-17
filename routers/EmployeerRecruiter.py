@@ -1598,8 +1598,6 @@ async def sponsor_selecting_recruiter_on_behalf(
         db.query(RecruitmentAgentPrivateReserveModel)
         .filter(
             RecruitmentAgentPrivateReserveModel.id == reserve_id,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
         )
         .first()
     )
@@ -1633,6 +1631,40 @@ async def sponsor_selecting_recruiter_on_behalf(
             "transfer_employee_id": reserve.transfer_employee_id,
             "is_transfer_requested": reserve.is_transfer_requested,
         },
+    }
+
+@recruiter_reserve_employeer_router.get(
+    "/recruiter/transfer/requests", status_code=200
+)
+async def get_transfer_requests_for_recruiter(
+    recruiter_id: uuid.UUID,
+    db: Session = Depends(get_db_raw),
+):
+    reserves = (
+        db.query(RecruitmentAgentPrivateReserveModel)
+        .filter(
+            RecruitmentAgentPrivateReserveModel.transfer_recruitment_id == recruiter_id,
+            RecruitmentAgentPrivateReserveModel.is_transfer_requested == True,
+            RecruitmentAgentPrivateReserveModel.is_transfer_approved == False,
+        )
+        .all()
+    )
+
+    return {
+        "status_code": 200,
+        "message": "Transfer requests retrieved successfully",
+        "data": [
+            {
+                "reserve_id": r.id,
+                "employee_id": r.transfer_employee_id,
+                "from_recruitment_id": r.recruitment_id,
+                "to_recruitment_id": r.transfer_recruitment_id,
+                "status": r.status,
+                "is_transfer_requested": r.is_transfer_requested,
+                "is_transfer_approved": r.is_transfer_approved,
+            }
+            for r in reserves
+        ],
     }
 
 @recruiter_reserve_employeer_router.get("/reserve/{reserve_id}/cv")
