@@ -94,4 +94,19 @@ class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
     sponsor = relationship("UserModel", backref="sponsor_agent_private_reserve", lazy="select", foreign_keys=[sponsor_id])
     selfsponsor = relationship("UserModel", backref="selfsponsor_agent_private_reserve", lazy="select", foreign_keys=[selfsponsor_id])
     with_passport: Mapped[bool] = mapped_column(Boolean, default=False)    
+    passport_number: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_reserved: Mapped[bool] = mapped_column(Boolean, default=False) 
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=False)    
+    cv_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_users.id"), unique=True, nullable=True
+    )
+    is_transferred: Mapped[bool] = mapped_column(Boolean, default=False)
+    transfer_recruitment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    transfer_employee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    is_transfer_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_transfer_approved: Mapped[bool] = mapped_column(Boolean, default=False)
 
