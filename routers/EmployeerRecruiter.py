@@ -1753,7 +1753,10 @@ def verify_payment_sponsor_recruiter_reserve_transfer(
 
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
-                reserve.is_transfer_approved = True  #  mark as paid
+                logger.info(f"Result code passed reserve: {reserve.id}")
+                logger.info(f"Result code passed reserve transfer request status: {reserve.is_transfer_requested}")
+                logger.info(f"Result code passed reserve transfer approved status: {reserve.is_transfer_approved}") 
+                reserve.is_transfer_approved = True
                 db.add(reserve)
                 db.commit()
             return {
