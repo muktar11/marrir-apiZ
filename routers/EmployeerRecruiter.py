@@ -1812,6 +1812,7 @@ async def sponsor_selecting_recruiter_on_behalf(
         },
     }
 
+
 @recruiter_reserve_employeer_router.get(
     "/recruiter/transfer/requests", status_code=200
 )
@@ -1819,69 +1820,62 @@ async def get_transfer_requests_for_recruiter(
     recruiter_id: uuid.UUID,
     db: Session = Depends(get_db_raw),
 ):
+    # Get ALL requested transfers (both approved + not approved)
     reserves = (
         db.query(RecruitmentAgentPrivateReserveModel)
         .filter(
             RecruitmentAgentPrivateReserveModel.transfer_recruitment_id == recruiter_id,
-            RecruitmentAgentPrivateReserveModel.is_transfer_requested == True,
-            RecruitmentAgentPrivateReserveModel.is_transfer_approved == False,
+           # RecruitmentAgentPrivateReserveModel.is_transfer_requested == True,
         )
         .all()
     )
-    if reserves.is_transfer_approved:
-        recruiter_info = db.query(UserModel).filter(
-            UserModel.id == RecruitmentAgentPrivateReserveModel.recruitment_id
-        ).first()
 
-        sponsor_info = db.query(UserModel).filter(
-            UserModel.id == RecruitmentAgentPrivateReserveModel.sponsor_id  
-        ).first()
+    data = []
 
-        return{
-                    "status_code": 200,
-        "message": "Transfer requests retrieved successfully",
-        "data": [
-            {
-                "reserve_id": r.id,
-                "employee_id": r.transfer_employee_id,
-                "from_recruitment_id": r.recruitment_id,
-                "to_recruitment_id": r.transfer_recruitment_id,
-                "status": r.status,
-                "passport_number": r.passport_number,
-                "is_transfer_requested": r.is_transfer_requested,
-                "is_transfer_approved": r.is_transfer_approved,
-                "email_recruiter": recruiter_info.email,
-                "first_name_recruiter": recruiter_info.first_name,
-                "last_name_recruiter": recruiter_info.last_name,
-                "phone_number_recruiter": recruiter_info.phone_number,
-                "country_recruiter": recruiter_info.country,
-                "email_sponsor": sponsor_info.email,
-                "first_name_sponsor": sponsor_info.first_name,  
-                "last_name_sponsor": sponsor_info.last_name,
-                "phone_number_sponsor": sponsor_info.phone_number,
-                "country_sponsor": sponsor_info.country,
-            }
-            for r in reserves
-        ],    
-    }
+    for r in reserves:
+        item = {
+            "reserve_id": r.id,
+            "employee_id": r.transfer_employee_id,
+            "from_recruitment_id": r.recruitment_id,
+            "to_recruitment_id": r.transfer_recruitment_id,
+            "status": r.status,
+            "passport_number": r.passport_number,
+            "is_transfer_requested": r.is_transfer_requested,
+            "is_transfer_approved": r.is_transfer_approved,
+        }
 
-    else: {
+        # ✅ ONLY when approved → add extra info
+        if r.is_transfer_approved:
+            recruiter_info = db.query(UserModel).filter(
+                UserModel.id == r.recruitment_id
+            ).first()
+
+            sponsor_info = db.query(UserModel).filter(
+                UserModel.id == r.sponsor_id
+            ).first()
+
+            item.update({
+                "email_recruiter": recruiter_info.email if recruiter_info else None,
+                "first_name_recruiter": recruiter_info.first_name if recruiter_info else None,
+                "last_name_recruiter": recruiter_info.last_name if recruiter_info else None,
+                "phone_number_recruiter": recruiter_info.phone_number if recruiter_info else None,
+                "country_recruiter": recruiter_info.country if recruiter_info else None,
+
+                "email_sponsor": sponsor_info.email if sponsor_info else None,
+                "first_name_sponsor": sponsor_info.first_name if sponsor_info else None,
+                "last_name_sponsor": sponsor_info.last_name if sponsor_info else None,
+                "phone_number_sponsor": sponsor_info.phone_number if sponsor_info else None,
+                "country_sponsor": sponsor_info.country if sponsor_info else None,
+            })
+
+        data.append(item)
+
+    return {
         "status_code": 200,
         "message": "Transfer requests retrieved successfully",
-        "data": [
-            {
-                "reserve_id": r.id,
-                "employee_id": r.transfer_employee_id,
-                "from_recruitment_id": r.recruitment_id,
-                "to_recruitment_id": r.transfer_recruitment_id,
-                "status": r.status,
-                "passport_number": r.passport_number,
-                "is_transfer_requested": r.is_transfer_requested,
-                "is_transfer_approved": r.is_transfer_approved,
-            }
-            for r in reserves
-        ],
+        "data": data
     }
+    
 
 @recruiter_reserve_employeer_router.get("/reserve/{reserve_id}/cv")
 def download_cv(
