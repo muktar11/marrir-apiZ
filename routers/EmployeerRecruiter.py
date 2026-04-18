@@ -2009,6 +2009,7 @@ async def get_employeer_reserve_requests(
 @recruiter_reserve_employeer_router.put("/employee/pending-reserves/employer-request/approve", status_code=200)
 async def approve_sponsor_private_reserve(
     employee_id: str,
+    payload: ApproveAgencyReserveSchema,
     db: Session = Depends(get_db_raw)
 ):
     """
@@ -2044,6 +2045,7 @@ async def approve_sponsor_private_reserve(
         )
 
     # Step 2: Approve reservation
+    reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
 
     try:
@@ -2211,6 +2213,7 @@ async def approve_agency_private_reserve(
 )
 async def approve_sponsor_private_reserve_for_recruiter(
     recruiter_id: str,  # UUID of the recruiter approving
+    payload: ApproveAgencyReserveSchema,
     db: Session = Depends(get_db_raw),
 ):
     """
@@ -2247,6 +2250,7 @@ async def approve_sponsor_private_reserve_for_recruiter(
         )
 
     # Step 2: Approve reservation
+    reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
 
     try:
