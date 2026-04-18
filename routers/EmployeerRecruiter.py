@@ -2,6 +2,7 @@ from datetime import datetime, timedelta, timezone
 from http.client import HTTPException
 import json
 from typing import Any, List, Optional 
+from unicodedata import category
 import uuid  
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
@@ -321,19 +322,26 @@ async def get_promoted_cvs(
     if recruiter_residence:
         query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
 
-    # ✅ Filter category
-    #if category:
-    #    query = query.filter(CVModel.employment_types.ilike(f"%{category}%"))
-
     if category:
         query = query.filter(
-            or_(
-                CVModel.employment_types.ilike(f"{{{category}}}"),            # only one value
-                CVModel.employment_types.ilike(f"{{{category},%"),            # at start
-                CVModel.employment_types.ilike(f"%,{category},%"),            # middle
-                CVModel.employment_types.ilike(f"%,{category}}}")             # at end
+                or_(
+                    # exact single value
+                    CVModel.employment_types.ilike(f'{{{category}}}'),
+                    CVModel.employment_types.ilike(f'{{"{category}"}}'),
+
+                    # start
+                    CVModel.employment_types.ilike(f'{{{category},%'),
+                    CVModel.employment_types.ilike(f'{{"{category}",%'),
+
+                    # middle
+                    CVModel.employment_types.ilike(f'%,{category},%'),
+                    CVModel.employment_types.ilike(f'%,"{category}",%'),
+
+                    # end
+                    CVModel.employment_types.ilike(f'%,{category}}}'),
+                    CVModel.employment_types.ilike(f'%,"{category}"}}')
+                )
             )
-        )
 
     # ✅ Exclude RecruitmentSetReserveModel
     query = query.filter(
