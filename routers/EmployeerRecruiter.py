@@ -1846,7 +1846,9 @@ async def get_transfer_requests_for_recruiter(
             "employee_id": r.transfer_employee_id,
             "from_recruitment_id": r.recruitment_id,
             "to_recruitment_id": r.transfer_recruitment_id,
+            "price": r.price,
             "status": r.status,
+            
             "passport_number": r.passport_number,
             "is_transfer_requested": r.is_transfer_requested,
             "is_transfer_approved": r.is_transfer_approved,
