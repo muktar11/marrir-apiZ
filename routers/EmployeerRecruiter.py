@@ -1379,10 +1379,8 @@ def create_reserve_transfer_checkout(
         logger.info(f"HyperPay response: {res}")
 
         checkout_id = res.get("id")
-
         if not checkout_id:
             raise HTTPException(status_code=400, detail=res)
-
         # ✅ SAVE INVOICE PROPERLY
         invoice = InvoiceModel(
             reference=merchant_tx_id,
@@ -1830,8 +1828,44 @@ async def get_transfer_requests_for_recruiter(
         )
         .all()
     )
+    if reserves.is_transfer_approved:
+        recruiter_info = db.query(UserModel).filter(
+            UserModel.id == RecruitmentAgentPrivateReserveModel.recruitment_id
+        ).first()
 
-    return {
+        sponsor_info = db.query(UserModel).filter(
+            UserModel.id == RecruitmentAgentPrivateReserveModel.sponsor_id  
+        ).first()
+
+        return{
+                    "status_code": 200,
+        "message": "Transfer requests retrieved successfully",
+        "data": [
+            {
+                "reserve_id": r.id,
+                "employee_id": r.transfer_employee_id,
+                "from_recruitment_id": r.recruitment_id,
+                "to_recruitment_id": r.transfer_recruitment_id,
+                "status": r.status,
+                "passport_number": r.passport_number,
+                "is_transfer_requested": r.is_transfer_requested,
+                "is_transfer_approved": r.is_transfer_approved,
+                "email_recruiter": recruiter_info.email,
+                "first_name_recruiter": recruiter_info.first_name,
+                "last_name_recruiter": recruiter_info.last_name,
+                "phone_number_recruiter": recruiter_info.phone_number,
+                "country_recruiter": recruiter_info.country,
+                "email_sponsor": sponsor_info.email,
+                "first_name_sponsor": sponsor_info.first_name,  
+                "last_name_sponsor": sponsor_info.last_name,
+                "phone_number_sponsor": sponsor_info.phone_number,
+                "country_sponsor": sponsor_info.country,
+            }
+            for r in reserves
+        ],    
+    }
+
+    else: {
         "status_code": 200,
         "message": "Transfer requests retrieved successfully",
         "data": [
