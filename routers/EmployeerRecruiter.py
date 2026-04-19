@@ -1180,31 +1180,7 @@ async def get_accepted_reserves_by_role(
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
         }
-
-        if r.is_transfer_approved:
-            recruiter_info = db.query(UserModel).filter(
-                UserModel.id == r.recruitment_id
-            ).first()
-
-            sponsor_info = db.query(UserModel).filter(
-                UserModel.id == r.sponsor_id
-            ).first()
-
-        item.update({
-                "email_recruiter": recruiter_info.email if recruiter_info else None,
-                "first_name_recruiter": recruiter_info.first_name if recruiter_info else None,
-                "last_name_recruiter": recruiter_info.last_name if recruiter_info else None,
-                "phone_number_recruiter": recruiter_info.phone_number if recruiter_info else None,
-                "country_recruiter": recruiter_info.country if recruiter_info else None,
-
-                "email_sponsor": sponsor_info.email if sponsor_info else None,
-                "first_name_sponsor": sponsor_info.first_name if sponsor_info else None,
-                "last_name_sponsor": sponsor_info.last_name if sponsor_info else None,
-                "phone_number_sponsor": sponsor_info.phone_number if sponsor_info else None,
-                "country_sponsor": sponsor_info.country if sponsor_info else None,
-            })
-
-        data.append(item)
+        
 
     return {
         "status_code": 200,
