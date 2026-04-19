@@ -1160,10 +1160,10 @@ async def get_accepted_reserves_by_role(
     except SQLAlchemyError as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
-    # Build response
     data = []
+
     for reserve in reserves:
-        data.append({
+        item = {
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
             "agent_id": reserve.agent_id,
@@ -1175,20 +1175,39 @@ async def get_accepted_reserves_by_role(
             "with_passport": reserve.with_passport,
             "passport_number": reserve.passport_number,
             "is_paid": getattr(reserve, "is_paid", False),
-            "is_reserved": getattr(reserve, "is_reserved", False),  # in case you added this field
+            "is_reserved": getattr(reserve, "is_reserved", False),
+            "is_transfer_approved": reserve.is_transfer_approved,  # ✅ ADD THIS
+            "is_transferred": reserve.is_transferred,              # ✅ optional but useful
             "price": reserve.price,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
-        })
+        }
 
-    return {
-        "status_code": 200,
-        "message": f"{role} accepted reserves fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
+        # ✅ only fetch extra info if approved
+        if reserve.is_transfer_approved:
+            recruiter_info = db.query(UserModel).filter(
+                UserModel.id == reserve.recruitment_id
+            ).first()
 
+            sponsor_info = db.query(UserModel).filter(
+                UserModel.id == reserve.sponsor_id
+            ).first()
+
+            item.update({
+                "email_recruiter": recruiter_info.email if recruiter_info else None,
+                "first_name_recruiter": recruiter_info.first_name if recruiter_info else None,
+                "last_name_recruiter": recruiter_info.last_name if recruiter_info else None,
+                "phone_number_recruiter": recruiter_info.phone_number if recruiter_info else None,
+                "country_recruiter": recruiter_info.country if recruiter_info else None,
+
+                "email_sponsor": sponsor_info.email if sponsor_info else None,
+                "first_name_sponsor": sponsor_info.first_name if sponsor_info else None,
+                "last_name_sponsor": sponsor_info.last_name if sponsor_info else None,
+                "phone_number_sponsor": sponsor_info.phone_number if sponsor_info else None,
+                "country_sponsor": sponsor_info.country if sponsor_info else None,
+            })
+
+        data.append(item)
 
 HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
