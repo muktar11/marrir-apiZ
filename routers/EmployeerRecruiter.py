@@ -1160,10 +1160,10 @@ async def get_accepted_reserves_by_role(
     except SQLAlchemyError as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
+    # Build response
     data = []
-
     for reserve in reserves:
-        item = {
+        items = {
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
             "agent_id": reserve.agent_id,
@@ -1175,39 +1175,45 @@ async def get_accepted_reserves_by_role(
             "with_passport": reserve.with_passport,
             "passport_number": reserve.passport_number,
             "is_paid": getattr(reserve, "is_paid", False),
-            "is_reserved": getattr(reserve, "is_reserved", False),
-            "is_transfer_approved": reserve.is_transfer_approved,  # ✅ ADD THIS
-            "is_transferred": reserve.is_transferred,              # ✅ optional but useful
+            "is_reserved": getattr(reserve, "is_reserved", False),  # in case you added this field
             "price": reserve.price,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
         }
 
-        # ✅ only fetch extra info if approved
-        if reserve.is_transfer_approved:
+        if r.is_transfer_approved:
             recruiter_info = db.query(UserModel).filter(
-                UserModel.id == reserve.recruitment_id
+                UserModel.id == r.recruitment_id
             ).first()
 
             sponsor_info = db.query(UserModel).filter(
-                UserModel.id == reserve.sponsor_id
+                UserModel.id == r.sponsor_id
             ).first()
 
-            item.update({
-                "email_recruiter": getattr(recruiter_info, "email", "N/A") if recruiter_info else "N/A",
-                "first_name_recruiter": getattr(recruiter_info, "first_name", "N/A") if recruiter_info else "N/A",
-                "last_name_recruiter": getattr(recruiter_info, "last_name", "N/A") if recruiter_info else "N/A",
-                "phone_number_recruiter": getattr(recruiter_info, "phone_number", "N/A") if recruiter_info else "N/A",
-                "country_recruiter": getattr(recruiter_info, "country", "N/A") if recruiter_info else "N/A",
+        item.update({
+                "email_recruiter": recruiter_info.email if recruiter_info else None,
+                "first_name_recruiter": recruiter_info.first_name if recruiter_info else None,
+                "last_name_recruiter": recruiter_info.last_name if recruiter_info else None,
+                "phone_number_recruiter": recruiter_info.phone_number if recruiter_info else None,
+                "country_recruiter": recruiter_info.country if recruiter_info else None,
 
-                "email_sponsor": getattr(sponsor_info, "email", "N/A") if sponsor_info else "N/A",
-                "first_name_sponsor": getattr(sponsor_info, "first_name", "N/A") if sponsor_info else "N/A",
-                "last_name_sponsor": getattr(sponsor_info, "last_name", "N/A") if sponsor_info else "N/A",
-                "phone_number_sponsor": getattr(sponsor_info, "phone_number", "N/A") if sponsor_info else "N/A",
-                "country_sponsor": getattr(sponsor_info, "country", "N/A") if sponsor_info else "N/A",
+                "email_sponsor": sponsor_info.email if sponsor_info else None,
+                "first_name_sponsor": sponsor_info.first_name if sponsor_info else None,
+                "last_name_sponsor": sponsor_info.last_name if sponsor_info else None,
+                "phone_number_sponsor": sponsor_info.phone_number if sponsor_info else None,
+                "country_sponsor": sponsor_info.country if sponsor_info else None,
             })
 
         data.append(item)
+
+    return {
+        "status_code": 200,
+        "message": f"{role} accepted reserves fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data
+    }
+
 
 HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
