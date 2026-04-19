@@ -1194,17 +1194,17 @@ async def get_accepted_reserves_by_role(
             ).first()
 
             item.update({
-                "email_recruiter": recruiter_info.email if recruiter_info else None,
-                "first_name_recruiter": recruiter_info.first_name if recruiter_info else None,
-                "last_name_recruiter": recruiter_info.last_name if recruiter_info else None,
-                "phone_number_recruiter": recruiter_info.phone_number if recruiter_info else None,
-                "country_recruiter": recruiter_info.country if recruiter_info else None,
+                "email_recruiter": getattr(recruiter_info, "email", "N/A") if recruiter_info else "N/A",
+                "first_name_recruiter": getattr(recruiter_info, "first_name", "N/A") if recruiter_info else "N/A",
+                "last_name_recruiter": getattr(recruiter_info, "last_name", "N/A") if recruiter_info else "N/A",
+                "phone_number_recruiter": getattr(recruiter_info, "phone_number", "N/A") if recruiter_info else "N/A",
+                "country_recruiter": getattr(recruiter_info, "country", "N/A") if recruiter_info else "N/A",
 
-                "email_sponsor": sponsor_info.email if sponsor_info else None,
-                "first_name_sponsor": sponsor_info.first_name if sponsor_info else None,
-                "last_name_sponsor": sponsor_info.last_name if sponsor_info else None,
-                "phone_number_sponsor": sponsor_info.phone_number if sponsor_info else None,
-                "country_sponsor": sponsor_info.country if sponsor_info else None,
+                "email_sponsor": getattr(sponsor_info, "email", "N/A") if sponsor_info else "N/A",
+                "first_name_sponsor": getattr(sponsor_info, "first_name", "N/A") if sponsor_info else "N/A",
+                "last_name_sponsor": getattr(sponsor_info, "last_name", "N/A") if sponsor_info else "N/A",
+                "phone_number_sponsor": getattr(sponsor_info, "phone_number", "N/A") if sponsor_info else "N/A",
+                "country_sponsor": getattr(sponsor_info, "country", "N/A") if sponsor_info else "N/A",
             })
 
         data.append(item)
