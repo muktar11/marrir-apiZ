@@ -1746,7 +1746,7 @@ def verify_payment_sponsor_recruiter_reserve_transfer(
             # ===============================
             
 
-            if invoice.type == "reserve":
+            if invoice.type == "reserve-transfer":
                 reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
                     RecruitmentAgentPrivateReserveModel.id == invoice.reserve_id
                 ).first()
