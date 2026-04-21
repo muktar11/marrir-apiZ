@@ -470,10 +470,10 @@ async def sponsor_create_private_reserve(
 
 
     # Ensure at least one target exists
-    if not payload.employee_id and not payload.recruitment_id and not payload.agent_id and not payload.selfsponsor_id:
+    if not payload.employee_id and not payload.recruitment_id and not payload.sponsor_id  and not payload.agent_id and not payload.selfsponsor_id:
         raise HTTPException(
             status_code=400,
-            detail="One of employee_id, recruitment_id, agent_id or selfsponsor_id must be provided"
+            detail="One of employee_id, recruitment_id, agent_id or sponsor_id, selfsponsor_id must be provided"
         )
 
     # Check duplicate correctly based on type
