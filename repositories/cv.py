@@ -214,7 +214,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             contact_progress=round(contact_progress),
         )
     
-    
+    '''
     def upsert(
         self,
         db: Session,
@@ -428,7 +428,207 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 )
 
             return new_cv
-    
+    '''
+    def upsert(
+            self,
+            db: Session,
+            *,
+            cv_data_json: str,
+            head_photo: Optional[UploadFile] = None,
+            full_body_photo: Optional[UploadFile] = None,
+            intro_video: Optional[UploadFile] = None,
+        ) -> EntityType | None:
+
+            print("\n=== Incoming CV Data ===")
+            print(f"CV Data JSON: {cv_data_json}")
+            print(f"Head Photo: {'Provided' if head_photo else 'Not provided'}")
+            print(f"Full Body Photo: {'Provided' if full_body_photo else 'Not provided'}")
+            print(f"Intro Video: {'Provided' if intro_video else 'Not provided'}")
+            print("========================\n")
+
+            cv_data = json.loads(cv_data_json)
+            passport_number = cv_data.get("passport_number")
+
+            obj_in = CVUpsertSchema(**cv_data)
+
+            # -----------------------------
+            # 🔍 Step 1: Find existing CV
+            # -----------------------------
+            existing_cv = None
+
+            if obj_in.user_id:
+                existing_cv = db.query(CVModel).filter_by(user_id=obj_in.user_id).first()
+
+            if not existing_cv and passport_number:
+                existing_cv = db.query(CVModel).filter_by(passport_number=passport_number).first()
+                if existing_cv:
+                    obj_in.user_id = existing_cv.user_id  # 🔥 sync user_id
+
+            # -----------------------------
+            # 👤 Step 2: Create user ONLY if CV does not exist
+            # -----------------------------
+            if not existing_cv:
+                new_user = UserModel(role=UserRoleSchema.EMPLOYEE)
+                db.add(new_user)
+                db.commit()
+
+                obj_in.user_id = new_user.id
+
+                qr_code_data = generate_qr_code(new_user.id)
+
+                new_user_profile = UserProfileModel(
+                    user_id=new_user.id,
+                    qr_code=qr_code_data
+                )
+
+                manager_id = context_actor_user_data.get().id
+
+                employee = EmployeeModel(
+                    user_id=new_user.id,
+                    manager_id=manager_id,
+                )
+
+                db.add_all([new_user_profile, employee])
+                db.commit()
+
+            # -----------------------------
+            # 🔄 Step 3: UPDATE
+            # -----------------------------
+            if existing_cv:
+                # Update simple fields
+                for field, value in obj_in.dict(
+                    exclude_unset=True,
+                    exclude=["address", "education", "work_experiences", "references"],
+                ).items():
+                    setattr(existing_cv, field, value)
+
+                # Address
+                if obj_in.address:
+                    existing_address = db.query(AddressModel).filter_by(id=existing_cv.address_id).first()
+                    if existing_address:
+                        for field, value in obj_in.address.dict(exclude_unset=True).items():
+                            setattr(existing_address, field, value)
+                    else:
+                        new_address = AddressModel(**obj_in.address.dict())
+                        existing_cv.address = new_address
+                        db.add(new_address)
+
+                # Education
+                if obj_in.education:
+                    existing_education = db.query(EducationModel).filter_by(cv_id=existing_cv.id).first()
+                    if existing_education:
+                        for field, value in obj_in.education.dict(exclude_unset=True).items():
+                            setattr(existing_education, field, value)
+                    else:
+                        new_education = EducationModel(**obj_in.education.dict())
+                        existing_cv.education = new_education
+                        db.add(new_education)
+
+                # Files
+                if head_photo:
+                    existing_cv.head_photo = uploadFileToLocal(head_photo)
+                elif cv_data.get("remove_head_photo"):
+                    existing_cv.head_photo = None
+
+                if full_body_photo:
+                    existing_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+                elif cv_data.get("remove_full_body_photo"):
+                    existing_cv.full_body_photo = None
+
+                if intro_video:
+                    existing_cv.intro_video = uploadFileToLocal(intro_video)
+                elif cv_data.get("remove_intro_video"):
+                    existing_cv.intro_video = None
+
+                # Work Experiences (replace)
+                if obj_in.work_experiences:
+                    for we in existing_cv.work_experiences:
+                        db.delete(we)
+
+                # References (replace)
+                if obj_in.references:
+                    for ref in existing_cv.references:
+                        db.delete(ref)
+
+                db.commit()
+
+                # Re-add work experiences
+                for we_data in obj_in.work_experiences:
+                    db.add(WorkExperienceModel(**we_data.dict(), cv_id=existing_cv.id))
+
+                # Re-add references
+                for ref_data in obj_in.references:
+                    db.add(ReferenceModel(**ref_data.dict(), cv_id=existing_cv.id))
+
+                db.commit()
+                db.refresh(existing_cv)
+
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=False,
+                        message=f"{self.entity.get_resource_name(self.entity.__name__)} updated successfully",
+                        status_code=200,
+                    )
+                )
+                return existing_cv
+
+            # -----------------------------
+            # 🆕 Step 4: CREATE CV
+            # -----------------------------
+            new_cv = CVModel(
+                **obj_in.dict(
+                    exclude=[
+                        "address",
+                        "education",
+                        "references",
+                        "work_experiences",
+                        "remove_head_photo",
+                        "remove_full_body_photo",
+                        "remove_intro_video",
+                    ]
+                )
+            )
+
+            if obj_in.address:
+                new_address = AddressModel(**obj_in.address.dict())
+                new_cv.address = new_address
+                db.add(new_address)
+
+            if obj_in.education:
+                new_education = EducationModel(**obj_in.education.dict())
+                new_cv.education = new_education
+                db.add(new_education)
+
+            db.add(new_cv)
+            db.commit()
+
+            for we_data in obj_in.work_experiences:
+                db.add(WorkExperienceModel(**we_data.dict(exclude_unset=True), cv_id=new_cv.id))
+
+            for ref_data in obj_in.references:
+                db.add(ReferenceModel(**ref_data.dict(exclude_unset=True), cv_id=new_cv.id))
+
+            if head_photo:
+                new_cv.head_photo = uploadFileToLocal(head_photo)
+
+            if full_body_photo:
+                new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+
+            if intro_video:
+                new_cv.intro_video = uploadFileToLocal(intro_video)
+
+            db.commit()
+            db.refresh(new_cv)
+
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                    status_code=201,
+                )
+            )
+
+            return new_cv
 
     '''
     def upsert(
@@ -1495,17 +1695,38 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             logger.debug(f"Added rate points for additional languages: {rate}")
 
         additional_languages.sort(key=lambda x: x["language"], reverse=False)
-
+        is_passport = getattr(entity, "is_passport", False)
+        
         # Safely check education level
         education = getattr(entity, 'education', None)
         education_level = getattr(education, 'highest_level', None) if education else None
         
+        '''
         if education_level in ["bsc", "msc", "phd"]:
             template = templates.get_template("cv-download.html")
             logger.debug("Using graduate CV template")
         else:
             template = templates.get_template("cv_non_graduate_download.html")
             logger.debug("Using non-graduate CV template")
+        '''
+
+        
+
+        # 🎯 TEMPLATE SELECTION
+        if is_passport:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download-passport.html")
+                logger.debug("Using graduate CV template WITH passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download-passport.html")
+                logger.debug("Using non-graduate CV template WITH passport")
+        else:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download.html")
+                logger.debug("Using graduate CV template WITHOUT passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download.html")
+                logger.debug("Using non-graduate CV template WITHOUT passport")
 
         age = 0
 
