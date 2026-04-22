@@ -6,7 +6,7 @@ import uuid
 from fastapi import APIRouter, Depends, Response, Header, UploadFile
 from fastapi.security import HTTPBearer
 from pydantic import EmailStr
-import requests
+import requests 
 from starlette.requests import Request
 from fastapi import File, Form, UploadFile
 from authlib.integrations.starlette_client import OAuth
@@ -933,9 +933,9 @@ async def read_managed_users(
     response_model=GenericMultipleResponse[UserReadSchema],
     status_code=200,
 )
-@rbac_access_checker(
-    resource=RBACResource.user, rbac_access_type=RBACAccessType.read_multiple
-)
+#@rbac_access_checker(
+#    resource=RBACResource.user, rbac_access_type=RBACAccessType.read_multiple
+#)
 async def read_managed_user_cvs(
     *,
     _=Depends(authentication_context),
