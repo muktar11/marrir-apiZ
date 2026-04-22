@@ -1,3115 +1,1897 @@
-from datetime import datetime, timedelta, timezone
-from http.client import HTTPException
+from datetime import datetime
+import io
 import json
-from typing import Any, List, Optional 
-from unicodedata import category
-import uuid  
-from schemas.promotionschema import PromotionStatusSchema
-from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
-from repositories.promotion import PromotionRepository
-from fastapi import APIRouter, Depends, HTTPException, Query, Response, UploadFile, BackgroundTasks
-from fastapi.security import HTTPBearer
-from starlette.requests import Request
-from core.auth import RBACAccessType, RBACResource, rbac_access_checker
-from models.batchreservemodel import BatchReserveModel
-from models.companyinfomodel import CompanyInfoModel
-from models.db import authentication_context, build_request_context, get_db, get_db_raw, get_db_session, get_db_sessions
-from models.invoicemodel import InvoiceModel
-from models.notificationmodel import Notifications
-from models.promotionmodel import DurationEnum, PromotionModel, PromotionPackagesModel
-from models.reservemodel import  RecruitmentAgentPrivateReserveModel, RecruitmentReserveModel, RecruitmentSetReserveModel, ReserveModel
-from models.usermodel import UserModel
-from models.employeemodel import EmployeeModel
-from repositories.reserve import ReserveRepository
-from routers import version_prefix
-from sqlalchemy import not_, cast, update
-from core.context_vars import context_set_response_code_message, context_actor_user_data
-from schemas.base import GenericMultipleResponse, GenericSingleResponse
-from schemas.cvschema import CVSearchSchema
-from schemas.enumschema import TransferStatusSchema, UserRoleSchema
-from sqlalchemy.orm import aliased
-from sqlalchemy import cast, String
-from sqlalchemy.dialects.postgresql import UUID
-
-from schemas.reserveschema import (
-    BatchReserveReadSchema,
-    BuyerPromoterReviewRequestSchema,
-    BuyerRequestsCVSchema,
-    GenericMultipleResponseEmployee,
-    GenericMultipleResponseManager,
-    RecruiterReviewByIdSchema,
-    RecruiterReviewRequestSchema,
-    RecruitmentReserveCreate,
-    RecruitmentReserveReadSchema,
-    RecruitmentReserveStatusUpdate,
-    RecruitmentReserveSubscriptionBuy,
-    RecruitmentSetReserveCreateSchema,
-    ReserveBaseSchema,
-    ReserveCVFilterSchema,
-    ReserveCreateSchema,
-    ReserveFilterSchema,
-    ReservePay,
-    ReserveReadSchema,
-    ReserveUpdateSchema,
-    BuyerReviewRequestSchema
-)
-
-from schemas.transferschema import TransferRequestPaymentCallback
-from schemas.userschema import UsersSearchSchema
-from cron_jobs import pending_reserves_notification, scheduler, delete_old_pending_reserve  # Import the scheduler and function
-from core.security import settings
-from telr_payment.api import Telr
-import logging
-from fastapi import Query
-from models.cvmodel import CVModel
-from sqlalchemy import or_, and_
-
-from utils.send_email import send_email
-from sqlalchemy.orm import Session
-from fastapi import Depends
-
-from sqlalchemy import select, exists, and_
-from sqlalchemy import select, exists, and_, cast
-from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy import func
-
-logger = logging.getLogger(__name__)
-
-recruiter_reserve_employeer_router_prefix = version_prefix + "recruiter_reserve_employeer"
-
-recruiter_reserve_employeer_router = APIRouter(prefix=recruiter_reserve_employeer_router_prefix)
-
-telr = Telr(auth_key=settings.TELR_AUTH_KEY, store_id=settings.TELR_STORE_ID, test=settings.TELR_TEST_MODE)
-
-def send_notification(db, user_id, title, description, type):
-    notification = Notifications(
-        title=title,
-        description=description,
-        type=type,
-        user_id=user_id,
-    )
-    db.add(notification)
-
-    try:
-        db.commit()
-    except Exception as e:
-        logger.error(f"Failed to send notification: {e}")
-        db.rollback()
-
-
-
-'''
-
-# it shows search result for reservation
-@recruiter_reserve_employeer_router.get("/reserve-promotion-set-for-employeer", status_code=200)
-async def get_promoted_cvs(
-    nationality: Optional[str] = Query(None, description="Filter promoted CVs by nationality"),
-    recruiter_residence: Optional[str] = Query(None, description="Filter promoted CVs by recruiter residence"),
-    db: Session = Depends(get_db_raw)
-):
-   
-    # Base query: Promotion → User → CV
-
-    
-
-    
-    query = (db.query(CVModel))
-        # Filter nationality
-    if nationality:
-            query = query.filter(
-                CVModel.nationality.ilike(f"%{nationality}%")
-            )
-
-
-
-
-    if recruiter_residence and recruiter_residence.lower() != "null":
-        query = query.filter(
-            UserModel.country.ilike(f"%{recruiter_residence}%")
-        )
-
-            
-
-    # Exclude CVs that were reserved in RecruitmentSetReserveModel
-    query = query.filter(
-        ~exists(
-            select(1).where(
-                and_(
-                    cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
-                    RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED"])
-                )
-            )
-        )
-    )
-
-    #  Exclude CVs reserved in RecruitmentAgentPrivateReserveModel
-    query = query.filter(
-        ~exists(
-            select(1).where(
-                and_(
-                    cast(RecruitmentAgentPrivateReserveModel.employee_id, UUID) == CVModel.user_id,
-                    RecruitmentAgentPrivateReserveModel.status.in_(["accepted"])
-                )
-            )
-        )
-    )
-
-
-
-    # ✅ Execute final query
-    results = query.all()
-
-    # Format response
-    data = [
-        {
-            "cv": {
-                "user_id": cv.user_id,
-                "passport_number": cv.passport_number,
-                "english_full_name": cv.english_full_name,
-                "amharic_full_name": cv.amharic_full_name,
-                "arabic_full_name": cv.arabic_full_name,
-                "nationality": cv.nationality,
-                "phone_number": cv.phone_number,
-                "email": cv.email,
-                "sex": cv.sex,
-                "height": cv.height,
-                "weight": cv.weight,
-                "skin_tone": cv.skin_tone,
-                "head_photo": cv.head_photo,
-                "date_of_birth": cv.date_of_birth,
-            }
-        }
-        for cv in results
-    ]
-
-    return {
-        "status_code": 200,
-        "message": "Promoted CVs fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data,
-    }
-
-'''
-
-from sqlalchemy import cast, exists, and_, select
-from sqlalchemy.dialects.postgresql import UUID
-
-
-'''
-@recruiter_reserve_employeer_router.get(
-    "/reserve-promotion-set-for-employeer",
-    status_code=200
-)
-async def get_promoted_cvs(
-    nationality: Optional[str] = Query(None),
-    recruiter_residence: Optional[str] = Query(None),
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Retrieve CVs excluding:
-    - any record in RecruitmentSetReserveModel (reserved/approved/pending)
-    - any record in RecruitmentAgentPrivateReserveModel (regardless of status)
-    """
-
-    # ✅ JOIN UserModel (for recruiter_residence filter)
-    query = db.query(CVModel).join(UserModel, UserModel.id == CVModel.user_id)
-
-    # ✅ Filter nationality
-    if nationality:
-        query = query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
-
-    # ✅ Filter recruiter residence
-    if recruiter_residence and recruiter_residence.lower() != "null":
-        query = query.filter(UserModel.country.ilike(f"%{recruiter_residence}%"))
-
-    # ✅ Exclude RecruitmentSetReserveModel (reserved/approved/pending)
-    query = query.filter(
-        ~exists(
-            select(1).where(
-                and_(
-                    cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
-                    RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED", "PENDING"])
-                )
-            )
-        )
-    )
-
-    # ✅ Exclude all private reserves (regardless of status)
-    query = query.filter(
-        ~exists(
-            select(1).where(
-                cast(
-                    RecruitmentAgentPrivateReserveModel.employee_id,
-                    UUID
-                ) == CVModel.user_id
-            )
-        )
-    )
-
-    results = query.all()
-
-    # Format response
-    data = [
-        {
-            "cv": {
-                "user_id": cv.user_id,
-                "passport_number": cv.passport_number,
-                "english_full_name": cv.english_full_name,
-                "amharic_full_name": cv.amharic_full_name,
-                "arabic_full_name": cv.arabic_full_name,
-                "nationality": cv.nationality,
-                "phone_number": cv.phone_number,
-                "email": cv.email,
-                "sex": cv.sex,
-                "height": cv.height,
-                "weight": cv.weight,
-                "skin_tone": cv.skin_tone,
-                "head_photo": cv.head_photo,
-                "date_of_birth": cv.date_of_birth,
-            }
-        }
-        for cv in results
-    ]
-
-    return {
-        "status_code": 200,
-        "message": "Available CVs fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data,
-    }
-'''
-
-from pydantic import BaseModel
-
-class ApproveAgencyReserveSchema(BaseModel):
-    with_passport: bool
-
-
-from sqlalchemy.orm import aliased
-from sqlalchemy import and_, exists, cast
-from sqlalchemy.dialects.postgresql import UUID
-
-@recruiter_reserve_employeer_router.get(
-    "/reserve-promotion-set-for-employeer",
-    status_code=200
-)
-async def get_promoted_cvs(
-    nationality: Optional[str] = Query(None),
-    recruiter_residence: Optional[str] = Query(None),
-    category: Optional[str] = Query(None),
-    db: Session = Depends(get_db_raw)
-):
-
-    # 🔹 alias for creator user
-    CreatorUser = aliased(UserModel)
-    # 🔹 Main query with JOIN and LEFT JOIN for creator
-    query = (
-        db.query(CVModel, CreatorUser.role.label("creator_role"))
-        .join(UserModel, UserModel.id == CVModel.user_id)
-        .outerjoin(
-            CreatorUser,
-            CreatorUser.id == func.cast(CVModel.creator_id, UUID)
-        )
-    )
-
-    # ✅ Filter nationality
-    if nationality:
-        query = query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
-
-    # ✅ Filter recruiter residence
-    if recruiter_residence:
-        query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
-
-    if category:
-        query = query.filter(
-                or_(
-                    # exact single value
-                    CVModel.employment_types.ilike(f'{{{category}}}'),
-                    CVModel.employment_types.ilike(f'{{"{category}"}}'),
-
-                    # start
-                    CVModel.employment_types.ilike(f'{{{category},%'),
-                    CVModel.employment_types.ilike(f'{{"{category}",%'),
-
-                    # middle
-                    CVModel.employment_types.ilike(f'%,{category},%'),
-                    CVModel.employment_types.ilike(f'%,"{category}",%'),
-
-                    # end
-                    CVModel.employment_types.ilike(f'%,{category}}}'),
-                    CVModel.employment_types.ilike(f'%,"{category}"}}')
-                )
-            )
-
-    # ✅ Exclude RecruitmentSetReserveModel
-    query = query.filter(
-        ~exists(
-           select(1).where(
-                and_(
-                    cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
-                    RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED", "PENDING"])
-                )
-            )
-        )
-    )
-
-    # ✅ Exclude all private reserves
-    query = query.filter(
-        ~exists(
-            select(1).where(
-                cast(
-                    RecruitmentAgentPrivateReserveModel.employee_id,
-                    UUID
-                ) == CVModel.user_id
-            )
-        )
-    )
-
-    results = query.all()
-    data = []
-    for cv, creator_role in results:
-        data.append({
-            "cv": {
-                "user_id": cv.user_id,
-                "passport_number": cv.passport_number,
-                "english_full_name": cv.english_full_name,
-                "amharic_full_name": cv.amharic_full_name,
-                "arabic_full_name": cv.arabic_full_name,
-                "nationality": cv.nationality,
-                "phone_number": cv.phone_number,
-                "email": cv.email,
-                "sex": cv.sex,
-                "height": cv.height,
-                "weight": cv.weight,
-                "skin_tone": cv.skin_tone,
-                "head_photo": cv.head_photo,
-                "date_of_birth": cv.date_of_birth,
-                "creator_id": cv.creator_id,
-                "creator_role": creator_role if cv.creator_id else None
-            }
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Available CVs fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data,
-    }
-from uuid import UUID
-from sqlalchemy import cast
-from sqlalchemy.dialects.postgresql import UUID
-"""
-@recruiter_reserve_employeer_router.post("/private-reserve-employeer", status_code=201)
-async def sponsor_create_private_reserve(
-    payload: PrivateReserveCreateSchema,
-    db: Session = Depends(get_db_raw),
-):
-    
-    sponsor_id = payload.sponsor_id
-    employee_id = payload.employee_id
-    recruitment_id = payload.recruitment_id
-
-    # Check duplicate for sponsor + employee
-    existing = db.query(RecruitmentAgentPrivateReserveModel).filter_by(
-        sponsor_id=sponsor_id,
-        employee_id=employee_id
-    ).first()
-
-    if existing:
-        return {
-            "status_code": 200,
-            "message": "Reservation already exists (sponsor)",
-            "error": False,
-            "data": {
-                "recruitment_id": existing.recruitment_id,
-                "sponsor_id": existing.sponsor_id,
-                "employee_id": existing.employee_id,
-                "status": existing.status
-            }
-        }
-
-    # Create new reservation
-    new_reserve = RecruitmentAgentPrivateReserveModel(
-        recruitment_id=recruitment_id,
-        sponsor_id=sponsor_id,
-        employee_id=str(employee_id),
-        agent_id=None  # Agent not part of this endpoint
-    )
-
-    db.add(new_reserve)
-    db.commit()
-    db.refresh(new_reserve)
-
-    return {
-        "status_code": 201,
-        "message": "Private reservation created successfully by sponsor",
-        "error": False,
-        "data": {
-            "recruitment_id": new_reserve.recruitment_id,
-            "sponsor_id": new_reserve.sponsor_id,
-            "employee_id": new_reserve.employee_id,
-            "status": new_reserve.status
-        }
-    }
-"""
-
-@recruiter_reserve_employeer_router.post(
-    "/private-reserve-employeer",
-    status_code=201
-)
-async def sponsor_create_private_reserve(
-    payload: PrivateReserveCreateSchema,
-    db: Session = Depends(get_db_raw),
-):
-    """
-    Sponsor creates a private reservation.
-    """
-
-
-    # Ensure at least one target exists
-    if not payload.employee_id and not payload.recruitment_id and not payload.sponsor_id  and not payload.agent_id and not payload.selfsponsor_id:
-        raise HTTPException(
-            status_code=400,
-            detail="One of employee_id, recruitment_id, agent_id or sponsor_id, selfsponsor_id must be provided"
-        )
-
-    # Check duplicate correctly based on type
-    existing = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.cv_id == payload.cv_id,
-    ).first()
-
-    if existing:
-        return {
-            "status_code": 200,
-            "message": "Reservation already exists",
-            "error": False,
-            "data": {
-                "recruitment_id": existing.recruitment_id,
-                "sponsor_id": existing.sponsor_id,
-                "employee_id": existing.employee_id,
-                "agent_id": existing.agent_id,
-                "status": existing.status
-            }
-        }
-
-    # Create new reservation
-    new_reserve = RecruitmentAgentPrivateReserveModel(
-        sponsor_id=payload.sponsor_id,
-        selfsponsor_id=payload.selfsponsor_id,
-        employee_id=payload.employee_id,
-        recruitment_id=payload.recruitment_id,
-        agent_id=payload.agent_id,
-        cv_id=payload.cv_id,
-        passport_number=payload.passport_number
-    )
-
-    db.add(new_reserve)
-    db.commit()
-    db.refresh(new_reserve)
-
-    return {
-        "status_code": 201,
-        "message": "Private reservation created successfully",
-        "error": False,
-        "data": {
-            "recruitment_id": new_reserve.recruitment_id,
-            "sponsor_id": new_reserve.sponsor_id,
-            "cv_id": new_reserve.cv_id,
-            "employee_id": new_reserve.employee_id,
-            "agent_id": new_reserve.agent_id,
-            "selfsponsor_id": new_reserve.selfsponsor_id,
-            "status": new_reserve.status
-        }
-    }
-
-@recruiter_reserve_employeer_router.get("/employee/pending-reserves/recruiter-request", status_code=200)
-async def get_pending_reserves_recruiter(
-    employee_id: str,
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Return pending reserves created by RECRUITERS only.
-    Conditions:
-    - recruitment_id IS NOT NULL
-    - agent_id IS NULL
-    - sponsor_id IS NULL
-    """
-    
-    pending_reserves = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.employee_id == employee_id,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.agent_id.is_(None),
-            RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None)
-        )
-        .all()
-    )
-
-    data = []
-    for r in pending_reserves:
-        recruiter_name = None
-
-        if r.recruitment_id:
-            recruiter = db.query(UserModel).filter(UserModel.id == r.recruitment_id).first()
-            if recruiter:
-                recruiter_name = getattr(recruiter, "english_full_name", None) or \
-                                 f"{recruiter.first_name or ''} {recruiter.last_name or ''}".strip()
-
-        data.append({
-            "id": r.id,
-            "recruitment_id": r.recruitment_id,
-            "recruitment_name": recruiter_name,
-            "employee_id": r.employee_id,
-            "status": r.status,
-            "created_at": r.created_at,
-            "updated_at": r.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Recruiter-created pending reservations fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-
-
-from uuid import UUID
-from sqlalchemy import cast
-from sqlalchemy.dialects.postgresql import UUID
-
-
-
-from sqlalchemy.orm import Session
-from sqlalchemy.exc import SQLAlchemyError
-
-
+from operator import or_
+import os
+import tempfile
+from typing import Any, Dict, Optional, Union, Generic, List
 import uuid
+from models.notificationmodel import Notifications, NotificationReadModel, UserNotificationModel
+from fastapi import BackgroundTasks, File, Form, Request, UploadFile
+from fastapi.encoders import jsonable_encoder
+from fastapi.templating import Jinja2Templates
+from core.auth import RBACAccessType
+from core.context_vars import context_set_response_code_message, context_actor_user_data
+from fastapi.responses import FileResponse, StreamingResponse
+
+from sqlalchemy import BinaryExpression, column
+from sqlalchemy.sql.operators import like_op
+from sqlalchemy.orm import Session
+from models.additionallanguagemodel import AdditionalLanguageModel
+from models.addressmodel import AddressModel
+from models.cvmodel import CVModel
+from models.educationmodel import EducationModel
+from models.employeemodel import EmployeeModel
+from models.referencemodel import ReferenceModel
+from models.usermodel import UserModel
+from models.userprofilemodel import UserProfileModel
+from models.workexperiencemodel import WorkExperienceModel
+import pdfkit
+
 from fastapi import HTTPException
 
-# for self sponsor to see employer created pending reserves, which have no recruitment_id and no agent_id, but have sponsor_id
-@recruiter_reserve_employeer_router.get("/employee/pending-reserves/employer-request", status_code=200)
-async def get_pending_employer_reserves(
-    employee_id: str,
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Get all pending private reservations created by employer (sponsor).
-    """
-    pending_reserves = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id == employee_id,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.agent_id.is_(None),
-            RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None)
-        )
-        .all()
-    )
-
-    data = []
-    for r in pending_reserves:
-
-        # Get recruiter name
-        recruiter_name = None
-        if r.recruitment_id:
-            recruiter = db.query(UserModel).filter(UserModel.id == r.recruitment_id).first()
-            if recruiter:
-                recruiter_name = getattr(recruiter, "english_full_name", None) or \
-                                 f"{recruiter.first_name or ''} {recruiter.last_name or ''}".strip()
-
-        # Get sponsor name
-        sponsor_name = None
-        if r.sponsor_id:
-            sponsor = db.query(UserModel).filter(UserModel.id == r.sponsor_id).first()
-            if sponsor:
-                sponsor_name = getattr(sponsor, "english_full_name", None) or \
-                               f"{sponsor.first_name or ''} {sponsor.last_name or ''}".strip()
-
-        data.append({
-            "id": r.id,
-            "recruitment_id": r.recruitment_id,
-            "recruitment_name": recruiter_name,
-            "sponsor_id": r.sponsor_id,
-            "sponsor_name": sponsor_name,
-            "employee_id": r.employee_id,
-            "status": r.status,
-            "created_at": r.created_at,
-            "updated_at": r.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Employer private reservations fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-#for recruitemnt to see employer created pending reserves, which have no sponsor_id and no agent_id, but have recruitment_id
-@recruiter_reserve_employeer_router.get(
-    "/recruitment/pending-reserves/employer-request",
-    status_code=200
+from repositories.base import (
+    BaseRepository,
+    EntityType,
+    UpdateSchemaType,
+    CreateSchemaType,
+    FilterSchemaType,
 )
-async def get_pending_employer_reserves_for_recruitment(
-    recruiter_id: str,   # receive as string from query
-    db: Session = Depends(get_db_raw)
-):
-    # Convert string to UUID
-    try:
-        recruiter_uuid = uuid.UUID(recruiter_id)
-        print(f"Converted recruiter_id to UUID: {recruiter_uuid}")
-    except ValueError:
-        return {
-            "status_code": 400,
-            "message": "Invalid recruiter_id format",
-            "error": True,
-        }
-
-    pending_reserves = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.recruitment_id == recruiter_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.agent_id.is_(None),
-        )
-        .all()
-    )
-
-    all_reserves = db.query(RecruitmentAgentPrivateReserveModel).all()
-    for r in all_reserves:
-        print(r.id, r.sponsor_id, r.agent_id, r.recruitment_id, r.status)
-    
-    data = []
-    for r in pending_reserves:
-
-        # Get recruiter name
-        recruiter_name = None
-        if r.recruitment_id:
-            recruiter = (
-                db.query(UserModel)
-                .filter(UserModel.id == r.recruitment_id)
-                .first()
-            )
-            if recruiter:
-                recruiter_name = (
-                    getattr(recruiter, "english_full_name", None)
-                    or f"{recruiter.first_name or ''} {recruiter.last_name or ''}".strip()
-                )
-
-        data.append({
-            "id": r.id,
-            "recruitment_id": r.recruitment_id,
-            "recruitment_name": recruiter_name,
-            "sponsor_id": r.sponsor_id,  # should be None
-            "sponsor_name": None,        # always None in this case
-            "employee_id": r.employee_id,
-            "status": r.status,
-            "created_at": r.created_at,
-            "updated_at": r.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Employer private reservations for recruitment fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-#for agent to see employer created pending reserves, which have no sponsor_id and no recruitment_id, but have agent_id
-@recruiter_reserve_employeer_router.get(
-    "/agent/pending-reserves/employer-request",
-    status_code=200
+from schemas.base import BaseGenericResponse, DeleteResponse
+from schemas.cvschema import (
+    AdditionalLanguageCreateSchema,
+    AdditionalLanguageReadSchema,
+    CVFilterSchema,
+    CVProgressSchema,
+    CVUpsertSchema,
+    SexSchema,
 )
-async def get_pending_employer_reserves_for_recruitment(
-    agent_id: str,   # receive as string from query
-    db: Session = Depends(get_db_raw)
-):
-    # Convert string to UUID
-    try:
-        agent_uuid = uuid.UUID(agent_id)
-        print(f"Converted agent_id to UUID: {agent_uuid}")
-    except ValueError:
-        return {
-            "status_code": 400,
-            "message": "Invalid agent_id format",
-            "error": True,
-        }
 
-    pending_reserves = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.agent_id == agent_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None),
-        )
-        .all()
-    )
+import pandas as pd
 
-    all_reserves = db.query(RecruitmentAgentPrivateReserveModel).all()
-    for r in all_reserves:
-        print(r.id, r.sponsor_id, r.agent_id, r.recruitment_id, r.status)
-    
-    data = []
-    for r in pending_reserves:
-
-        # Get agent name
-        agent_name = None
-        if r.agent_id:
-            agent = (
-                db.query(UserModel)
-                .filter(UserModel.id == r.agent_id)
-                .first()
-            )
-            if agent:
-                recruiter_name = (
-                    getattr(agent, "english_full_name", None)
-                    or f"{agent.first_name or ''} {agent.last_name or ''}".strip()
-                )
-
-        data.append({
-            "id": r.id,
-            "recruitment_id": r.recruitment_id,
-            "recruitment_name": recruiter_name,
-            "sponsor_id": r.sponsor_id,  # should be None
-            "sponsor_name": None,        # always None in this case
-            "employee_id": r.employee_id,
-            "agent_id": r.agent_id,
-            "agent_name": agent_name,
-            "status": r.status,
-            "created_at": r.created_at,
-            "updated_at": r.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Employer private reservations for recruitment fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-#for employee to retireve approved requests coming from employer, which have no recruitment_id and no agent_id, but have sponsor_id, and status is accepted
-@recruiter_reserve_employeer_router.get(
-    "/selfsponsor/my-reserve-requests-all",
-    status_code=200
-)
-async def get_employer_reserve_requests(
-    employer_id: str,
-    db: Session = Depends(get_db_raw)
-):
-
-    Employee = aliased(UserModel)
-    Recruitment = aliased(UserModel)
-    Agent = aliased(UserModel)
-
-    reserves = (
-        db.query(
-            RecruitmentAgentPrivateReserveModel,
-            Employee,
-            Recruitment,
-            Agent
-        )
-        .outerjoin(
-            Employee,
-            Employee.id == cast(
-                RecruitmentAgentPrivateReserveModel.employee_id,
-                UUID
-            )
-        )
-        .outerjoin(
-            Recruitment,
-            Recruitment.id == RecruitmentAgentPrivateReserveModel.recruitment_id
-        )
-        .outerjoin(
-            Agent,
-            Agent.id == RecruitmentAgentPrivateReserveModel.agent_id
-        )
-        .filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id == cast(employer_id, UUID)
-        )
-        .order_by(
-            RecruitmentAgentPrivateReserveModel.created_at.desc()
-        )
-        .all()
-    )
-
-    data = []
-
-    for reserve, employee, recruitment, agent in reserves:
-
-        def get_name(user):
-            if not user:
-                return None
-            return (
-                getattr(user, "english_full_name", None)
-                or f"{user.first_name or ''} {user.last_name or ''}".strip()
-            )
-
-        data.append({
-            "reserve_id": reserve.id,
-            "employee_id": reserve.employee_id,
-            "employee_name": get_name(employee),
-            "recruitment_id": reserve.recruitment_id,
-            "recruitment_name": get_name(recruitment),
-            "agent_id": reserve.agent_id,
-            "agent_name": get_name(agent),
-            "status": reserve.status,
-            "created_at": reserve.created_at,
-            "updated_at": reserve.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Employer reservation requests fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-
-
-#for selfsponsor to retireve approved requests coming from Employyer Company, which have no recruitment_id and no employee_id, but have selfsponsor_id, and status is accepted
-@recruiter_reserve_employeer_router.get(
-    "/selfsponsor/compnay/my-reserve-requests-all",
-    status_code=200
-)
-async def get_employeer_company_reserve_requests(
-    employer_id: str,
-    db: Session = Depends(get_db_raw)
-):
-
-    Employee = aliased(UserModel)
-    Recruitment = aliased(UserModel)
-    Employeer = aliased(UserModel)
-    employeer_uuid = uuid.UUID(employer_id)
-    print("Passed employeer_uuid:", employeer_uuid)
-    all_reserves = db.query(RecruitmentAgentPrivateReserveModel).all()
-
-    for r in all_reserves:
-        print("ID:", r.id)
-        print("employee_id:", r.employee_id)
-        print("agent_id:", r.agent_id)
-        print("sponsor_id:", r.sponsor_id)
-        print("selfsponsor_id:", r.selfsponsor_id)
-        print("recruitment_id:", r.recruitment_id)
-        print("status:", r.status)
-        print("created_at:", r.created_at)
-        print("-----")
-
-
-    reserves = (
-    db.query(
-        RecruitmentAgentPrivateReserveModel,
-        Employee,
-        Recruitment,
-        Employeer
-    )
-    .outerjoin(
-        Employee,
-        Employee.id == cast(
-            RecruitmentAgentPrivateReserveModel.employee_id,
-            UUID
-        )
-    )
-    .outerjoin(
-        Recruitment,
-        Recruitment.id == RecruitmentAgentPrivateReserveModel.recruitment_id
-    )
-    .outerjoin(
-        Employeer,
-        Employeer.id == RecruitmentAgentPrivateReserveModel.selfsponsor_id
-    )
-    .filter(
-        RecruitmentAgentPrivateReserveModel.selfsponsor_id == employeer_uuid,
-        RecruitmentAgentPrivateReserveModel.status == "pending",
-        #RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None),
-        #RecruitmentAgentPrivateReserveModel.employee_id.is_(None)
-    )
-    .order_by(
-        RecruitmentAgentPrivateReserveModel.created_at.desc()
-    )
-    .all()
-)
-    
-    data = []
-
-    for reserve, employee, recruitment, employeer in reserves:
-
-        def get_name(user):
-            if not user:
-                return None
-            return (
-                getattr(user, "english_full_name", None)
-                or f"{user.first_name or ''} {user.last_name or ''}".strip()
-            )
-
-        data.append({
-            "reserve_id": reserve.id,
-            "employee_id": reserve.employee_id,
-            "employee_name": get_name(employee),
-            "recruitment_id": reserve.recruitment_id,
-            "recruitment_name": get_name(recruitment),
-            "agent_id": reserve.agent_id,
-            "agent_name": get_name(employeer),  # you may want to fix naming here
-            "status": reserve.status,
-            "created_at": reserve.created_at,
-            "updated_at": reserve.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Employyer Company reservation requests fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-#selfsponsor to approve employer created pending reserve, which have no recruitment_id and no agent_id, but have sponsor_id
-@recruiter_reserve_employeer_router.put(
-    "/selfsponsor/pending-reserves/employer-request/approval", status_code=200
-)
-async def approve_sponsor_private_reserve_for_selfsponsor(
-    reserve_id: int,   # ✅ FIX HERE
-    payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw),
-):
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.id == reserve_id,  # ✅ FIX
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending reservation not found"
-        )
-
-    reserve.with_passport = payload.with_passport
-    reserve.status = TransferStatusSchema.ACCEPTED
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Approved successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "status": reserve.status,
-        },
-    }
-
-
-
-@recruiter_reserve_employeer_router.get(
-    "/all/pending-reserves/reserves/incoming",
-    status_code=200
-)
-async def get_accepted_reserves_by_role(
-    user_id: str,  # UUID of current user
-    role: str,     # "recruiter" | "agent" | "sponsor"
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Retrieve ACCEPTED RecruitmentAgentPrivateReserveModel by role.
-    """
-
-    # Validate UUID
-    try:
-        user_uuid = UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid UUID")
-
-    #user_uuid_employee = uuid.UUID(user_id)
-    # Base query: only ACCEPTED reserves
-
-    user_uuid = str(uuid.UUID(user_id))
-    query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING
-    )
-
-    if role == "recruiter":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.recruitment_id == cast(user_uuid, pgUUID)
-        )
-    elif role == "agent":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.agent_id == cast(user_uuid, pgUUID)
-        )
-    elif role == "sponsor":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id == cast(user_uuid, pgUUID)
-        )
-
-    elif role == "employee":
-        query = query.filter(
-            #RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
-            RecruitmentAgentPrivateReserveModel.employee_id == user_id
-        )
-    else:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    # Execute query
-    try:
-        reserves = query.order_by(
-            RecruitmentAgentPrivateReserveModel.created_at.desc()
-        ).all()
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    # Build response
-    data = []
-    for reserve in reserves:
-        data.append({
-            "reserve_id": reserve.id,
-            "recruitment_id": reserve.recruitment_id,
-            "agent_id": reserve.agent_id,
-            "sponsor_id": reserve.sponsor_id,
-            "selfsponsor_id": reserve.selfsponsor_id,
-            "employee_id": reserve.employee_id,
-            "status": reserve.status,
-            "with_passport": reserve.with_passport,
-            "passport_number": reserve.passport_number,
-            "price": reserve.price,
-            "created_at": reserve.created_at,
-            "updated_at": reserve.updated_at,
-        })
-
-    return {
-        "status_code": 200,
-        "message": f"{role} accepted reserves fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-
-@recruiter_reserve_employeer_router.get(
-    "/selfsponsor/pending-reserves/reserves/accepted",
-    status_code=200
-)
-async def get_accepted_reserves_by_role(
-    user_id: str,  # UUID of current user
-    role: str,     # "recruiter" | "agent" | "sponsor"
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Retrieve ACCEPTED RecruitmentAgentPrivateReserveModel by role.
-    """
-
-    # Validate UUID
-    try:
-        user_uuid = UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid UUID")
-
-    # Base query: only ACCEPTED reserves
-
-    user_uuid = str(uuid.UUID(user_id))
-    query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.ACCEPTED
-    )
-
-    if role == "recruiter":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.recruitment_id == cast(user_uuid, pgUUID)
-        )
-    elif role == "agent":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.agent_id == cast(user_uuid, pgUUID)
-        )
-    elif role == "sponsor":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id == cast(user_uuid, pgUUID)
-        )
-
-    else:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    # Execute query
-    try:
-        reserves = query.order_by(
-            RecruitmentAgentPrivateReserveModel.created_at.desc()
-        ).all()
-    except SQLAlchemyError as e:
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    # Build response
-    data = []
-    for reserve in reserves:
-        items = {
-            "reserve_id": reserve.id,
-            "recruitment_id": reserve.recruitment_id,
-            "agent_id": reserve.agent_id,
-            "sponsor_id": reserve.sponsor_id,
-            "selfsponsor_id": reserve.selfsponsor_id,
-            "cv_id": reserve.cv_id,
-            "employee_id": reserve.employee_id,
-            "status": reserve.status,
-            "with_passport": reserve.with_passport,
-            "passport_number": reserve.passport_number,
-            "is_paid": getattr(reserve, "is_paid", False),
-            "is_reserved": getattr(reserve, "is_reserved", False),  # in case you added this field
-            "price": reserve.price,
-            "created_at": reserve.created_at,
-            "updated_at": reserve.updated_at,
-        }
-        
-
-    return {
-        "status_code": 200,
-        "message": f"{role} accepted reserves fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
-
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-import binascii
-import json
-JOB_HYPERPAY_ENCRYPTION_KEY="1C5B3C2E18A085E5BCAC566B8F7F8E9B23F8B35431F7C015CB356C20B1EAB997"
-from Crypto.Cipher import AES
-from Crypto.Util.Padding import unpad
-import base64
-import json
-
-import json
-import uuid
+from schemas.userschema import UserRoleSchema
+from utils.generate_qr import generate_qr_code, my_qr_code
+from utils.generatepdf import generate_report
+from utils.mrz_reader import read_mrz
+from utils.uploadfile import uploadFileToLocal
 import logging
-import requests
-from datetime import datetime, timezone
-from typing import List
-from fastapi import APIRouter, Depends, BackgroundTasks, Request, Response, HTTPException
-from fastapi.security import HTTPBearer
-from fastapi.responses import FileResponse
-from sqlalchemy.orm import Session
-import secrets
-# --- Payment initiation for job applications ---
-
-
-def get_hyperpay_auth_header() -> dict:
-    return {
-        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
-    }
-
-from pydantic import BaseModel
-
-class ReservePaymentSchema(BaseModel):
-    reserve_id: int
-    cv_id: str
-
-
-@recruiter_reserve_employeer_router.post("/reserve/payment/init")
-def create_reserve_checkout(
-    payload: ReservePaymentSchema,
-    db: Session = Depends(get_db),
-    _=Depends(authentication_context),
-    __=Depends(build_request_context),  # ✅ get logged user
-):
-    logger.info("Creating reserve payment...")
-
-    user = context_actor_user_data.get()  # ✅ current user
-
-    reserve_id = payload.reserve_id
-    cv_id = payload.cv_id
-
-    reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.id == reserve_id,
-        RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.ACCEPTED,
-    ).first()
-
-    if not reserve:
-        raise HTTPException(status_code=404, detail="Reserve not found")
-
-    #  Prevent double payment
-    if getattr(reserve, "is_paid", False):
-        return {"message": "Already paid"}
-
-    merchant_tx_id = str(uuid.uuid4())
-    amount = reserve.price or 10.00
-
-
-    # ✅ DO NOT overwrite payload
-    hyperpay_payload = {
-        "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{amount:.2f}",
-        "currency": "AED",
-        "paymentType": "DB",
-        "merchantTransactionId": merchant_tx_id,
-        "customParameters[3DS2_enrolled]": "true",
-        "integrity": "true",
-
-
-       
-        "customer.email": "test@test.com",  
-        "customer.givenName": "first",
-        "customer.surname": "last",
-        "billing.street1": "Reserve Payment",
-        "billing.city": "Dubai",
-        "billing.country": "AE",
-        "billing.postcode": "00000",
-        "customer.email": "test@test.com",
-    }
-
-    try:
-        response = requests.post(
-            f"{HYPERPAY_BASE_URL}/v1/checkouts",
-            data=hyperpay_payload,
-            headers=get_hyperpay_auth_header(),
-            timeout=30
-        )
-
-        res = response.json()
-        logger.info(f"HyperPay response: {res}")
-
-        checkout_id = res.get("id")
-
-        if not checkout_id:
-            raise HTTPException(status_code=400, detail=res)
-
-        # ✅ SAVE INVOICE PROPERLY
-        invoice = InvoiceModel(
-            reference=merchant_tx_id,
-            checkout_id=checkout_id,
-            amount=amount,
-            status="pending",
-            type="reserve",
-            object_id=str(reserve_id),
-            buyer_id=user.id,   # ✅ VERY IMPORTANT
-            cv_id=cv_id
-        )
-
-        db.add(invoice)
-        db.commit()
-
-        return {
-            "checkoutId": checkout_id
-        }
-
-    except Exception as e:
-        logger.exception("Error creating reserve checkout")
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-
-
-class ReserveTransferPaymentSchema(BaseModel):
-    reserve_id: int
-    
-
-
-
-@recruiter_reserve_employeer_router.post("/recruiter-transfer/reserve/payment/init")
-def create_reserve_transfer_checkout(
-    payload: ReserveTransferPaymentSchema,
-    db: Session = Depends(get_db),
-    _=Depends(authentication_context),
-    __=Depends(build_request_context), 
-):
-    user = context_actor_user_data.get()
-    reserve_id = payload.reserve_id
-
-    reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.id == reserve_id
-    ).first()
-
-    if not reserve:
-        raise HTTPException(status_code=404, detail="Reserve not found")
-
-    #  Prevent double payment
-    if getattr(reserve, "is_transfer_approved", False):
-        return {"message": "Already paid"}
-
-    merchant_tx_id = str(uuid.uuid4())
-    amount = reserve.price or 10.00
-
-
-    #  DO NOT overwrite payload
-    hyperpay_payload = {
-        "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{amount:.2f}",
-        "currency": "AED",
-        "paymentType": "DB",
-        "merchantTransactionId": merchant_tx_id,
-        "customParameters[3DS2_enrolled]": "true",
-        "integrity": "true",
-
-
-       
-        "customer.email": "test@test.com",  
-        "customer.givenName": "first",
-        "customer.surname": "last",
-        "billing.street1": "Reserve Payment",
-        "billing.city": "Dubai",
-        "billing.country": "AE",
-        "billing.postcode": "00000",
-        "customer.email": "test@test.com",
-    }
-
-    try:
-        response = requests.post(
-            f"{HYPERPAY_BASE_URL}/v1/checkouts",
-            data=hyperpay_payload,
-            headers=get_hyperpay_auth_header(),
-            timeout=30
-        )
-
-        res = response.json()
-        logger.info(f"HyperPay response: {res}")
-
-        checkout_id = res.get("id")
-        if not checkout_id:
-            raise HTTPException(status_code=400, detail=res)
-        # ✅ SAVE INVOICE PROPERLY
-        invoice = InvoiceModel(
-            reference=merchant_tx_id,
-            checkout_id=checkout_id,
-            amount=amount,
-            status="pending",
-            type="reserve-transfer",
-            object_id=str(reserve_id),
-            buyer_id=user.id,   #  VERY IMPORTANT
-            reserve_id=reserve_id
-        )
-
-        db.add(invoice)
-        db.commit()
-
-        return {
-            "checkoutId": checkout_id
-        }
-
-    except Exception as e:
-        logger.exception("Error creating reserve checkout")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-    
-    
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-import os
-
-from datetime import datetime
-import uuid
-import os
-from reportlab.lib.pagesizes import A4
-from reportlab.pdfgen import canvas
-from sqlalchemy.orm import Session
-
-INVOICE_DIR = "media/invoices"
-os.makedirs(INVOICE_DIR, exist_ok=True)
-from weasyprint import HTML
-from jinja2 import Environment, FileSystemLoader
-import os
-
-TEMPLATE_DIR = "templates"
-INVOICE_DIR = "media/invoices"
-os.makedirs(INVOICE_DIR, exist_ok=True)
-
-env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
-def generate_invoice_pdf(invoice):
-    template = env.get_template("invoice.html")
-
-    vat = round(invoice.amount * 0.05, 2)
-    total = invoice.amount + vat
-
-    html_content = template.render(
-        invoice={
-            "invoice_number": invoice.invoice_number,
-            "payment_id": invoice.payment_id,
-            "amount": f"{invoice.amount:.2f}",
-            "vat": f"{vat:.2f}",
-            "total": f"{total:.2f}",
-            "description": invoice.description or "Service",
-            "billing_email": invoice.billing_email,
-            "billing_country": invoice.billing_country,
-            "card_holder": invoice.card_holder,
-            "date": invoice.created_at.strftime("%d %B %Y"),
-        }
-    )
-
-    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
-    HTML(string=html_content).write_pdf(file_path)
-
-    return file_path
-
-
-@recruiter_reserve_employeer_router.get("/hyper/payment/verify")
-def verify_payment(
-    id: str = Query(None),
-    resourcePath: str = Query(None),
-    db: Session = Depends(get_db)
-):
-
-    logger.info("Verifying payment...")
-
-    if not id or not resourcePath:
-        return {"status": "failed"}
-
-    try:
-        response = requests.get(
-            f"{HYPERPAY_BASE_URL}{resourcePath}",
-            params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers=get_hyperpay_auth_header(),
-            timeout=30
-        )
-
-        res = response.json()
-
-        result_code = res.get("result", {}).get("code", "")
-        description = res.get("result", {}).get("description", "")
-
-        logger.info(f"Result code: {result_code}")
-        logger.info(f"Description: {description}")
-
-        # 🔥 safer lookup
-        merchant_tx_id = res.get("merchantTransactionId")
-
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == merchant_tx_id
-        ).first()
-
-        if not invoice:
-            return {"status": "not_found"}
-
-        SUCCESS_CODES = [
-            "000.000.000",
-            "000.000.100",
-            "000.000.110",
-            "000.100.110"
+from core.security import settings
+from io import BytesIO
+# Configure logging
+logger = logging.getLogger(__name__)
+
+
+class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
+    def get(self, db: Session, filters: FilterSchemaType) -> EntityType:
+        return super().get(db, filters)
+
+    def progress(self, db: Session, filters: CVFilterSchema) -> Any:
+        cv = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        id_fields = ["national_id", "creator_id", "passport_number", "nationality"]
+
+        personal_info_fields = [
+            "english_full_name",
+            "amharic_full_name",
+            "arabic_full_name",
+            "sex",
+            "email",
+            "phone_number",
+            "height",
+            "weight",
+            "marital_status",
+            "number_of_children",
+            "skin_tone",
+            "date_of_birth",
+            "place_of_birth",
+            "religion",
         ]
 
-        if result_code in SUCCESS_CODES:
-
-            invoice.status = "paid"
-            invoice.payment_id = res.get("id")
-            file_path = generate_invoice_pdf(invoice)
-
-            #  SAVE FILE PATH
-            invoice.invoice_file = file_path
-
-            # ===============================
-            # 🔥 JOB APPLICATION PAYMENT
-            # ===============================
-            
-
-            if invoice.type == "reserve":
-                reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.cv_id == invoice.cv_id
-                ).first()
-
-                if not reserve:
-                    raise HTTPException(status_code=404, detail="Reserve not found")
-                recruitment_id_str = str(reserve.recruitment_id)
-                recruitment_id = reserve.recruitment_id
-                cv = db.query(CVModel).filter(   
-                    CVModel.user_id == invoice.cv_id
-                ).first()
-                if not cv:
-                    raise HTTPException(status_code=404, detail="CV not found")
-                cv.creator_id = recruitment_id_str
-                cv.user_id = recruitment_id
-                employee = db.query(EmployeeModel).filter(
-                    EmployeeModel.user_id == invoice.cv_id
-                ).first()
-                if not employee:
-                    raise HTTPException(status_code=404, detail="Employee not found")
-
-                employee.manager_id = recruitment_id
-                employee.user_id = recruitment_id
-                reserve.status = TransferStatusSchema.ACCEPTED
-                reserve.is_paid = True  #  mark as paid
-                reserve.is_reserved = True  #  mark as reserved
-                db.add(reserve)
-                db.add(cv)
-                db.add(employee)
-                db.commit()
-
-            return {
-                "status": "paid",
-                "type": invoice.type
-            }
-
-        else:
-
-            invoice.status = "failed"
-            db.commit()
-
-            return {
-                "status": "failed",
-                "code": result_code,
-                "description": description
-            }
-    except Exception as e:
-        logger.exception("Error creating reserve checkout")
-        raise HTTPException(status_code=500, detail=str(e))
-   
-
-    
-
-@recruiter_reserve_employeer_router.get("/hyper/payment/verify/sponsor")
-def verify_payment_sponsor_reserve(
-    id: str = Query(None),
-    resourcePath: str = Query(None),
-    db: Session = Depends(get_db)
-):
-
-    logger.info("Verifying payment...")
-
-    if not id or not resourcePath:
-        return {"status": "failed"}
-
-    try:
-        response = requests.get(
-            f"{HYPERPAY_BASE_URL}{resourcePath}",
-            params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers=get_hyperpay_auth_header(),
-            timeout=30
-        )
-
-        res = response.json()
-
-        result_code = res.get("result", {}).get("code", "")
-        description = res.get("result", {}).get("description", "")
-
-        logger.info(f"Result code: {result_code}")
-        logger.info(f"Description: {description}")
-
-        # 🔥 safer lookup
-        merchant_tx_id = res.get("merchantTransactionId")
-
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == merchant_tx_id
-        ).first()
-
-        if not invoice:
-            return {"status": "not_found"}
-
-        SUCCESS_CODES = [
-            "000.000.000",
-            "000.000.100",
-            "000.000.110",
-            "000.100.110"
-        ]
-
-        if result_code in SUCCESS_CODES:
-
-            invoice.status = "paid"
-            invoice.payment_id = res.get("id")
-            file_path = generate_invoice_pdf(invoice)
-
-            #  SAVE FILE PATH
-            invoice.invoice_file = file_path
-
-            # ===============================
-            # 🔥 JOB APPLICATION PAYMENT
-            # ===============================
-            
-
-            if invoice.type == "reserve":
-                reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.cv_id == invoice.cv_id
-                ).first()
-
-                if not reserve:
-                    raise HTTPException(status_code=404, detail="Reserve not found")
-                recruitment_id_str = str(reserve.sponsor_id)
-                recruitment_id = reserve.sponsor_id
-                cv = db.query(CVModel).filter(   
-                    CVModel.user_id == invoice.cv_id
-                ).first()
-                if not cv:
-                    raise HTTPException(status_code=404, detail="CV not found")
-                cv.creator_id = recruitment_id_str
-                cv.user_id = recruitment_id
-                employee = db.query(EmployeeModel).filter(
-                    EmployeeModel.user_id == invoice.cv_id
-                ).first()
-                if not employee:
-                    raise HTTPException(status_code=404, detail="Employee not found")
-
-                employee.manager_id = recruitment_id
-                employee.user_id = recruitment_id
-                reserve.status = TransferStatusSchema.ACCEPTED
-                reserve.is_paid = True  #  mark as paid
-                reserve.is_reserved = True  #  mark as reserved
-                db.add(reserve)
-                db.add(cv)
-                db.add(employee)
-                db.commit()
-
-            return {
-                "status": "paid",
-                "type": invoice.type
-            }
-
-        else:
-
-            invoice.status = "failed"
-            db.commit()
-
-            return {
-                "status": "failed",
-                "code": result_code,
-                "description": description
-            }
-    except Exception as e:
-        logger.exception("Error creating reserve checkout")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-
-@recruiter_reserve_employeer_router.get("/hyper/payment/verify/recruiter-transfer")
-def verify_payment_sponsor_recruiter_reserve_transfer(
-    id: str = Query(None),
-    resourcePath: str = Query(None),
-    db: Session = Depends(get_db)
-):
-
-    logger.info("Verifying payment...")
-
-    if not id or not resourcePath:
-        return {"status": "failed"}
-
-    try:
-        response = requests.get(
-            f"{HYPERPAY_BASE_URL}{resourcePath}",
-            params={"entityId": settings.HYPERPAY_ENTITY_ID},
-            headers=get_hyperpay_auth_header(),
-            timeout=30
-        )
-
-        res = response.json()
-
-        result_code = res.get("result", {}).get("code", "")
-        description = res.get("result", {}).get("description", "")
-
-        logger.info(f"Result code: {result_code}")
-        logger.info(f"Description: {description}")
-
-        # 🔥 safer lookup
-        merchant_tx_id = res.get("merchantTransactionId")
-
-        invoice = db.query(InvoiceModel).filter(
-            InvoiceModel.reference == merchant_tx_id
-        ).first()
-
-        if not invoice:
-            return {"status": "not_found"}
-
-        SUCCESS_CODES = [
-            "000.000.000",
-            "000.000.100",
-            "000.000.110",
-            "000.100.110"
-        ]
-
-        if result_code in SUCCESS_CODES:
-
-            invoice.status = "paid"
-            invoice.payment_id = res.get("id")
-            file_path = generate_invoice_pdf(invoice)
-
-            #  SAVE FILE PATH
-            invoice.invoice_file = file_path
-
-            # ===============================
-            # 🔥 JOB APPLICATION PAYMENT
-            # ===============================
-            
-
-            if invoice.type == "reserve-transfer":
-                reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-                    RecruitmentAgentPrivateReserveModel.id == invoice.reserve_id
-                ).first()
-
-                if not reserve:
-                    raise HTTPException(status_code=404, detail="Reserve not found")
-                logger.info(f"Result code passed reserve: {reserve.id}")
-                logger.info(f"Result code passed reserve transfer request status: {reserve.is_transfer_requested}")
-                logger.info(f"Result code passed reserve transfer approved status: {reserve.is_transfer_approved}") 
-                reserve.is_transfer_approved = True
-                db.add(reserve)
-                db.commit()
-            return {
-                "status": "paid",
-                "type": invoice.type
-            }
-        else:
-            invoice.status = "failed"
-            db.commit()
-            return {
-                "status": "failed",
-                "code": result_code,
-                "description": description
-            }
-    except Exception as e:
-        logger.exception("Error creating reserve checkout")
-        raise HTTPException(status_code=500, detail=str(e))
-    
-@recruiter_reserve_employeer_router.put(
-    "/sponsor/selecting/recruiter", status_code=200
-)
-async def sponsor_selecting_recruiter_on_behalf(
-    reserve_id: int,
-    recruitment_id: uuid.UUID,
-    employee_id: uuid.UUID,
-    db: Session = Depends(get_db_raw),
-):
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.id == reserve_id,
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending reservation not found"
-        )
-
-    #  Set transfer request fields
-    reserve.transfer_recruitment_id = recruitment_id
-    reserve.transfer_employee_id = employee_id
-    reserve.is_transfer_requested = True
-
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Transfer request created successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "transfer_recruitment_id": reserve.transfer_recruitment_id,
-            "transfer_employee_id": reserve.transfer_employee_id,
-            "is_transfer_requested": reserve.is_transfer_requested,
-        },
-    }
-
-
-@recruiter_reserve_employeer_router.get(
-    "/recruiter/transfer/requests", status_code=200
-)
-async def get_transfer_requests_for_recruiter(
-    recruiter_id: uuid.UUID,
-    db: Session = Depends(get_db_raw),
-):
-    # Get ALL requested transfers (both approved + not approved)
-    reserves = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.transfer_recruitment_id == recruiter_id,
-           # RecruitmentAgentPrivateReserveModel.is_transfer_requested == True,
-        )
-        .all()
-    )
-
-    data = []
-
-    for r in reserves:
-        item = {
-            "reserve_id": r.id,
-            "employee_id": r.transfer_employee_id,
-            "from_recruitment_id": r.recruitment_id,
-            "to_recruitment_id": r.transfer_recruitment_id,
-            "price": r.price,
-            "status": r.status,
-            
-            "passport_number": r.passport_number,
-            "is_transfer_requested": r.is_transfer_requested,
-            "is_transfer_approved": r.is_transfer_approved,
-        }
-
-        # ✅ ONLY when approved → add extra info
-        if r.is_transfer_approved:
-            recruiter_info = db.query(UserModel).filter(
-                UserModel.id == r.recruitment_id
-            ).first()
-
-            sponsor_info = db.query(UserModel).filter(
-                UserModel.id == r.sponsor_id
-            ).first()
-
-            item.update({
-                "email_recruiter": recruiter_info.email if recruiter_info else None,
-                "first_name_recruiter": recruiter_info.first_name if recruiter_info else None,
-                "last_name_recruiter": recruiter_info.last_name if recruiter_info else None,
-                "phone_number_recruiter": recruiter_info.phone_number if recruiter_info else None,
-                "country_recruiter": recruiter_info.country if recruiter_info else None,
-
-                "email_sponsor": sponsor_info.email if sponsor_info else None,
-                "first_name_sponsor": sponsor_info.first_name if sponsor_info else None,
-                "last_name_sponsor": sponsor_info.last_name if sponsor_info else None,
-                "phone_number_sponsor": sponsor_info.phone_number if sponsor_info else None,
-                "country_sponsor": sponsor_info.country if sponsor_info else None,
-            })
-
-        data.append(item)
-
-    return {
-        "status_code": 200,
-        "message": "Transfer requests retrieved successfully",
-        "data": data
-    }
-    
-
-@recruiter_reserve_employeer_router.get("/reserve/{reserve_id}/cv")
-def download_cv(
-    reserve_id: int,
-    db: Session = Depends(get_db)
-):
-    reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.id == reserve_id
-    ).first()
-
-    if not reserve or not reserve.is_paid:
-        raise HTTPException(status_code=403, detail="Payment required")
-
-    employee = db.query(UserModel).filter(
-        UserModel.id == reserve.employee_id
-    ).first()
-
-    if not employee or not employee.cv_file:
-        raise HTTPException(status_code=404, detail="CV not found")
-
-    return FileResponse(employee.cv_file)
-
-
-
-from sqlalchemy.dialects.postgresql import UUID as pgUUID
-from sqlalchemy import cast
-
-#for Employeer Company to retireve approved requests coming from employee, which have no recruitment_id and no employe_id, but have employeer_id, and status is accepted
-@recruiter_reserve_employeer_router.get(
-    "/employeer-company/my-reserve-requests-all",
-    status_code=200
-)
-async def get_employeer_reserve_requests(
-    employeer_id: str,
-    db: Session = Depends(get_db_raw)
-):
-
-    Employee = aliased(UserModel)
-    Recruitment = aliased(UserModel)
-    Employeer = aliased(UserModel)
-
-    employeer_uuid = uuid.UUID(employeer_id)
-
-    all_reserves = db.query(RecruitmentAgentPrivateReserveModel).all()
-
-    for r in all_reserves:
-        print("ID:", r.id)
-        print("employee_id:", r.employee_id)
-        print("agent_id:", r.agent_id)
-        print("sponsor_id:", r.sponsor_id)
-        print("recruitment_id:", r.recruitment_id)
-        print("status:", r.status)
-        print("created_at:", r.created_at)
-        print("-----")
-
-    reserves = (
-        db.query(
-            RecruitmentAgentPrivateReserveModel,
-            Employee,
-            Recruitment,
-            Employeer
-        )
-        .outerjoin(
-            Employee,
-            Employee.id == cast(
-                RecruitmentAgentPrivateReserveModel.employee_id,
-                UUID
-            )
-        )
-        .outerjoin(
-            Recruitment,
-            Recruitment.id == RecruitmentAgentPrivateReserveModel.recruitment_id
-        )
-        .outerjoin(
-            Employeer,
-            Employeer.id == RecruitmentAgentPrivateReserveModel.sponsor_id
-        )
-        .filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id == employeer_uuid,
-            RecruitmentAgentPrivateReserveModel.status == "pending",
-            RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None)
-        )
-        .order_by(
-            RecruitmentAgentPrivateReserveModel.created_at.desc()
-        )
-        .all()
-    )
-
-    data = []
-
-    for reserve, employee, recruitment, employeer in reserves:
-
-        def get_name(user):
-            if not user:
-                return None
-            return (
-                getattr(user, "english_full_name", None)
-                or f"{user.first_name or ''} {user.last_name or ''}".strip()
-            )
-
-        data.append({
-            "reserve_id": reserve.id,
-            "employee_id": reserve.employee_id,
-            "employee_name": get_name(employee),
-            "recruitment_id": reserve.recruitment_id,
-            "recruitment_name": get_name(recruitment),
-            "employeer_id": reserve.sponsor_id,   #  correct field
-            "employeer_name": get_name(employeer),
-            "status": reserve.status,
-            "created_at": reserve.created_at,
-            "updated_at": reserve.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Employer Company reservation requests fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-# endpoint for selfsponsor to approve the request coming from employer, which have no recruitment_id and no agent_id, but have sponsor_id
-@recruiter_reserve_employeer_router.put("/employee/pending-reserves/employer-request/approve", status_code=200)
-async def approve_sponsor_private_reserve(
-    employee_id: str,
-    payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Approve a pending private reservation created by a sponsor (employer).
-    Only approves:
-        - sponsor_id IS NOT NULL
-        - agent_id IS NULL
-        - status = PENDING
-        - employee_id matches
-    """
-
-    # Validate UUID
-    try:
-        employee_uuid = str(uuid.UUID(employee_id))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid employee_id UUID")
-
-    # Step 1: Find sponsor-created pending reservation
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.employee_id == employee_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending sponsor private reservation not found"
-        )
-
-    # Step 2: Approve reservation
-    reserve.with_passport = payload.with_passport
-    reserve.status = TransferStatusSchema.ACCEPTED
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Sponsor private reservation approved successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "employee_id": employee_uuid,
-            "sponsor_id": reserve.sponsor_id,
-            "recruitment_id": reserve.recruitment_id,
-            "status": reserve.status,
-        },
-    }
-
-# for employer company to retireve accepted requests coming from employee, which have no recruitment_id and no employe_id, but have employeer_id, and status is accepted
-@recruiter_reserve_employeer_router.get(
-    "/employer-company/accepted-private-reserves",
-    status_code=200
-)
-async def get_employer_company_accepted_reserves(
-    sponsor_id: str,
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Employer company fetches accepted private reservations
-    created by them.
-    """
-
-    try:
-        sponsor_uuid = uuid.UUID(sponsor_id)
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="Invalid sponsor_id format"
-        )
-
-    reserves = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id == sponsor_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.ACCEPTED
-        )
-        .all()
-    )
-
-    data = []
-
-    for r in reserves:
-
-        employee_name = None
-        if r.employee_id:
-            employee = db.query(UserModel).filter(
-                UserModel.id == r.employee_id
-            ).first()
-
-            if employee:
-                employee_name = (
-                    getattr(employee, "english_full_name", None)
-                    or f"{employee.first_name or ''} {employee.last_name or ''}".strip()
-                )
-
-        data.append({
-            "id": r.id,
-            "employee_id": r.employee_id,
-            "employee_name": employee_name,
-            "recruitment_id": r.recruitment_id,
-            "agent_id": r.agent_id,
-            "selfsponsor_id": r.selfsponsor_id,
-            "price": r.price,
-            "with_passport": r.with_passport,
-            "status": r.status,
-            "created_at": r.created_at,
-            "updated_at": r.updated_at
-        })
-
-    return {
-        "status_code": 200,
-        "message": "Accepted private reservations fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
-
-
-
-# endpoint for selfsponsor to approve the request coming from agency, which have no recruitment_id and no sponsor_id, but have agency_id
-@recruiter_reserve_employeer_router.put("/employee/pending-reserves/agency-request/approve", status_code=200)
-async def approve_agency_private_reserve(
-    employee_id: str,
-    payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw)
-    
-):
-    """
-    Approve a pending private reservation created by an agency.
-    Only approves:
-        - agency_id IS NOT NULL
-        - sponsor_id IS NULL
-        - status = PENDING
-        - employee_id matches
-    """
-
-        # Validate UUID
-
-    try:
-        uuid.UUID(employee_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid employee_id UUID")
-
-
-    # Step 1: Find sponsor-created pending reservation
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.employee_id == employee_id,  # correct column
-            RecruitmentAgentPrivateReserveModel.agent_id.isnot(None),        #  must have agency
-            RecruitmentAgentPrivateReserveModel.sponsor_id.is_(None),        #  no sponsor
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending agent private reservation not found"
-        )
-
-    # Step 2: Approve reservation
-    reserve.with_passport = payload.with_passport
-    reserve.status = TransferStatusSchema.ACCEPTED
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Sponsor private reservation approved successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "employee_id": employee_id,
-            "sponsor_id": reserve.sponsor_id,
-            "recruitment_id": reserve.recruitment_id,
-            "status": reserve.status,
-        },
-    }
-
-# Endpoint for recruiter to approve employer-created pending reserves
-@recruiter_reserve_employeer_router.put(
-    "/recruiter/pending-reserves/employer-request/approve", status_code=200
-)
-async def approve_sponsor_private_reserve_for_recruiter(
-    recruiter_id: str,  # UUID of the recruiter approving
-    payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw),
-):
-    """
-    Approve a pending private reservation created by a sponsor (employer) for a recruiter.
-    Only approves reservations that:
-        - recruitment_id IS NOT NULL and matches recruiter_id
-        - sponsor_id IS NOT NULL
-        - agent_id IS NULL
-        - status = PENDING
-    """
-
-    # Validate UUID
-    try:
-        recruiter_uuid = str(uuid.UUID(recruiter_id))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid recruiter_id UUID")
-
-    # Step 1: Find pending reservation for this recruiter
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.recruitment_id == recruiter_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.agent_id.is_(None),
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending sponsor private reservation for recruiter not found"
-        )
-
-    # Step 2: Approve reservation
-    reserve.with_passport = payload.with_passport
-    reserve.status = TransferStatusSchema.ACCEPTED
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Sponsor private reservation for recruiter approved successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "recruitment_id": reserve.recruitment_id,
-            "sponsor_id": reserve.sponsor_id,
-            "employee_id": reserve.employee_id,
-            "status": reserve.status,
-        },
-    }
-
-
-# Endpoint for agent to approve employer-created pending reserves
-@recruiter_reserve_employeer_router.put(
-    "/agent/pending-reserves/employer-request/approve", status_code=200
-)
-async def approve_sponsor_private_reserve_for_agent(
-    agent_id: str,  # UUID of the agent approving
-    payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw),
-):
-    """
-    Approve a pending private reservation created by a sponsor (employer) for an agent.
-    Only approves reservations that:
-        - recruitment_id IS NOT NULL and matches agent_id
-        - sponsor_id IS NOT NULL
-        - agent_id IS NOT NULL and matches agent_id
-        - status = PENDING
-    """
-
-    # Validate UUID
-    try:            
-        agent_uuid = str(uuid.UUID(agent_id))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid agent_id UUID")
-
-    # Step 1: Find pending reservation for this agent
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.agent_id == agent_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            #RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            #RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None),
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending sponsor private reservation for agent not found"
-        )
-
-    # Step 2: Approve reservation
-    reserve.with_passport = payload.with_passport
-    reserve.status = TransferStatusSchema.ACCEPTED
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Sponsor private reservation for agent approved successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "recruitment_id": reserve.recruitment_id,
-            "agent_id": reserve.agent_id,
-            "sponsor_id": reserve.sponsor_id,
-            "employee_id": reserve.employee_id,
-            "status": reserve.status,
-        },
-    }
-
-
-
-# Endpoint for selfsponsor to approve employer-created pending reserves
-@recruiter_reserve_employeer_router.put(
-    "/selfsponsor/pending-reserves/employer-request/approve", status_code=200
-)
-async def approve_sponsor_private_reserve_for_selfsponsor(
-    selfsponsor_id: str,  # UUID of the selfsponsor approving
-    payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw),
-):
-    """
-    Approve a pending private reservation created by a sponsor (employer) for a selfsponsor     .
-    Only approves reservations that:
-        - recruitment_id IS NOT NULL and matches selfsponsor_id
-        - sponsor_id IS NOT NULL
-        - selfsponsor_id IS NOT NULL and matches selfsponsor_id
-        - status = PENDING
-    """
-
-    # Validate UUID
-    try:            
-        selfsponsor_uuid = str(uuid.UUID(selfsponsor_id))
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid selfsponsor_id UUID")
-
-    # Step 1: Find pending reservation for this selfsponsor
-
-    # Step 1: Find pending reservation for this agent
-    reserve = (
-        db.query(RecruitmentAgentPrivateReserveModel)
-        .filter(
-            RecruitmentAgentPrivateReserveModel.selfsponsor_id == selfsponsor_uuid,
-            RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.recruitment_id.is_(None),
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(
-            status_code=404,
-            detail="Pending sponsor private reservation for agent not found"
-        )
-
-    # Step 2: Approve reservation
-    reserve.with_passport = payload.with_passport
-    reserve.status = TransferStatusSchema.ACCEPTED
-
-    try:
-        db.commit()
-        db.refresh(reserve)
-    except SQLAlchemyError as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=f"Database error: {e}")
-
-    return {
-        "status_code": 200,
-        "message": "Sponsor private reservation for agent approved successfully",
-        "error": False,
-        "data": {
-            "reserve_id": reserve.id,
-            "recruitment_id": reserve.recruitment_id,
-            "agent_id": reserve.agent_id,
-            "sponsor_id": reserve.sponsor_id,
-            "employee_id": reserve.employee_id,
-            "status": reserve.status,
-            "selfsponsor_id": reserve.selfsponsor_id,
-        },
-    }
-
-
-
-@recruiter_reserve_employeer_router.post("/employee/pending-reserves/employer-request/purchase", status_code=500)
-async def public_test_200():
-    """
-    Public endpoint that always returns 200.
-    """
-    return Response(
-        content="Payment callback response created successfully",
-        status_code=status.HTTP_200_OK
-    )
-
-
-@recruiter_reserve_employeer_router.post("/recruiter/pending-reserves/employer-request/purchase", status_code=500)
-async def public_test_200():
-    """
-    Public endpoint that always returns 200.
-    """
-    return Response(
-        content="Payment callback response created successfully",
-        status_code=status.HTTP_200_OK
-    )
-
-
-@recruiter_reserve_employeer_router.post("/acquire-recruiter/pending-reserves/employer-request/purchase", status_code=500)
-async def public_test_200():
-    """
-    Public endpoint that always returns 200.
-    """
-    return Response(
-        content="Payment callback response created successfully",
-        status_code=status.HTTP_200_OK
-    )
-
-@recruiter_reserve_employeer_router.post("/acquire-recruiter/pending-reserves/employer-request/purchase", status_code=500)
-async def public_test_200():
-    """
-    Public endpoint that always returns 200.
-    """
-    return Response(
-        content="Payment callback response created successfully",
-        status_code=status.HTTP_200_OK
-    )
-
-
-@recruiter_reserve_employeer_router.post("/agent/pending-reserves/employer-request/purchase", status_code=500)
-async def public_test_200():
-    """
-    Public endpoint that always returns 200.
-    """
-    return Response(
-        content="Payment callback response created successfully",
-        status_code=status.HTTP_200_OK
-    )
-
-#this works
-@recruiter_reserve_employeer_router.post("/my-not-reserves-for-recruiter", status_code=200)
-async def get_unreserved_employee_cvs(
-    request: Request,
-    response: Response,
-    _=Depends(authentication_context),
-    __=Depends(build_request_context),
-    skip: int = 0,
-    limit: int = 10,
-    nationality: str = None
-):
-    db = next(get_db_raw())
-    user = context_actor_user_data.get()
-    reserve_repo = ReserveRepository(entity=ReserveModel)
-    result = reserve_repo.get_not_reserved_by_me_recruiter(db, user_id=user.id, skip=skip, limit=limit,  nationality=nationality)
-    return {
-        "status_code": 200,
-        "message": "Unreserved CVs fetched successfully",
-        "error": None,
-        "data": result["data"],
-        "count": result["count"],
-    }
-
-
-
-#this creates reserve
-@recruiter_reserve_employeer_router.post("/reserve-set", status_code=201)
-async def reserve_cv(
-    *,
-    reserve_in: RecruitmentSetReserveCreateSchema,
-    db: Session = Depends(get_db_raw),
-    request: Request,
-    response: Response
-) -> Any:
-
-    reserved_records = []
-    skipped_records = []
-
-    for cv_id in reserve_in.cv_ids:
-        # Ensure cv_id is a valid UUID
-        try:
-            cv_uuid = uuid.UUID(str(cv_id))
-        except ValueError:
-            skipped_records.append({
-                "recruitment_id": str(reserve_in.recruitment_id),
-                "cv_id": cv_id,
-                "status": "invalid",
-                "message": "Invalid CV ID"
-            })
-            continue
-
-        # Check if this combination already exists
-        existing = (
-            db.query(RecruitmentSetReserveModel)
-            .filter(
-                
-                RecruitmentSetReserveModel.recruitment_id == str(reserve_in.recruitment_id), 
-                RecruitmentSetReserveModel.cv_id == cv_uuid
-            )
-            .first()
-        )
-
+        address_info_fields = [
+            "country",
+            "city",
+            "region",
+            "street3",
+            "street2",
+            "street1",
+            "street",
+            "zip_code",
+            "house_no",
+            "po_box",
         
+        ]
 
-        if existing:
-            skipped_records.append({
-                "recruitment_id": str(existing.recruitment_id),
-                "cv_id": str(existing.cv_id),
-                "status": existing.status,
-                "message": "Already reserved"
-            })
-            continue
+        education_info_fields = [
+            "highest_level",
+            "institution_name",
+            "country",
+            "city",
+            "grade",
+        ]
 
-        # Create a new reservation
-        new_reserve = RecruitmentSetReserveModel(
-            recruitment_id=reserve_in.recruitment_id,
-            cv_id=cv_uuid,
-            status=reserve_in.status
-        )
-        db.add(new_reserve)
-        db.commit()  # Commit per record to get IDs immediately
-        db.refresh(new_reserve)
-        reserved_records.append(new_reserve)
+        photo_and_language_info_fields = [
+            "amharic",
+            "arabic",
+            "english",
+            "head_photo",
+            "full_body_photo",
+            "intro_video",
+        ]
 
-        # --- Send notification to agent ---
-        cv = db.query(CVModel).filter(CVModel.user_id == cv_uuid).first()
-        if cv:
-            agent_user = db.query(UserModel).filter(UserModel.id == cv.creator_id).first()
-            recruiter_user = db.query(UserModel).filter(UserModel.id == reserve_in.recruitment_id).first()
+        contact_info_fields = ["facebook", "x", "telegram", "tiktok"]
 
-            if agent_user and recruiter_user:
-                notification = Notifications(
-                    id=uuid.uuid4(),
-                    title="Your CV Has Been Recruited",
-                    description=(
-                        f"Congratulations! Your CV ({cv.english_full_name or cv.passport_number}) "
-                        f"has been reserved by {recruiter_user.first_name or recruiter_user.email}."
-                    ),
-                    type="cv_recruited",
-                    object_id={"cv_id": str(cv.user_id)},
-                    extra_data={"recruiter_id": str(recruiter_user.id)},
-                    unread=True,
-                    user_id=agent_user.id,
-                    created_at=datetime.utcnow(),
+        (
+            id_progress,
+            personal_info_progress,
+            address_progress,
+            education_progress,
+            photo_and_language_progress,
+            experience_progress,
+            reference_progress,
+            contact_progress,
+        ) = (
+            (sum(getattr(cv, field) is not None for field in id_fields) if cv else 0)
+            / len(id_fields)
+            * 100,
+            (
+                sum(getattr(cv, field) is not None for field in personal_info_fields)
+                if cv
+                else 0
+            )
+            / len(personal_info_fields)
+            * 100,
+            (
+                sum(
+                    getattr(cv.address, field) is not None
+                    for field in address_info_fields
                 )
-                db.add(notification)
+                if cv and cv.address
+                else 0
+            )
+            / len(address_info_fields)
+            * 100,
+            (
+                sum(
+                    getattr(cv.education, field) is not None
+                    for field in education_info_fields
+                )
+                if cv and cv.education
+                else 0
+            )
+            / len(education_info_fields)
+            * 100,
+            (
+                sum(
+                    getattr(cv, field) is not None
+                    for field in photo_and_language_info_fields
+                )
+                if cv
+                else 0
+            )
+            / len(photo_and_language_info_fields)
+            * 100,
+            (100 if cv and cv.work_experiences else 0),
+            (100 if cv and cv.references else 0),
+            (
+                sum(getattr(cv, field) is not None for field in contact_info_fields)
+                if cv
+                else 0
+            )
+            / len(contact_info_fields)
+            * 100,
+        )
+
+        context_set_response_code_message.set(
+            BaseGenericResponse(
+                error=False,
+                message=f"{self.entity.get_resource_name(self.entity.__name__)}s found",
+                status_code=200,
+            )
+        )
+
+        employee = db.query(EmployeeModel).filter_by(user_id=filters.user_id).first()
+
+        if (
+            employee
+            and round(id_progress) == 100
+            and round(address_progress) == 100
+            and round(education_progress) == 100
+            and round(experience_progress) == 100
+            and round(personal_info_progress) == 100
+            and round(photo_and_language_progress) == 100
+            and round(reference_progress) == 100
+            and round(contact_progress) == 100
+        ):
+            employee.cv_completed = True
+
+        return CVProgressSchema(
+            id_progress=round(id_progress),
+            address_progress=round(address_progress),
+            education_progress=round(education_progress),
+            experience_progress=round(experience_progress),
+            personal_info_progress=round(personal_info_progress),
+            photo_and_language_progress=round(photo_and_language_progress),
+            reference_progress=round(reference_progress),
+            contact_progress=round(contact_progress),
+        )
+    
+    '''
+    def upsert(
+        self,
+        db: Session,
+        *,
+        cv_data_json: str,
+        head_photo: Optional[UploadFile] = None,
+        full_body_photo: Optional[UploadFile] = None,
+        intro_video: Optional[UploadFile] = None,
+    ) -> EntityType | None:
+
+        print("\n=== Incoming CV Data ===")
+        print(f"CV Data JSON: {cv_data_json}")
+        print(f"Head Photo: {'Provided' if head_photo else 'Not provided'}")
+        print(f"Full Body Photo: {'Provided' if full_body_photo else 'Not provided'}")
+        print(f"Intro Video: {'Provided' if intro_video else 'Not provided'}")
+        print("========================\n")
+
+        cv_data = json.loads(cv_data_json)
+        cv_data["user_id"] = (
+            None if cv_data.get("user_id") == None else cv_data["user_id"]
+        )
+
+        passport_number = cv_data.get("passport_number")
+        
+        # Log parsed CV data
+        print("\n=== Parsed CV Data ===")
+        print(f"User ID: {cv_data.get('user_id')}")
+        print(f"Passport Number: {cv_data.get('passport_number')}")
+        if 'address' in cv_data:
+            print("\nAddress Data:")
+            for key, value in cv_data['address'].items():
+                print(f"  {key}: {value}")
+        if 'education' in cv_data:
+            print("\nEducation Data:")
+            for key, value in cv_data['education'].items():
+                print(f"  {key}: {value}")
+        print("=====================\n")
+
+        if passport_number:
+            exists = db.query(CVModel).filter_by(passport_number=passport_number).first()
+            if exists:
+                if str(exists.user_id) != cv_data.get("user_id"):
+                    context_set_response_code_message.set(
+                        BaseGenericResponse(
+                            error=True,
+                            message=f"CV with passport number {passport_number} already exists",
+                            status_code=400,
+                        )
+                    )
+                    return
+
+        obj_in = CVUpsertSchema(**cv_data)
+
+        if not obj_in.user_id:
+            new_user = UserModel()
+            new_user.role = UserRoleSchema.EMPLOYEE
+            db.add(new_user)
+            db.commit()
+            obj_in.user_id = new_user.id
+            qr_code_data = generate_qr_code(new_user.id)
+            new_user_profile = UserProfileModel(
+                user_id=new_user.id, qr_code=qr_code_data
+            )
+            user_id = context_actor_user_data.get().id
+
+            employee = EmployeeModel(
+                user_id=new_user.id,
+                manager_id=user_id,
+            )
+
+            db.add(new_user_profile)
+            db.add(employee)
+            db.commit()
+
+        existing_cv = db.query(CVModel).filter_by(user_id=obj_in.user_id).first()
+
+        if existing_cv:
+            for field, value in obj_in.dict(
+                exclude_unset=True,
+                exclude=["address", "education", "work_experiences", "references"],
+            ).items():
+                setattr(existing_cv, field, value)
+
+            if obj_in.address:
+                existing_address = (
+                    db.query(AddressModel).filter_by(id=existing_cv.address_id).first()
+                )
+                if existing_address:
+                    for field, value in obj_in.address.dict(exclude_unset=True).items():
+                        setattr(existing_address, field, value)
+                else:
+                    new_address = AddressModel(**obj_in.address.dict())
+                    existing_cv.address = new_address
+                    db.add(new_address)
+
+            if obj_in.education:
+                existing_education = (
+                    db.query(EducationModel).filter_by(cv_id=existing_cv.id).first()
+                )
+                if existing_education:
+                    for field, value in obj_in.education.dict(
+                        exclude_unset=True
+                    ).items():
+                        setattr(existing_education, field, value)
+                else:
+                    new_education = EducationModel(**obj_in.education.dict())
+                    existing_cv.education = new_education
+                    db.add(new_education)
+
+            if head_photo:
+                existing_cv.head_photo = uploadFileToLocal(head_photo)
+            elif cv_data.get("remove_head_photo"):
+                existing_cv.head_photo = None
+
+            if full_body_photo:
+                existing_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+            elif cv_data.get("remove_full_body_photo"):
+                existing_cv.full_body_photo = None
+
+            if intro_video:
+                existing_cv.intro_video = uploadFileToLocal(intro_video)
+            elif cv_data.get("remove_intro_video"):
+                existing_cv.intro_video = None
+
+            if obj_in.work_experiences:
+                for we in existing_cv.work_experiences:
+                    db.delete(we)
+            if obj_in.references:
+                for ref in existing_cv.references:
+                    db.delete(ref)
+            db.commit()
+
+            for we_data in obj_in.work_experiences:
+                work_experience = WorkExperienceModel(
+                    **we_data.dict(), cv_id=existing_cv.id
+                )
+                db.add(work_experience)
+
+            for ref_data in obj_in.references:
+                reference = ReferenceModel(**ref_data.dict(), cv_id=existing_cv.id)
+                db.add(reference)
+
+            db.commit()
+            db.refresh(existing_cv)
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} updated successfully",
+                    status_code=200,
+                )
+            )
+            return existing_cv
+        else:
+            new_cv = CVModel(
+                **obj_in.dict(
+                    exclude=[
+                        "address",
+                        "education",
+                        "references",
+                        "work_experiences",
+                        "remove_head_photo",
+                        "remove_full_body_photo",
+                        "remove_intro_video",
+                    ]
+                )
+            )
+
+            if obj_in.address:
+                new_address = AddressModel(**obj_in.address.dict())
+                new_cv.address = new_address
+                db.add(new_address)
+
+            if obj_in.education:
+                new_education = EducationModel(**obj_in.education.dict())
+                new_cv.education = new_education
+                db.add(new_education)
+
+            db.add(new_cv)
+            db.commit()
+
+            for we_data in obj_in.work_experiences:
+                work_experience = WorkExperienceModel(
+                    **we_data.dict(exclude_unset=True), cv_id=new_cv.id
+                )
+                db.add(work_experience)
+            for ref_data in obj_in.references:
+                reference = ReferenceModel(
+                    **ref_data.dict(exclude_unset=True), cv_id=new_cv.id
+                )
+                db.add(reference)
+
+            if head_photo:
+                new_cv.head_photo = uploadFileToLocal(head_photo)
+
+            if full_body_photo:
+                new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+
+            if intro_video:
+                new_cv.intro_video = uploadFileToLocal(intro_video)
+
+            db.commit()
+            db.refresh(new_cv)
+
+            if new_cv is not None:
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=False,
+                        message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                        status_code=201,
+                    )
+                )
+
+            return new_cv
+    '''
+    def upsert(
+            self,
+            db: Session,
+            *,
+            cv_data_json: str,
+            head_photo: Optional[UploadFile] = None,
+            full_body_photo: Optional[UploadFile] = None,
+            intro_video: Optional[UploadFile] = None,
+        ) -> EntityType | None:
+
+            print("\n=== Incoming CV Data ===")
+            print(f"CV Data JSON: {cv_data_json}")
+            print(f"Head Photo: {'Provided' if head_photo else 'Not provided'}")
+            print(f"Full Body Photo: {'Provided' if full_body_photo else 'Not provided'}")
+            print(f"Intro Video: {'Provided' if intro_video else 'Not provided'}")
+            print("========================\n")
+
+            cv_data = json.loads(cv_data_json)
+            passport_number = cv_data.get("passport_number")
+
+            obj_in = CVUpsertSchema(**cv_data)
+
+            # -----------------------------
+            # 🔍 Step 1: Find existing CV
+            # -----------------------------
+            existing_cv = None
+
+            if obj_in.user_id:
+                existing_cv = db.query(CVModel).filter_by(user_id=obj_in.user_id).first()
+
+            if not existing_cv and passport_number:
+                existing_cv = db.query(CVModel).filter_by(passport_number=passport_number).first()
+                if existing_cv:
+                    obj_in.user_id = existing_cv.user_id  # 🔥 sync user_id
+
+            # -----------------------------
+            # 👤 Step 2: Create user ONLY if CV does not exist
+            # -----------------------------
+            if not existing_cv:
+                new_user = UserModel(role=UserRoleSchema.EMPLOYEE)
+                db.add(new_user)
                 db.commit()
 
-    return {
-        "status_code": 201,
-        "message": f"{len(reserved_records)} CV(s) reserved successfully. {len(skipped_records)} skipped.",
-        "error": False,
-        "data": [
-            {
-                "recruitment_id": str(r.recruitment_id),
-                "cv_id": str(r.cv_id),
-                "status": r.status,
-                "message": "Reserved successfully"
-            }
-            for r in reserved_records
-        ] + skipped_records
-    }
+                obj_in.user_id = new_user.id
 
+                qr_code_data = generate_qr_code(new_user.id)
 
-from fastapi import Query
-from models.cvmodel import CVModel
-from sqlalchemy import or_, and_
-@recruiter_reserve_employeer_router.get("/reserve-set", status_code=200)
-async def get_reserved_cvs(
-    nationality: str = Query(None, description="Filter reserved CVs by nationality"),
-    user_id: str = Query(None, description="Return CVs created by this user_id"),
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Retrieve all reserved CVs grouped by RecruitmentSetReserveModel.
-    - If `user_id` is provided → return CVs where CVModel.creator_id == user_id
-    - If `nationality` is provided → filter CVs by nationality
-    - Always include records where `selfsponsor=True`
-    - Include only records where `approved=False`
-    - Each reserve includes related company info from CompanyInfoModel (using recruitment_id)
-    """
+                new_user_profile = UserProfileModel(
+                    user_id=new_user.id,
+                    qr_code=qr_code_data
+                )
 
-    # Base query joining reserves and CVs
-    query = (
-        db.query(RecruitmentSetReserveModel, CVModel)
-        .join(CVModel, RecruitmentSetReserveModel.cv_id == CVModel.user_id)
-    )
+                manager_id = context_actor_user_data.get().id
 
-    # Filter by creator_id (from passed user_id)
-    if user_id:
-        query = query.filter(CVModel.creator_id == user_id)
+                employee = EmployeeModel(
+                    user_id=new_user.id,
+                    manager_id=manager_id,
+                )
 
-    # Filter by nationality if provided
-    if nationality:
-        query = query.filter(
-            or_(
-                and_(
-                    RecruitmentSetReserveModel.approved == False,
-                    CVModel.nationality.ilike(f"%{nationality}%")
-                ),
-                RecruitmentSetReserveModel.selfsponsor == True
-            )
-        )
-    else:
-        query = query.filter(
-            or_(
-                RecruitmentSetReserveModel.approved == False,
-                RecruitmentSetReserveModel.selfsponsor == True
-            )
-        )
+                db.add_all([new_user_profile, employee])
+                db.commit()
 
-    results = query.all()
+            # -----------------------------
+            # 🔄 Step 3: UPDATE
+            # -----------------------------
+            if existing_cv:
+                # Update simple fields
+                for field, value in obj_in.dict(
+                    exclude_unset=True,
+                    exclude=["address", "education", "work_experiences", "references"],
+                ).items():
+                    setattr(existing_cv, field, value)
 
-    grouped_data = {}
+                # Address
+                if obj_in.address:
+                    existing_address = db.query(AddressModel).filter_by(id=existing_cv.address_id).first()
+                    if existing_address:
+                        for field, value in obj_in.address.dict(exclude_unset=True).items():
+                            setattr(existing_address, field, value)
+                    else:
+                        new_address = AddressModel(**obj_in.address.dict())
+                        existing_cv.address = new_address
+                        db.add(new_address)
 
-    for reserve, cv in results:
-        reserve_id = str(reserve.id)
+                # Education
+                if obj_in.education:
+                    existing_education = db.query(EducationModel).filter_by(cv_id=existing_cv.id).first()
+                    if existing_education:
+                        for field, value in obj_in.education.dict(exclude_unset=True).items():
+                            setattr(existing_education, field, value)
+                    else:
+                        new_education = EducationModel(**obj_in.education.dict())
+                        existing_cv.education = new_education
+                        db.add(new_education)
 
-        #  Use reserve.recruitment_id to fetch company info
-        company = (
-            db.query(CompanyInfoModel)
-            .filter(CompanyInfoModel.user_id == reserve.recruitment_id)
-            .first()
-        )
+                # Files
+                if head_photo:
+                    existing_cv.head_photo = uploadFileToLocal(head_photo)
+                elif cv_data.get("remove_head_photo"):
+                    existing_cv.head_photo = None
 
-        # Convert company info to dict
-        company_info = None
-        if company:
-            company_info = {
-                "company_name": company.company_name,
-                "alternative_email": company.alternative_email,
-                "alternative_phone": company.alternative_phone,
-                "location": company.location,
-                "year_established": company.year_established,
-                "ein_tin": company.ein_tin,
-                "company_license": company.company_license,
-                "company_logo": company.company_logo,
-            }
+                if full_body_photo:
+                    existing_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+                elif cv_data.get("remove_full_body_photo"):
+                    existing_cv.full_body_photo = None
 
-        #  Group by reserve_id
-        if reserve_id not in grouped_data:
-            grouped_data[reserve_id] = {
-                "reserve_id": reserve.recruitment_id,
-                "approved": reserve.approved,
-                "selfsponsor": reserve.selfsponsor,
-                "status": reserve.status,
-                "created_at": getattr(reserve, "created_at", None),
-                "updated_at": getattr(reserve, "updated_at", None),
-                "company_info": company_info,
-                "cvs": []
-            }
+                if intro_video:
+                    existing_cv.intro_video = uploadFileToLocal(intro_video)
+                elif cv_data.get("remove_intro_video"):
+                    existing_cv.intro_video = None
 
-        grouped_data[reserve_id]["cvs"].append({
-            "id": cv.user_id,
-            "passport_number": cv.passport_number,
-            "summary": cv.summary,
-            "email": cv.email,
-            "national_id": cv.national_id,
-            "amharic_full_name": cv.amharic_full_name,
-            "arabic_full_name": cv.arabic_full_name,
-            "english_full_name": cv.english_full_name,
-            "sex": cv.sex,
-            "phone_number": cv.phone_number,
-            "height": cv.height,
-            "weight": cv.weight,
-            "skin_tone": cv.skin_tone,
-            "date_of_birth": cv.date_of_birth,
-            "nationality": cv.nationality,
-            "head_photo": cv.head_photo,
-        })
+                # Work Experiences (replace)
+                if obj_in.work_experiences:
+                    for we in existing_cv.work_experiences:
+                        db.delete(we)
 
-    return {
-        "status_code": 200,
-        "message": "Reserved CVs grouped by reserve and company info fetched successfully",
-        "error": False,
-        "count": len(grouped_data),
-        "data": list(grouped_data.values()),
-    }
+                # References (replace)
+                if obj_in.references:
+                    for ref in existing_cv.references:
+                        db.delete(ref)
 
+                db.commit()
 
+                # Re-add work experiences
+                for we_data in obj_in.work_experiences:
+                    db.add(WorkExperienceModel(**we_data.dict(), cv_id=existing_cv.id))
 
+                # Re-add references
+                for ref_data in obj_in.references:
+                    db.add(ReferenceModel(**ref_data.dict(), cv_id=existing_cv.id))
 
-@recruiter_reserve_employeer_router.post("/buyer-request-cv", status_code=200)
-async def request_cv_by_buyer(
-        request_in: BuyerRequestsCVSchema,
-        db: Session = Depends(get_db_raw)
-    ) -> Any:
-        """
-        Allows a buyer (sponsor) to request multiple CVs.
-        Updates all RecruitmentSetReserveModel entries that match any of the given cv_ids.
-        """
+                db.commit()
+                db.refresh(existing_cv)
 
-        # Step 1: Validate buyer
-        buyer = db.query(UserModel).filter(UserModel.id == request_in.buyer_id).first()
-        if not buyer:
-            raise HTTPException(status_code=404, detail="Buyer not found.")
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=False,
+                        message=f"{self.entity.get_resource_name(self.entity.__name__)} updated successfully",
+                        status_code=200,
+                    )
+                )
+                return existing_cv
 
-        # Step 2: Ensure the buyer is a sponsor
-        if buyer.role != "sponsor":
-            raise HTTPException(status_code=403, detail="User is not authorized to request CVs.")
-
-        updated_records = []
-        skipped_records = []
-
-        # Step 3: Bulk update per CV ID
-        for cv_id in request_in.cv_id:
-            # Update all matching records in one query
-            stmt = (
-                update(RecruitmentSetReserveModel)
-                .where(RecruitmentSetReserveModel.cv_id == uuid.UUID(str(cv_id)))
-                .values(buyer_id=request_in.buyer_id, requested=True)
-                .returning(
-                    RecruitmentSetReserveModel.cv_id,
-                    RecruitmentSetReserveModel.buyer_id,
-                    RecruitmentSetReserveModel.requested
+            # -----------------------------
+            # 🆕 Step 4: CREATE CV
+            # -----------------------------
+            new_cv = CVModel(
+                **obj_in.dict(
+                    exclude=[
+                        "address",
+                        "education",
+                        "references",
+                        "work_experiences",
+                        "remove_head_photo",
+                        "remove_full_body_photo",
+                        "remove_intro_video",
+                    ]
                 )
             )
 
+            if obj_in.address:
+                new_address = AddressModel(**obj_in.address.dict())
+                new_cv.address = new_address
+                db.add(new_address)
 
-            result = db.execute(stmt)
-            records = result.fetchall()
+            if obj_in.education:
+                new_education = EducationModel(**obj_in.education.dict())
+                new_cv.education = new_education
+                db.add(new_education)
 
-            if records:
-                for rec in records:
-                    updated_records.append({
-                        "cv_id": str(rec.cv_id),
-                        "buyer_id": str(rec.buyer_id),
-                        "requested": rec.requested
-                    })
-            else:
-                skipped_records.append({
-                    "cv_id": str(cv_id),
-                    "reason": "No records found or already requested"
-                })
+            db.add(new_cv)
+            db.commit()
 
-        db.commit()
+            for we_data in obj_in.work_experiences:
+                db.add(WorkExperienceModel(**we_data.dict(exclude_unset=True), cv_id=new_cv.id))
 
-        return {
-            "status_code": 200,
-            "message": "Buyer CV request update completed.",
-            "data": {
-                "updated_records": updated_records,
-                "skipped_records": skipped_records
-            }
-        }
+            for ref_data in obj_in.references:
+                db.add(ReferenceModel(**ref_data.dict(exclude_unset=True), cv_id=new_cv.id))
 
+            if head_photo:
+                new_cv.head_photo = uploadFileToLocal(head_photo)
 
+            if full_body_photo:
+                new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
 
-@recruiter_reserve_employeer_router.get("/recruiter-requests", status_code=200)
-async def get_buyer_requests_for_recruiter(
-    recruiter_id: uuid.UUID = Query(..., description="Recruiter user ID"),
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Fetch all buyer requests linked to a given recruiter.
-    Each record includes:
-    - CV owner full name (from CVModel via cv_id → user_id)
-    - Recruiter full name (from UserModel via recruiter_id)
-    """
-    try:
-        # Step 1: Validate recruiter
-        recruiter = db.query(UserModel).filter(UserModel.id == recruiter_id).first()
-        if not recruiter:
-            raise HTTPException(status_code=404, detail="Recruiter not found.")
-        if recruiter.role != "recruitment":
-            raise HTTPException(status_code=403, detail="User is not a recruiter.")
+            if intro_video:
+                new_cv.intro_video = uploadFileToLocal(intro_video)
 
-        # Step 2: Fetch buyer requests for this recruiter
-        requests = db.query(RecruitmentSetReserveModel).filter(
-            RecruitmentSetReserveModel.recruitment_id == str(recruiter_id),
-            RecruitmentSetReserveModel.requested.is_(True)
-        ).all()
+            db.commit()
+            db.refresh(new_cv)
 
-        # Step 3: Prepare response data
-        data = []
-        for req in requests:
-            cv_owner_full_name = None
-            recruiter_full_name = None
-
-            # --- Get CV owner name ---
-            cv = (
-                db.query(CVModel)
-                .filter(CVModel.user_id == req.cv_id)
-                .first()
-            )
-            if cv:
-                cv_owner_full_name = cv.english_full_name
-
-            # --- Get Recruiter name ---
-            recruiter_full_name = (
-                getattr(recruiter, "english_full_name", None)
-                or f"{recruiter.first_name or ''} {recruiter.last_name or ''}".strip()
-            )
-
-            data.append({
-                "id": str(req.id),
-                "cv_id": str(req.cv_id),
-                "buyer_id": str(req.buyer_id),
-                "requested": req.requested,
-                "status": req.status,
-                "approved": req.approved,
-                "rejected": req.rejected,
-                "cv_owner_full_name": cv_owner_full_name,
-                "recruiter_full_name": recruiter_full_name,
-            })
-
-        return {
-            "status_code": 200,
-            "message": "Buyer requests fetched successfully",
-            "count": len(data),
-            "data": data,
-        }
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "message": f"Data Source Error: {str(e)}",
-            "error": True,
-            "status_code": 500
-        }
-    
-
-@recruiter_reserve_employeer_router.get("/recruiter-requests", status_code=200)
-async def get_buyer_requests_for_recruiter(
-    recruiter_id: uuid.UUID = Query(..., description="Recruiter user ID"),
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Fetch all buyer requests linked to a given recruiter.
-    Each record includes:
-    - CV owner full name (from CVModel via cv_id → user_id)
-    - Recruiter full name (from UserModel via recruiter_id)
-    """
-    try:
-        # Step 1: Validate recruiter
-        recruiter = db.query(UserModel).filter(UserModel.id == recruiter_id).first()
-        if not recruiter:
-            raise HTTPException(status_code=404, detail="Recruiter not found.")
-        if recruiter.role != "recruitment":
-            raise HTTPException(status_code=403, detail="User is not a recruiter.")
-
-        # Step 2: Fetch buyer requests for this recruiter
-        requests = db.query(RecruitmentSetReserveModel).filter(
-            RecruitmentSetReserveModel.recruitment_id == str(recruiter_id),
-            RecruitmentSetReserveModel.requested.is_(True)
-        ).all()
-
-        # Step 3: Prepare response data
-        data = []
-        for req in requests:
-            cv_owner_full_name = None
-            recruiter_full_name = None
-
-            # --- Get CV owner name ---
-            cv = (
-                db.query(CVModel)
-                .filter(CVModel.user_id == req.cv_id)
-                .first()
-            )
-            if cv:
-                cv_owner_full_name = cv.english_full_name
-
-            # --- Get Recruiter name ---
-            recruiter_full_name = (
-                getattr(recruiter, "english_full_name", None)
-                or f"{recruiter.first_name or ''} {recruiter.last_name or ''}".strip()
-            )
-
-            data.append({
-                "id": str(req.id),
-                "cv_id": str(req.cv_id),
-                "buyer_id": str(req.buyer_id),
-                "requested": req.requested,
-                "status": req.status,
-                "approved": req.approved,
-                "rejected": req.rejected,
-                "cv_owner_full_name": cv_owner_full_name,
-                "recruiter_full_name": recruiter_full_name,
-            })
-
-        return {
-            "status_code": 200,
-            "message": "Buyer requests fetched successfully",
-            "count": len(data),
-            "data": data,
-        }
-
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "message": f"Data Source Error: {str(e)}",
-            "error": True,
-            "status_code": 500
-        }
-
-
-
-@recruiter_reserve_employeer_router.post("/review-buyer-request-by-id", status_code=200)
-async def review_buyer_request(
-    request_in: BuyerReviewRequestSchema,
-    db: Session = Depends(get_db_raw)
-):
-    reserve = (
-        db.query(RecruitmentSetReserveModel)
-        .filter(
-            RecruitmentSetReserveModel.id == request_in.id,
-            RecruitmentSetReserveModel.requested == True,
-            RecruitmentSetReserveModel.recruitment_id == str(request_in.recruiter_id)  # cast to string
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(status_code=404, detail="No buyer request found for this recruiter.")
-
-    if request_in.approve:
-        reserve.approved = True
-        reserve.rejected = False
-    else:
-        reserve.approved = False
-        reserve.rejected = True
-
-    if request_in.comment:
-        reserve.comment = request_in.comment
-
-    db.commit()
-    db.refresh(reserve)
-
-    return {
-        "status_code": 200,
-        "message": "Buyer request reviewed successfully",
-        "data": {
-            "reserve_id": reserve.id,
-            "cv_id": str(reserve.cv_id),
-            "buyer_id": str(reserve.buyer_id),
-            "approved": reserve.approved,
-            "rejected": reserve.rejected,
-            "comment": reserve.comment
-        }
-    }
-
-
-
-
-@recruiter_reserve_employeer_router.post("/review-buyer-request-promotion-by-id",status_code=200)
-async def review_buyer_request(
-    request_in: BuyerPromoterReviewRequestSchema,
-    db: Session = Depends(get_db_raw)
-):
-    reserve = (
-        db.query(RecruitmentSetReserveModel)
-        .filter(
-            RecruitmentSetReserveModel.id == request_in.id,
-            RecruitmentSetReserveModel.requested == True,
-            RecruitmentSetReserveModel.promoter_id == str(request_in.promoter_id)  # cast to string
-        )
-        .first()
-    )
-
-    if not reserve:
-        raise HTTPException(status_code=404, detail="No buyer request found for this recruiter.")
-
-    if request_in.approve:
-        reserve.approved = True
-        reserve.rejected = False
-    else:
-        reserve.approved = False
-        reserve.rejected = True
-
-    if request_in.comment:
-        reserve.comment = request_in.comment
-
-    db.commit()
-    db.refresh(reserve)
-
-    return {
-        "status_code": 200,
-        "message": "Buyer request reviewed successfully",
-        "data": {
-            "reserve_id": reserve.id,
-            "cv_id": str(reserve.cv_id),
-            "buyer_id": str(reserve.buyer_id),
-            "approved": reserve.approved,
-            "rejected": reserve.rejected,
-            "comment": reserve.comment
-        }
-    }
-
-
-@recruiter_reserve_employeer_router.get("/buyer-approved-requests", status_code=200)
-async def get_buyer_approved_requests(
-    buyer_id: uuid.UUID,
-    db: Session = Depends(get_db_raw)
-):
-    """
-    Fetch all approved buyer requests.
-    For each record:
-    - Get CV owner name (CVModel.english_full_name via cv_id → user_id)
-    - Get recruiter name (UserModel.english_full_name via recruitment_id)
-    """
-    try:
-        reserves = (
-            db.query(RecruitmentSetReserveModel)
-            .filter(
-                RecruitmentSetReserveModel.buyer_id == buyer_id,
-                RecruitmentSetReserveModel.approved == True
-            )
-            .all()
-        )
-
-        results = []
-
-        for reserve in reserves:
-            cv_owner_full_name = None
-            recruiter_full_name = None
-
-            # --- Get CV English full name (from CVModel) ---
-            cv = (
-                db.query(CVModel)
-                .filter(CVModel.user_id == reserve.cv_id)  # cv_id points to table_users.id
-                .first()
-            )
-            if cv:
-                cv_owner_full_name = cv.english_full_name
-
-            # --- Get Recruiter English full name (from UserModel) ---
-            if reserve.recruitment_id:
-                recruiter = (
-                    db.query(UserModel)
-                    .filter(UserModel.id == reserve.recruitment_id)
-                    .first()
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                    status_code=201,
                 )
-                if recruiter:
-                    recruiter_full_name = (
-                        getattr(recruiter, "english_full_name", None)
-                        or f"{recruiter.first_name or ''} {recruiter.last_name or ''}".strip()
+            )
+
+            return new_cv
+
+    '''
+    def upsert(
+        self,
+        db: Session,
+        *,
+        cv_data_json: str,
+        head_photo: Optional[UploadFile] = None,
+        full_body_photo: Optional[UploadFile] = None,
+        intro_video: Optional[UploadFile] = None,
+    ) -> EntityType | None:
+        try:
+            print("\n=== Incoming CV Data ===")
+            print(f"CV Data JSON: {cv_data_json}")
+            print(f"Head Photo: {'Provided' if head_photo else 'Not provided'}")
+            print(f"Full Body Photo: {'Provided' if full_body_photo else 'Not provided'}")
+            print(f"Intro Video: {'Provided' if intro_video else 'Not provided'}")
+            print("========================\n")
+
+            # Parse JSON data
+            try:
+                cv_data = json.loads(cv_data_json)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing JSON: {str(e)}")
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message="Invalid JSON data",
+                        status_code=400,
+                    )
+                )
+                return None
+
+            # Normalize IDs
+            cv_data["user_id"] = None if cv_data.get("user_id") is None else cv_data["user_id"]
+            cv_data["creator_id"] = cv_data.get("creator_id", None)
+
+            # Log parsed CV data
+            print("\n=== Parsed CV Data ===")
+            print(f"User ID: {cv_data.get('user_id')}")
+            print(f"Passport Number: {cv_data.get('passport_number')}")
+            if "address" in cv_data:
+                print("\nAddress Data:")
+                for key, value in cv_data["address"].items():
+                    print(f"  {key}: {value}")
+            if "education" in cv_data:
+                print("\nEducation Data:")
+                for key, value in cv_data["education"].items():
+                    print(f"  {key}: {value}")
+            print("=====================\n")
+
+            # Convert to schema
+            try:
+                obj_in = CVUpsertSchema(**cv_data)
+            except Exception as e:
+                print(f"Error creating CVUpsertSchema: {str(e)}")
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message=f"Invalid CV data: {str(e)}",
+                        status_code=400,
+                    )
+                )
+                return None
+
+            # Start transaction
+            try:
+                with db.begin_nested():
+                    # Create user if not provided
+                    if not obj_in.user_id:
+                        new_user = UserModel()
+                        new_user.role = UserRoleSchema.EMPLOYEE
+                        db.add(new_user)
+                        db.flush()
+                        obj_in.user_id = new_user.id
+
+                        # User profile + employee record
+                        qr_code_data = generate_qr_code(new_user.id)
+                        new_user_profile = UserProfileModel(
+                            user_id=new_user.id, qr_code=qr_code_data
+                        )
+                        user_id = context_actor_user_data.get().id
+                        employee = EmployeeModel(
+                            user_id=new_user.id,
+                            manager_id=user_id,
+                        )
+                        db.add(new_user_profile)
+                        db.add(employee)
+                        db.flush()
+
+                    # 🔎 Check for existing CV by user_id OR passport_number
+                    existing_cv = (
+                        db.query(CVModel)
+                        .filter(
+                            (CVModel.user_id == obj_in.user_id)
+                            | (CVModel.passport_number == obj_in.passport_number)
+                        )
+                        .first()
                     )
 
-            results.append({
-                "reserve_id": reserve.id,
-                "cv_id": str(reserve.cv_id),
-                "buyer_id": str(reserve.buyer_id) if reserve.buyer_id else None,
-                "recruitment_id": str(reserve.recruitment_id) if reserve.recruitment_id else None,
-                "cv_owner_full_name": cv_owner_full_name,
-                "recruiter_full_name": recruiter_full_name,
-                "status": reserve.status,
-                "approved": reserve.approved,
-                "requested": reserve.requested,
-                "rejected": reserve.rejected,
-                "comment": reserve.comment,
+                    if existing_cv:
+                        print(
+                            f"Updating existing CV for user {obj_in.user_id} "
+                            f"or passport {obj_in.passport_number}"
+                        )
+
+                        # ✅ Do NOT update immutable fields (user_id, creator_id)
+                        for field, value in obj_in.dict(
+                            exclude_unset=True,
+                            exclude=[
+                                "user_id",
+                                "creator_id",
+                                "address",
+                                "education",
+                                "work_experiences",
+                                "references",
+                            ],
+                        ).items():
+                            setattr(existing_cv, field, value)
+
+                        if obj_in.passport_number:
+                            existing_cv.passport_number = obj_in.passport_number
+
+                        # Address
+                        if obj_in.address:
+                            existing_address = db.query(AddressModel).filter_by(
+                                id=existing_cv.address_id
+                            ).first()
+                            if existing_address:
+                                for field, value in obj_in.address.dict(exclude_unset=True).items():
+                                    setattr(existing_address, field, value)
+                            else:
+                                new_address = AddressModel(**obj_in.address.dict())
+                                existing_cv.address = new_address
+                                db.add(new_address)
+
+                        # Education
+                        if obj_in.education:
+                            existing_education = (
+                                db.query(EducationModel).filter_by(cv_id=existing_cv.id).first()
+                            )
+                            if existing_education:
+                                for field, value in obj_in.education.dict(exclude_unset=True).items():
+                                    setattr(existing_education, field, value)
+                            else:
+                                new_education = EducationModel(**obj_in.education.dict())
+                                existing_cv.education = new_education
+                                db.add(new_education)
+
+                        # Files
+                        if head_photo:
+                            existing_cv.head_photo = uploadFileToLocal(head_photo)
+                        elif cv_data.get("remove_head_photo"):
+                            existing_cv.head_photo = None
+
+                        if full_body_photo:
+                            existing_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+                        elif cv_data.get("remove_full_body_photo"):
+                            existing_cv.full_body_photo = None
+
+                        if intro_video:
+                            existing_cv.intro_video = uploadFileToLocal(intro_video)
+                        elif cv_data.get("remove_intro_video"):
+                            existing_cv.intro_video = None
+
+                        # Work experiences
+                        if obj_in.work_experiences:
+                            for we in existing_cv.work_experiences:
+                                db.delete(we)
+                            for we_data in obj_in.work_experiences:
+                                work_experience = WorkExperienceModel(
+                                    **we_data.dict(), cv_id=existing_cv.id
+                                )
+                                db.add(work_experience)
+
+                        # References
+                        if obj_in.references:
+                            for ref in existing_cv.references:
+                                db.delete(ref)
+                            for ref_data in obj_in.references:
+                                reference = ReferenceModel(
+                                    **ref_data.dict(), cv_id=existing_cv.id
+                                )
+                                db.add(reference)
+
+                        db.flush()
+                        context_set_response_code_message.set(
+                            BaseGenericResponse(
+                                error=False,
+                                message=f"{self.entity.get_resource_name(self.entity.__name__)} updated successfully",
+                                status_code=200,
+                            )
+                        )
+                        return existing_cv
+
+                    # === CREATE NEW CV ===
+                    print(f"Creating new CV for user {obj_in.user_id}")
+
+                    new_cv = CVModel(
+                        **obj_in.dict(
+                            exclude=[
+                                "address",
+                                "education",
+                                "references",
+                                "work_experiences",
+                                "remove_head_photo",
+                                "remove_full_body_photo",
+                                "remove_intro_video",
+                                "creator_id",  # 👈 add this line to exclude
+                            ]
+                        ),
+                        creator_id=cv_data.get("creator_id"),
+                    )
+
+                    # Address
+                    if obj_in.address:
+                        new_address = AddressModel(**obj_in.address.dict())
+                        new_cv.address = new_address
+                        db.add(new_address)
+
+                    # Education
+                    if obj_in.education:
+                        new_education = EducationModel(**obj_in.education.dict())
+                        new_cv.education = new_education
+                        db.add(new_education)
+
+                    db.add(new_cv)
+                    db.flush()
+
+                    # Work experiences
+                    if obj_in.work_experiences:
+                        for we_data in obj_in.work_experiences:
+                            work_experience = WorkExperienceModel(
+                                **we_data.dict(exclude_unset=True), cv_id=new_cv.id
+                            )
+                            db.add(work_experience)
+
+                    # References
+                    if obj_in.references:
+                        for ref_data in obj_in.references:
+                            reference = ReferenceModel(
+                                **ref_data.dict(exclude_unset=True), cv_id=new_cv.id
+                            )
+                            db.add(reference)
+
+                    # Files
+                    if head_photo:
+                        new_cv.head_photo = uploadFileToLocal(head_photo)
+                    if full_body_photo:
+                        new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+                    if intro_video:
+                        new_cv.intro_video = uploadFileToLocal(intro_video)
+
+                    db.flush()
+                    context_set_response_code_message.set(
+                        BaseGenericResponse(
+                            error=False,
+                            message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                            status_code=201,
+                        )
+                    )
+                    return new_cv
+
+            except Exception as e:
+                print(f"Database error during CV upsert: {str(e)}")
+                db.rollback()
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message=f"Database error: {str(e)}",
+                        status_code=500,
+                    )
+                )
+                return None
+
+        except Exception as e:
+            print(f"Unexpected error in CV upsert: {str(e)}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message="An unexpected error occurred",
+                    status_code=500,
+                )
+            )
+            return None
+
+        
+
+    '''
+
+    '''
+    def delete_employee_and_related(self, db: Session, user_id: uuid.UUID):
+        
+        
+        # Ensure UUID
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        # 1. Delete notifications
+        db.query(Notifications).filter_by(user_id=user_id).delete()
+        db.query(NotificationReadModel).filter_by(user_id=user_id).delete()
+        db.query(UserNotificationModel).filter_by(user_id=user_id).delete()
+
+        # 2. Delete employee & profile
+        db.query(EmployeeModel).filter_by(user_id=user_id).delete()
+        db.query(UserProfileModel).filter_by(user_id=user_id).delete()
+
+        # 3. Delete CV and nested tables
+        cv = db.query(CVModel).filter_by(user_id=user_id).first()
+        if cv:
+            # child tables
+            db.query(WorkExperienceModel).filter_by(cv_id=cv.id).delete()
+            db.query(ReferenceModel).filter_by(cv_id=cv.id).delete()
+            db.query(EducationModel).filter_by(cv_id=cv.id).delete()
+
+            # delete CV itself
+            db.delete(cv)
+
+            # delete address after CV
+            if cv.address_id:
+                db.query(AddressModel).filter_by(id=cv.address_id).delete()
+
+        # 4. Delete user
+        db.query(UserModel).filter_by(id=user_id).delete()
+
+        # 5. Commit all changes
+        db.commit()
+
+        return DeleteResponse(message="CV and user deleted successfully")
+
+
+    '''
+    def delete_employee_and_related(self, db: Session, user_id: uuid.UUID):
+        """Delete user, CV, address, and all related tables safely."""
+
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        try:
+            # 1️⃣ Delete notifications
+            db.query(Notifications).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(NotificationReadModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(UserNotificationModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+
+            # 2️⃣ Delete CV and nested tables
+            cv = db.query(CVModel).filter_by(user_id=user_id).first()
+            if cv:
+                # Delete child tables first
+                db.query(WorkExperienceModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+                db.query(ReferenceModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+                db.query(EducationModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+
+                # Delete CV itself
+                db.delete(cv)
+                db.flush()  # Flush to DB so FK is cleared
+
+                # Now it's safe to delete address
+                if cv.address_id:
+                    db.query(AddressModel).filter_by(id=cv.address_id).delete(synchronize_session=False)
+
+            # 3️⃣ Delete Employee & Profile
+            db.query(EmployeeModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(UserProfileModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+
+            # 4️⃣ Delete the User
+            db.query(UserModel).filter_by(id=user_id).delete(synchronize_session=False)
+
+            # 5️⃣ Commit all changes
+            db.commit()
+
+            return DeleteResponse(message="User and all related data deleted successfully")
+
+        except Exception as e:
+            db.rollback()
+            raise e
+
+
+
+
+
+
+    '''
+    def upload_passport(
+        self, db: Session, user_id: Optional[uuid.UUID], file: UploadFile
+    ):
+        try:
+            file_path = uploadFileToLocal(file)
+            user_data = read_mrz(file_path)
+            cv = dict()
+            cv["user_id"] = str(user_id)
+            cv["english_full_name"] = user_data["name"] + " " + user_data["surname"]
+            cv["nationality"] = user_data["nationality"]
+            cv["passport_number"] = user_data["document_number"]
+            name = cv["english_full_name"].split()
+            for i in range(len(name)):
+                name[i] = name[i].capitalize()
+            cv["english_full_name"] = " ".join(name)
+            date_obj = datetime.strptime(user_data["birth_date"], "%y%m%d")
+            if date_obj.year > datetime.now().year:
+                date_obj = date_obj.replace(year=date_obj.year - 100)
+            formatted_date = date_obj.strftime("%Y-%m-%d")
+            cv["date_of_birth"] = formatted_date
+            cv["sex"] = SexSchema.MALE if user_data["sex"] == "M" else SexSchema.FEMALE
+            cv["passport_url"] = file_path
+            return self.upsert(db, cv_data_json=json.dumps(cv))
+        
+        except Exception as e:
+            cv = dict()
+            cv["user_id"] = str(user_id)
+            cv["passport_url"] = file_path
+            print('file_path', file_path)
+            self.upsert(db, cv_data_json=json.dumps(cv))
+            
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message="Unable to read information from the passport, but passport image was saved",
+                    status_code=400,
+                )
+            )
+    '''
+
+    def upload_passport(
+            self, db: Session, user_id: Optional[uuid.UUID], file: UploadFile
+        ):
+            try:
+                file_path = uploadFileToLocal(file)
+                
+                cv = dict()
+                cv["user_id"] = str(user_id) if user_id is not None else None
+                cv["passport_url"] = file_path
+
+                print("File saved to:", file_path)
+                print("CV data before upsert:", cv)
+
+                return self.upsert(db, cv_data_json=json.dumps(cv))
+
+            except Exception as e:
+                import traceback
+                print("Upload error:", str(e))
+                traceback.print_exc()
+
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message=f"Unable to upload the passport image: {str(e)}",
+                        status_code=400,
+                    )
+                )
+
+    
+
+
+            
+
+
+                
+    def bulk_upload(self, db: Session, file: BytesIO):
+        try:
+            df = pd.read_excel(
+                file,
+                dtype={
+                    "phone_number": str,
+                    "height": float,
+                    "weight": float,
+                    "address_street": str,
+                    "national_id": str,
+                },
+            )
+            df = df.map(lambda x: None if pd.isna(x) or x == "" else x)
+
+            created_cvs = []
+
+            for _, row in df.iterrows():
+                cv_data = row.to_dict()
+
+                # Split out nested fields
+                address_data = {
+                    key.replace("address_", ""): value
+                    for key, value in cv_data.items()
+                    if key.startswith("address_")
+                }
+                education_data = {
+                    key.replace("education_", ""): value
+                    for key, value in cv_data.items()
+                    if key.startswith("education_")
+                }
+
+                # Strip from main dict
+                cv_data = {
+                    key: value
+                    for key, value in cv_data.items()
+                    if not key.startswith("address_") and not key.startswith("education_")
+                }
+
+                cv_data["address"] = address_data
+                cv_data["education"] = education_data
+
+                # Convert timestamps to strings
+                for key, value in cv_data.items():
+                    if isinstance(value, pd.Timestamp):
+                        cv_data[key] = value.strftime('%Y-%m-%d')
+
+                # Convert to JSON
+                cv_data_json = json.dumps(cv_data)
+
+                # Call upsert (returns CVModel or None)
+                cv_instance = self.upsert(
+                    db,
+                    cv_data_json=cv_data_json,
+                    head_photo=None,
+                    full_body_photo=None,
+                    intro_video=None,
+                )
+
+                if cv_instance:
+                    created_cvs.append(cv_instance)
+
+            db.commit()
+
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"Successfully processed {len(created_cvs)} CVs.",
+                    status_code=201,
+                )
+            )
+
+            return created_cvs
+
+        except Exception as e:
+            logger.error(f"Error in bulk_upload: {e}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message="An error occurred while processing the bulk upload.",
+                    status_code=500,
+                )
+            )
+            return None
+
+        
+    '''
+    def export_to_pdf(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        if not entity:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        owner_data = {}
+
+        if entity.user.employees:
+            manager_id = entity.user.employees[0].manager_id
+            manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+
+            if manager.role == "agent" or manager.role == "recruitment" or manager.role == "sponsor":
+                owner_data = {
+                    "company_name": manager.company.company_name,
+                    "name": f"{manager.first_name} {manager.last_name}",
+                    "phone_number": manager.phone_number,
+                    "email": manager.email,
+                    "location": manager.company.location
+            }
+
+        rate = 0
+
+        additional_languages = []
+
+        additional_languages.append({
+            "language": "Amharic",
+            "proficiency": entity.amharic
+        })
+
+        additional_languages.append({
+            "language": "Arabic",
+            "proficiency": entity.arabic
+        })
+
+        additional_languages.append({
+            "language": "English",
+            "proficiency": entity.english
+        })
+
+        if entity.references:
+            rate += 1
+
+        if entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+        if entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                additional_languages.append({
+                    "language": lang.language.capitalize().rstrip().lstrip(),
+                    "proficiency": lang.proficiency
+                })
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+
+        if entity.education and entity.education.highest_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv.html")
+        else:
+            template = templates.get_template("cv_non_graduate.html")
+
+        age = 0
+
+        try:
+            date_str = entity.date_of_birth.split('T')[0]
+            age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+        except Exception as e:
+            print(e)
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=entity.passport_url,
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=entity.summary,
+                age=age
+            )
+
+        except Exception as e:
+            print(e)
+        return content
+    '''
+
+
+    '''
+    def export_to_pdf(
+            self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+        ):
+            logger = logging.getLogger(__name__)
+            logger.info(f"Starting PDF export for CV with filters: {filters}")
+            
+            templates = Jinja2Templates(directory="templates")
+            entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+            qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+            
+            if not entity:
+                logger.warning(f"CV not found for user_id: {filters.user_id}")
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                        status_code=200,
+                    )
+                )
+                return None
+
+            logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+            owner_data = {}
+
+            if entity.user.employees:
+                manager_id = entity.user.employees[0].manager_id
+                manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+
+                if manager.role == "agent" or manager.role == "recruitment" or manager.role == "sponsor":
+                    owner_data = {
+                        "company_name": manager.company.company_name,
+                        "name": f"{manager.first_name} {manager.last_name}",
+                        "phone_number": manager.phone_number,
+                        "email": manager.email,
+                        "location": manager.company.location
+                    }
+                    logger.debug(f"Added owner data for manager: {manager.id}")
+
+            rate = 0
+            additional_languages = []
+
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
             })
 
-        return {
-            "status_code": 200,
-            "message": "Approved buyer requests fetched successfully",
-            "count": len(results),
-            "data": results,
-        }
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
 
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        return {
-            "message": f"Data Source Error: {str(e)}",
-            "error": True,
-            "status_code": 500
-        }
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+            if entity.references:
+                rate += 1
+                logger.debug("Added rate point for references")
+
+            if entity.work_experiences:
+                if len(entity.work_experiences) >= 2:
+                    rate += 2
+                elif len(entity.work_experiences) == 1:
+                    rate += 1
+                logger.debug(f"Added rate points for work experiences: {rate}")
+
+            if entity.additional_languages:
+                if len(entity.additional_languages) > 2:
+                    rate += 1.5
+                elif len(entity.additional_languages) == 2:
+                    rate += 1
+                else:
+                    rate += 0.5
+
+                for lang in entity.additional_languages:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": lang.proficiency
+                    })
+                logger.debug(f"Added rate points for additional languages: {rate}")
+
+            additional_languages.sort(key=lambda x: x["language"], reverse=False)
+
+            if entity.education and entity.education.highest_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv.html")
+                logger.debug("Using graduate CV template")
+            else:
+                template = templates.get_template("cv_non_graduate.html")
+                logger.debug("Using non-graduate CV template")
+
+            age = 0
+
+            try:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+            except Exception as e:
+                logger.error(f"Error calculating age: {str(e)}")
+                print(e)
+
+            try:
+                content = template.render(
+                    request=request,
+                    user=entity, 
+                    img_base64=qr_code, 
+                    passport_url=entity.passport_url,
+                    base_url=f"{settings.BASE_URL}/static",
+                    rate=rate,
+                    additional_languages=additional_languages,
+                    owner=owner_data,
+                    description=entity.summary,
+                    age=age
+                )
+                logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+            except Exception as e:
+                logger.error(f"Error generating PDF content: {str(e)}")
+                print(e)
+                
+            return content
+        
+    '''
+    def export_to_pdf(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting PDF export for CV with filters: {filters}")
+        
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+        owner_data = {}
+
+        try:
+            # Check if user exists and has employees
+            if hasattr(entity, 'user') and entity.user is not None:
+                if hasattr(entity.user, 'employees') and entity.user.employees:
+                    # Get the first employee's manager_id
+                    manager_id = entity.user.employees[0].manager_id
+                    
+                    # Query the manager
+                    manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+                    
+                    if manager is not None:
+                        # Check manager role
+                        if hasattr(manager, 'role') and manager.role in ["agent", "recruitment", "sponsor"]:
+                            # Safely get company data
+                            company = getattr(manager, 'company', None)
+                            
+                            # Build owner data with safe defaults
+                            owner_data = {
+                                "company_name": getattr(company, 'company_name', '') if company else '',
+                                "name": f"{getattr(manager, 'first_name', '')} {getattr(manager, 'last_name', '')}".strip(),
+                                "phone_number": getattr(manager, 'phone_number', ''),
+                                "email": getattr(manager, 'email', ''),
+                                "location": getattr(company, 'location', '') if company else ''
+                            }
+                            logger.debug(f"Added owner data for manager: {manager.id}")
+        except Exception as e:
+            logger.warning(f"Error processing manager data: {str(e)}")
+            # Continue with empty owner_data if there's an error
+
+        rate = 0
+        additional_languages = []
+
+        # Safely add language proficiencies with null checks
+        if hasattr(entity, 'amharic') and entity.amharic:
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
+            })
+
+        if hasattr(entity, 'arabic') and entity.arabic:
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
+
+        if hasattr(entity, 'english') and entity.english:
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+        if hasattr(entity, 'references') and entity.references:
+            rate += 1
+            logger.debug("Added rate point for references")
+
+        if hasattr(entity, 'work_experiences') and entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+            logger.debug(f"Added rate points for work experiences: {rate}")
+
+        if hasattr(entity, 'additional_languages') and entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                if lang and hasattr(lang, 'language') and lang.language:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": getattr(lang, 'proficiency', '')
+                    })
+            logger.debug(f"Added rate points for additional languages: {rate}")
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+
+        # Safely check education level
+        education = getattr(entity, 'education', None)
+        education_level = getattr(education, 'highest_level', None) if education else None
+        
+        if education_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv.html")
+            logger.debug("Using graduate CV template")
+        else:
+            template = templates.get_template("cv_non_graduate.html")
+            logger.debug("Using non-graduate CV template")
+
+        age = 0
+
+        try:
+            if hasattr(entity, 'date_of_birth') and entity.date_of_birth:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+        except Exception as e:
+            logger.error(f"Error calculating age: {str(e)}")
+            print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
 
 
-from fastapi import APIRouter, Response, status
-@recruiter_reserve_employeer_router.post("/packages/callback/hyper")
-async def buy_promotion_package_callback():
-    return Response(
-        status_code=status.HTTP_200_OK,
-        content="OK"
-    )
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+
+
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=getattr(entity, 'passport_url', ''),
+               
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=getattr(entity, 'summary', ''),
+                age=age,
+                video_url=video_url
+            )
+            
+            logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating PDF content: {str(e)}")
+            print(e)
+            
+        return content
+
+
+    def export_to_pdf_download(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting PDF export for CV with filters: {filters}")
+        
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+        owner_data = {}
+
+        try:
+            # Check if user exists and has employees
+            if hasattr(entity, 'user') and entity.user is not None:
+                if hasattr(entity.user, 'employees') and entity.user.employees:
+                    # Get the first employee's manager_id
+                    manager_id = entity.user.employees[0].manager_id
+                    
+                    # Query the manager
+                    manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+                    
+                    if manager is not None:
+                        # Check manager role
+                        if hasattr(manager, 'role') and manager.role in ["agent", "recruitment", "sponsor"]:
+                            # Safely get company data
+                            company = getattr(manager, 'company', None)
+                            
+                            # Build owner data with safe defaults
+                            owner_data = {
+                                "company_name": getattr(company, 'company_name', '') if company else '',
+                                "name": f"{getattr(manager, 'first_name', '')} {getattr(manager, 'last_name', '')}".strip(),
+                                "phone_number": getattr(manager, 'phone_number', ''),
+                                "email": getattr(manager, 'email', ''),
+                                "location": getattr(company, 'location', '') if company else ''
+                            }
+                            logger.debug(f"Added owner data for manager: {manager.id}")
+        except Exception as e:
+            logger.warning(f"Error processing manager data: {str(e)}")
+            # Continue with empty owner_data if there's an error
+
+        rate = 0
+        additional_languages = []
+
+        # Safely add language proficiencies with null checks
+        if hasattr(entity, 'amharic') and entity.amharic:
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
+            })
+
+        if hasattr(entity, 'arabic') and entity.arabic:
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
+
+        if hasattr(entity, 'english') and entity.english:
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+        if hasattr(entity, 'references') and entity.references:
+            rate += 1
+            logger.debug("Added rate point for references")
+
+        if hasattr(entity, 'work_experiences') and entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+            logger.debug(f"Added rate points for work experiences: {rate}")
+
+        if hasattr(entity, 'additional_languages') and entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                if lang and hasattr(lang, 'language') and lang.language:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": getattr(lang, 'proficiency', '')
+                    })
+            logger.debug(f"Added rate points for additional languages: {rate}")
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+        is_passport = getattr(entity, "is_passport", False)
+        
+        # Safely check education level
+        education = getattr(entity, 'education', None)
+        education_level = getattr(education, 'highest_level', None) if education else None
+        
+        '''
+        if education_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv-download.html")
+            logger.debug("Using graduate CV template")
+        else:
+            template = templates.get_template("cv_non_graduate_download.html")
+            logger.debug("Using non-graduate CV template")
+        '''
+
+        
+
+        # 🎯 TEMPLATE SELECTION
+        if is_passport:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download-passport.html")
+                logger.debug("Using graduate CV template WITH passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download-passport.html")
+                logger.debug("Using non-graduate CV template WITH passport")
+        else:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download.html")
+                logger.debug("Using graduate CV template WITHOUT passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download.html")
+                logger.debug("Using non-graduate CV template WITHOUT passport")
+
+        age = 0
+
+        try:
+            if hasattr(entity, 'date_of_birth') and entity.date_of_birth:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+        except Exception as e:
+            logger.error(f"Error calculating age: {str(e)}")
+            print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+
+
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=getattr(entity, 'passport_url', ''),
+               
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=getattr(entity, 'summary', ''),
+                age=age,
+                video_url=video_url
+            )
+            
+            logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating PDF content: {str(e)}")
+            print(e)
+            
+        return content
+
+    def export_to_pdf_saudi(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        if not entity:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        file_path = f"{entity.english_full_name}_saudi.html"
+
+        template = templates.get_template("Saudi.html")
+        content = template.render(
+            request=request, user=entity, base_url="https://api.marrir.com/static"
+        )
+
+        return content
+
+    def get_additional_languages(self, db: Session, filters: CVFilterSchema):
+        cv = db.query(CVModel).filter_by(id=filters.id).first()
+
+        if not cv:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,
+                )
+            )
+            return None
+
+        languages = db.query(AdditionalLanguageModel).filter_by(cv_id=filters.id).all()
+
+        if len(languages) == 0:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message="No additional languages found!",
+                    status_code=200,
+                )
+            )
+            return []
+
+        context_set_response_code_message.set(
+            BaseGenericResponse(
+                error=False,
+                message=f"{len(languages)} additional languages found!",
+                status_code=200,
+            )
+        )
+        return languages
+
+    def add_language(self, db: Session, obj_in: AdditionalLanguageCreateSchema):
+        obj_in_data = jsonable_encoder(obj_in)
+        db_obj = AdditionalLanguageModel(**obj_in_data)
+        exists = (
+            db.query(AdditionalLanguageModel)
+            .filter_by(language=obj_in.language, cv_id=obj_in.cv_id)
+            .first()
+        )
+        if exists:
+            exists.proficiency = obj_in.proficiency
+            db.commit()
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{obj_in.language} updated successfully",
+                    status_code=200,
+                )
+            )
+            return exists
+
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+
+        if db_obj is not None:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{obj_in.language} added successfully",
+                    status_code=201,
+                )
+            )
+        return db_obj
+
+    def delete_language(
+        self, db: Session, filters: AdditionalLanguageReadSchema
+    ) -> EntityType:
+        language = db.query(AdditionalLanguageModel).filter_by(id=filters.id).first()
+        if not language:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"Language not found!",
+                    status_code=404,
+                )
+            )
+            return None
+
+        db.delete(language)
+        db.commit()
+        context_set_response_code_message.set(
+            BaseGenericResponse(
+                error=False,
+                message="Language deleted successfully",
+                status_code=200,
+            )
+        )
+        return language
