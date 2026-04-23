@@ -1182,6 +1182,7 @@ async def get_accepted_reserves_by_role(
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
         }
+        data.append(items)
         
 
     return {
