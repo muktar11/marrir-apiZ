@@ -1048,7 +1048,7 @@ async def get_accepted_reserves_by_role(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
-    #user_uuid_employee = uuid.UUID(user_id)
+    user_uuid_employee = uuid.UUID(user_id)
     # Base query: only ACCEPTED reserves
 
     user_uuid = str(uuid.UUID(user_id))
@@ -1071,8 +1071,8 @@ async def get_accepted_reserves_by_role(
 
     elif role == "employee":
         query = query.filter(
-            #RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
-            RecruitmentAgentPrivateReserveModel.employee_id == user_id
+            RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
+            #RecruitmentAgentPrivateReserveModel.employee_id == user_id
         )
     else:
         raise HTTPException(status_code=400, detail="Invalid role")
