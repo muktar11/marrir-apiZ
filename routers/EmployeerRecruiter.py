@@ -1070,8 +1070,8 @@ async def get_accepted_reserves_by_role(
 
     elif role == "employee":
         query = query.filter(
-            func.lower(func.trim(RecruitmentAgentPrivateReserveModel.employee_id))
-            == user_uuid.lower()
+            cast(func.trim(RecruitmentAgentPrivateReserveModel.employee_id), pgUUID)
+            == cast(user_uuid, pgUUID)
         )
     else:
         raise HTTPException(status_code=400, detail="Invalid role")
