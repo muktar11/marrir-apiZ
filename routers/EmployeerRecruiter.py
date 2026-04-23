@@ -1027,7 +1027,7 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
         },
     }
 
-
+from sqlalchemy import func
 
 @recruiter_reserve_employeer_router.get(
     "/all/pending-reserves/reserves/incoming",
@@ -1048,8 +1048,7 @@ async def get_accepted_reserves_by_role(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
-    user_uuid_employee = uuid.UUID(user_id)
-    # Base query: only ACCEPTED reserves
+
 
     user_uuid = str(uuid.UUID(user_id))
     query = db.query(RecruitmentAgentPrivateReserveModel).filter(
@@ -1071,9 +1070,8 @@ async def get_accepted_reserves_by_role(
 
     elif role == "employee":
         query = query.filter(
-            #RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
-            #RecruitmentAgentPrivateReserveModel.employee_id == user_id
-            cast(RecruitmentAgentPrivateReserveModel.employee_id, String) == str(user_uuid_employee)
+            func.lower(func.trim(RecruitmentAgentPrivateReserveModel.employee_id))
+            == user_uuid.lower()
         )
     else:
         raise HTTPException(status_code=400, detail="Invalid role")
