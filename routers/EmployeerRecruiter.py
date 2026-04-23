@@ -1071,8 +1071,9 @@ async def get_accepted_reserves_by_role(
 
     elif role == "employee":
         query = query.filter(
-            RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
+            #RecruitmentAgentPrivateReserveModel.employee_id == str(user_uuid_employee)
             #RecruitmentAgentPrivateReserveModel.employee_id == user_id
+            cast(RecruitmentAgentPrivateReserveModel.employee_id, String) == str(user_uuid_employee)
         )
     else:
         raise HTTPException(status_code=400, detail="Invalid role")
