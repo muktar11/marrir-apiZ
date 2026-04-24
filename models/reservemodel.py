@@ -65,16 +65,23 @@ class RecruitmentReserveModel(Base, EntityBaseModel):
     sponsor = relationship("UserModel", backref="sponsor_reserve", lazy="select", foreign_keys=[sponsor_id])
     employee = relationship("UserModel", backref="employee_reserve", lazy="select", foreign_keys=[employee_id])
 
-
+from sqlalchemy.dialects.postgresql import UUID as pgUUID
+import uuid
 
 class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
     __tablename__ = "table_recruitment_agent_private_reserves"
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
     recruitment_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("table_users.id"), nullable=True
     )
+    #agent_id: Mapped[uuid.UUID] = mapped_column(
+    #    ForeignKey("table_users.id"), nullable=True
+    #)
     agent_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("table_users.id"), nullable=True
+        pgUUID(as_uuid=True),
+        ForeignKey("table_users.id"),
+        nullable=True
     )
     sponsor_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("table_users.id"), nullable=True
@@ -93,7 +100,7 @@ class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
     agent = relationship("UserModel", backref="agent_agent_private_reserve", lazy="select", foreign_keys=[agent_id])
     sponsor = relationship("UserModel", backref="sponsor_agent_private_reserve", lazy="select", foreign_keys=[sponsor_id])
     selfsponsor = relationship("UserModel", backref="selfsponsor_agent_private_reserve", lazy="select", foreign_keys=[selfsponsor_id])
-    with_passport: Mapped[bool] = mapped_column(Boolean, default=False)    
+    with_passport: Mapped[bool] = mapped_column(Boolean, default=False) 
     passport_number: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_reserved: Mapped[bool] = mapped_column(Boolean, default=False) 
     is_paid: Mapped[bool] = mapped_column(Boolean, default=False)    
@@ -109,4 +116,4 @@ class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
     )
     is_transfer_requested: Mapped[bool] = mapped_column(Boolean, default=False)
     is_transfer_approved: Mapped[bool] = mapped_column(Boolean, default=False)
-
+   
