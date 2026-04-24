@@ -1136,7 +1136,7 @@ async def get_accepted_reserves_by_role(
 
     user_uuid = str(uuid.UUID(user_id))
     query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.is_reserved == False,  # only show non-reserved ones
+        RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
     )
 
     if role == "recruiter":
