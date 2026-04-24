@@ -1050,9 +1050,7 @@ async def get_accepted_reserves_by_role(
 
 
     user_uuid = str(uuid.UUID(user_id))
-    #query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-    #    RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING
-    #)
+
 
     query = db.query(RecruitmentAgentPrivateReserveModel).filter(
         RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
@@ -1064,7 +1062,7 @@ async def get_accepted_reserves_by_role(
         )
     elif role == "agent":
         query = query.filter(
-            RecruitmentAgentPrivateReserveModel.agent_id 
+            RecruitmentAgentPrivateReserveModel.agent_id == cast(user_uuid, pgUUID)
         )
         
     elif role == "sponsor":
