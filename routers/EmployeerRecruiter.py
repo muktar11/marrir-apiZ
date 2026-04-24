@@ -1049,10 +1049,13 @@ async def get_accepted_reserves_by_role(
         raise HTTPException(status_code=400, detail="Invalid UUID")
 
 
-
     user_uuid = str(uuid.UUID(user_id))
+    #query = db.query(RecruitmentAgentPrivateReserveModel).filter(
+    #    RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING
+    #)
+
     query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING
+        RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
     )
 
     if role == "recruiter":
@@ -1061,7 +1064,7 @@ async def get_accepted_reserves_by_role(
         )
     elif role == "agent":
         query = query.filter(
-            RecruitmentAgentPrivateReserveModel.agent_id == cast(user_uuid, pgUUID)
+            RecruitmentAgentPrivateReserveModel.agent_id 
         )
         
     elif role == "sponsor":
@@ -1136,7 +1139,7 @@ async def get_accepted_reserves_by_role(
 
     user_uuid = str(uuid.UUID(user_id))
     query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
+        RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.ACCEPTED
     )
 
     if role == "recruiter":
