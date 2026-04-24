@@ -1060,7 +1060,7 @@ async def get_accepted_reserves_by_role(
         )
     elif role == "agent":
         query = query.filter(
-            RecruitmentAgentPrivateReserveModel.agent_id == str(user_uuid)
+            RecruitmentAgentPrivateReserveModel.agent_id == user_uuid
         )
         
     elif role == "sponsor":
