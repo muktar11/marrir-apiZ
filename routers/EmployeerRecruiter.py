@@ -1694,6 +1694,118 @@ def verify_payment_sponsor_reserve(
     except Exception as e:
         logger.exception("Error creating reserve checkout")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+
+@recruiter_reserve_employeer_router.get("/hyper/payment/verify/agent")
+def verify_payment_agent_reserve(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    db: Session = Depends(get_db)
+):
+
+    logger.info("Verifying payment...")
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    try:
+        response = requests.get(
+            f"{HYPERPAY_BASE_URL}{resourcePath}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30
+        )
+
+        res = response.json()
+
+        result_code = res.get("result", {}).get("code", "")
+        description = res.get("result", {}).get("description", "")
+
+        logger.info(f"Result code: {result_code}")
+        logger.info(f"Description: {description}")
+
+        # 🔥 safer lookup
+        merchant_tx_id = res.get("merchantTransactionId")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id
+        ).first()
+
+        if not invoice:
+            return {"status": "not_found"}
+
+        SUCCESS_CODES = [
+            "000.000.000",
+            "000.000.100",
+            "000.000.110",
+            "000.100.110"
+        ]
+
+        if result_code in SUCCESS_CODES:
+
+            invoice.status = "paid"
+            invoice.payment_id = res.get("id")
+            file_path = generate_invoice_pdf(invoice)
+
+            #  SAVE FILE PATH
+            invoice.invoice_file = file_path
+
+            # ===============================
+            # 🔥 JOB APPLICATION PAYMENT
+            # ===============================
+            
+
+            if invoice.type == "reserve":
+                reserve = db.query(RecruitmentAgentPrivateReserveModel).filter(
+                    RecruitmentAgentPrivateReserveModel.cv_id == invoice.cv_id
+                ).first()
+
+                if not reserve:
+                    raise HTTPException(status_code=404, detail="Reserve not found")
+                recruitment_id_str = str(reserve.agent_id)
+                recruitment_id = reserve.agent_id
+                cv = db.query(CVModel).filter(   
+                    CVModel.user_id == invoice.cv_id
+                ).first()
+                if not cv:
+                    raise HTTPException(status_code=404, detail="CV not found")
+                cv.creator_id = recruitment_id_str
+                cv.user_id = recruitment_id
+                employee = db.query(EmployeeModel).filter(
+                    EmployeeModel.user_id == invoice.cv_id
+                ).first()
+                if not employee:
+                    raise HTTPException(status_code=404, detail="Employee not found")
+
+                employee.manager_id = recruitment_id
+                employee.user_id = recruitment_id
+                reserve.status = TransferStatusSchema.ACCEPTED
+                reserve.is_paid = True  #  mark as paid
+                reserve.is_reserved = True  #  mark as reserved
+                db.add(reserve)
+                db.add(cv)
+                db.add(employee)
+                db.commit()
+
+            return {
+                "status": "paid",
+                "type": invoice.type
+            }
+
+        else:
+
+            invoice.status = "failed"
+            db.commit()
+
+            return {
+                "status": "failed",
+                "code": result_code,
+                "description": description
+            }
+    except Exception as e:
+        logger.exception("Error creating reserve checkout")
+        raise HTTPException(status_code=500, detail=str(e))
     
 
 @recruiter_reserve_employeer_router.get("/hyper/payment/verify/recruiter-transfer")
