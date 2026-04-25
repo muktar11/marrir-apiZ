@@ -2,7 +2,7 @@ from datetime import datetime, timedelta, timezone
 from http.client import HTTPException
 import json
 from typing import Any, List, Optional 
-from unicodedata import category
+from unicodedata import category  
 import uuid  
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
@@ -1100,6 +1100,9 @@ async def get_accepted_reserves_by_role(
             "with_passport": reserve.with_passport,
             "passport_number": reserve.passport_number,
             "price": reserve.price,
+            "is_paid": getattr(reserve, "is_paid", False),
+            "is_reserved": getattr(reserve, "is_reserved", False),
+            "cv_id": reserve.cv_id,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
         })
