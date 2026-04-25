@@ -1052,9 +1052,10 @@ async def get_accepted_reserves_by_role(
     user_uuid = str(uuid.UUID(user_id))
 
 
-    query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-        RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
-    )
+    #query = db.query(RecruitmentAgentPrivateReserveModel).filter(
+    #    RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
+    #)
+    query = db.query(RecruitmentAgentPrivateReserveModel).all()
 
     if role == "recruiter":
         query = query.filter(
@@ -1763,8 +1764,29 @@ def verify_payment_agent_reserve(
 
                 if not reserve:
                     raise HTTPException(status_code=404, detail="Reserve not found")
-                recruitment_id_str = str(reserve.agent_id)
-                recruitment_id = reserve.agent_id
+                #recruitment_id_str = str(reserve.agent_id)
+                #recruitment_id = reserve.agent_id
+
+
+                if reserve.agent_id:
+                    recruitment_id = reserve.agent_id
+                    recruitment_id_str = str(reserve.agent_id)
+
+                elif reserve.sponsor_id:
+                    recruitment_id = reserve.sponsor_id
+                    recruitment_id_str = str(reserve.sponsor_id)
+
+                elif reserve.employee_id:
+                    recruitment_id = reserve.employee_id  # ⚠️ string
+                    recruitment_id_str = reserve.employee_id
+
+                else:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="No valid recruitment identifier found (agent, sponsor, or employee)"
+                    )
+                                
+
                 cv = db.query(CVModel).filter(   
                     CVModel.user_id == invoice.cv_id
                 ).first()
