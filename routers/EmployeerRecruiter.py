@@ -4,6 +4,7 @@ import json
 from typing import Any, List, Optional 
 from unicodedata import category  
 import uuid  
+from Marrir_API.models.agentrecruitmentmodel import AgentRecruitmentModel
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
 from repositories.promotion import PromotionRepository
@@ -292,11 +293,12 @@ class ApproveAgencyReserveSchema(BaseModel):
 from sqlalchemy.orm import aliased
 from sqlalchemy import and_, exists, cast
 from sqlalchemy.dialects.postgresql import UUID
-
+'''
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
     status_code=200
 )
+
 async def get_promoted_cvs(
     nationality: Optional[str] = Query(None),
     recruiter_residence: Optional[str] = Query(None),
@@ -400,6 +402,112 @@ async def get_promoted_cvs(
         "count": len(data),
         "data": data,
     }
+ '''
+  
+@recruiter_reserve_employeer_router.get(
+    "/reserve-promotion-set-for-employeer",
+    status_code=200
+)
+
+async def get_promoted_cvs(
+    nationality: Optional[str] = Query(None),
+    recruiter_residence: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),  # ✅ get logged user
+):
+
+    # 🔹 alias for creator user
+    CreatorUser = aliased(UserModel)
+    user = context_actor_user_data.get()
+
+    # ✅ STEP 1: Base query FIRST
+    query = (
+        db.query(CVModel, CreatorUser.role.label("creator_role"))
+        .join(UserModel, UserModel.id == CVModel.user_id)
+        .outerjoin(
+            CreatorUser,
+            CreatorUser.id == cast(CVModel.creator_id, UUID)
+        )
+    )
+
+    # ✅ STEP 2: Partner filtering
+    if user.role == "agent":
+        approved_recruitments = (
+            select(AgentRecruitmentModel.recruitment_id)
+            .where(
+                AgentRecruitmentModel.agent_id == user.id,
+                AgentRecruitmentModel.status == "APPROVED"
+            )
+        )
+
+        query = query.filter(
+            cast(CVModel.creator_id, UUID).in_(approved_recruitments)
+        )
+
+    elif user.role == "recruitment":
+        approved_agents = (
+            select(AgentRecruitmentModel.agent_id)
+            .where(
+                AgentRecruitmentModel.recruitment_id == user.id,
+                AgentRecruitmentModel.status == "APPROVED"
+            )
+        )
+
+        query = query.filter(
+            cast(CVModel.creator_id, UUID).in_(approved_agents)
+        )
+
+    # ✅ STEP 3: Other filters
+
+    if nationality:
+        query = query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
+
+    # ⚠️ BUG FIX: you forgot JOIN for CompanyInfoModel
+    if recruiter_residence:
+        query = query.join(
+            CompanyInfoModel,
+            CompanyInfoModel.user_id == UserModel.id
+        ).filter(
+            CompanyInfoModel.location.ilike(f"%{recruiter_residence}%")
+        )
+
+    if category:
+        query = query.filter(
+            or_(
+                CVModel.employment_types.ilike(f'{{{category}}}'),
+                CVModel.employment_types.ilike(f'{{"{category}"}}'),
+                CVModel.employment_types.ilike(f'{{{category},%'),
+                CVModel.employment_types.ilike(f'{{"{category}",%'),
+                CVModel.employment_types.ilike(f'%,{category},%'),
+                CVModel.employment_types.ilike(f'%,"{category}",%'),
+                CVModel.employment_types.ilike(f'%,{category}}}'),
+                CVModel.employment_types.ilike(f'%,"{category}"}}')
+            )
+        )
+
+    # ✅ Exclusions
+    query = query.filter(
+        ~exists(
+            select(1).where(
+                and_(
+                    cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
+                    RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED", "PENDING"])
+                )
+            )
+        )
+    )
+
+    query = query.filter(
+        ~exists(
+            select(1).where(
+                cast(RecruitmentAgentPrivateReserveModel.employee_id, UUID)
+                == CVModel.user_id
+            )
+        )
+    )
+
 from uuid import UUID
 from sqlalchemy import cast
 from sqlalchemy.dialects.postgresql import UUID
@@ -1055,7 +1163,7 @@ async def get_accepted_reserves_by_role(
     #query = db.query(RecruitmentAgentPrivateReserveModel).filter(
     #    RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
     #)
-    query = db.query(RecruitmentAgentPrivateReserveModel).all()
+    query = db.query(RecruitmentAgentPrivateReserveModel)
 
     if role == "recruiter":
         query = query.filter(
