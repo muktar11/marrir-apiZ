@@ -404,7 +404,8 @@ async def get_promoted_cvs(
     }
  '''
 from schemas.enumschema import OfferTypeSchema
-  
+from sqlalchemy.dialects import postgresql
+
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
     status_code=200
@@ -432,6 +433,14 @@ async def get_promoted_cvs(
             CreatorUser.id == cast(CVModel.creator_id, UUID)
         )
     )
+    print(
+        query.statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+
+
 
     # ✅ STEP 2: Partner filtering
     if user.role == "agent":
