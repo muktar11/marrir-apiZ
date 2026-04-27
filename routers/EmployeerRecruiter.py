@@ -406,6 +406,7 @@ async def get_promoted_cvs(
 from schemas.enumschema import OfferTypeSchema
 from sqlalchemy.dialects import postgresql
 from sqlalchemy import func
+from sqlalchemy import func
 
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
@@ -455,7 +456,7 @@ async def get_promoted_cvs(
             select(AgentRecruitmentModel.recruitment_id)
             .where(
                 AgentRecruitmentModel.agent_id == user.id,
-                func.lower(AgentRecruitmentModel.status).in_(["approved", "accepted"])
+                func.lower(func.trim(AgentRecruitmentModel.status)).in_(["approved", "accepted"])
             )
         )
 
@@ -477,7 +478,7 @@ async def get_promoted_cvs(
             select(AgentRecruitmentModel.agent_id)
             .where(
                 AgentRecruitmentModel.recruitment_id == user.id,
-                func.lower(AgentRecruitmentModel.status).in_(["approved", "accepted"])
+                func.lower(func.trim(AgentRecruitmentModel.status)).in_(["approved", "accepted"])
             )
         )
 
@@ -492,6 +493,9 @@ async def get_promoted_cvs(
             )
         else:
             query = query.filter(False)
+
+        rows = db.query(AgentRecruitmentModel.status).all()
+        print("RAW STATUSES:", [repr(r[0]) for r in rows])
         
 
 
