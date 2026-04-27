@@ -441,7 +441,8 @@ async def get_promoted_cvs(
                 AgentRecruitmentModel.status == "APPROVED"
             )
         )
-        print("APPROVED:", approved_recruitments)
+        approved_agents_list = db.execute(approved_agents).scalars().all()
+        print("APPROVED AGENTS DATA:", approved_agents_list)
 
         query = query.filter(
             cast(CVModel.creator_id, UUID).in_(approved_recruitments)
@@ -455,7 +456,9 @@ async def get_promoted_cvs(
                 AgentRecruitmentModel.status == "APPROVED"
             )
         )
-        print("APPROVED AGENTS:", approved_agents)
+        
+        approved_agents_list = db.execute(approved_agents).scalars().all()
+        print("APPROVED AGENTS DATA:", approved_agents_list)
 
         query = query.filter(
             cast(CVModel.creator_id, UUID).in_(approved_agents)
