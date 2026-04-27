@@ -4,7 +4,7 @@ import json
 from typing import Any, List, Optional 
 from unicodedata import category  
 import uuid  
-from Marrir_API.models.agentrecruitmentmodel import AgentRecruitmentModel
+from models.agentrecruitmentmodel import AgentRecruitmentModel
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
 from repositories.promotion import PromotionRepository
@@ -443,7 +443,7 @@ async def get_promoted_cvs(
         )
 
         query = query.filter(
-            cast(CVModel.creator_id, UUID).in_(approved_recruitments)
+            cast(CVModel.user_id).in_(approved_recruitments)
         )
 
     elif user.role == "recruitment":
@@ -456,7 +456,7 @@ async def get_promoted_cvs(
         )
 
         query = query.filter(
-            cast(CVModel.creator_id, UUID).in_(approved_agents)
+            cast(CVModel.user_id).in_(approved_agents)
         )
 
     # ✅ STEP 3: Other filters
