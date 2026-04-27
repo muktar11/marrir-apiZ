@@ -411,7 +411,7 @@ from sqlalchemy import select, func, cast, or_, exists
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import aliased
 from sqlalchemy.dialects import postgresql
-
+from sqlalchemy import or_
 
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
@@ -481,12 +481,17 @@ async def get_promoted_cvs(
         )
 
     if recruiter_residence:
-        query = query.join(
+        query = query.outerjoin(
             CompanyInfoModel,
             CompanyInfoModel.user_id == UserModel.id
         ).filter(
-            CompanyInfoModel.location.ilike(f"%{recruiter_residence}%")
+            or_(
+                CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"),
+                CompanyInfoModel.location.is_(None)  # keep rows without company info
+            )
         )
+
+    
 
     if category:
         query = query.filter(
