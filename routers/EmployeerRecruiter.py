@@ -403,6 +403,7 @@ async def get_promoted_cvs(
         "data": data,
     }
  '''
+from schemas.enumschema import OfferTypeSchema
   
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
@@ -438,7 +439,7 @@ async def get_promoted_cvs(
             select(AgentRecruitmentModel.recruitment_id)
             .where(
                 AgentRecruitmentModel.agent_id == user.id,
-                AgentRecruitmentModel.status == "APPROVED"
+                AgentRecruitmentModel.status == OfferTypeSchema.ACCEPTED
             )
         )
         approved_agents_list = db.execute(approved_agents).scalars().all()
@@ -453,7 +454,7 @@ async def get_promoted_cvs(
             select(AgentRecruitmentModel.agent_id)
             .where(
                 AgentRecruitmentModel.recruitment_id == user.id,
-                AgentRecruitmentModel.status == "APPROVED"
+                AgentRecruitmentModel.status == OfferTypeSchema.ACCEPTED
             )
         )
         
