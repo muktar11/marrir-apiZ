@@ -405,6 +405,7 @@ async def get_promoted_cvs(
  '''
 from schemas.enumschema import OfferTypeSchema
 from sqlalchemy.dialects import postgresql
+from sqlalchemy import func
 
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
@@ -448,38 +449,51 @@ async def get_promoted_cvs(
     )
 
 
-
-    # ✅ STEP 2: Partner filtering
+        # ✅ STEP 2: Partner filtering
     if user.role == "agent":
-        approved_recruitments = (
+        approved_recruitments_query = (
             select(AgentRecruitmentModel.recruitment_id)
             .where(
                 AgentRecruitmentModel.agent_id == user.id,
-                AgentRecruitmentModel.status == OfferTypeSchema.ACCEPTED
+                func.lower(AgentRecruitmentModel.status).in_(["approved", "accepted"])
             )
         )
-        approved_agents_list = db.execute(approved_agents).scalars().all()
-        print("APPROVED AGENTS DATA:", approved_agents_list)
 
-        query = query.filter(
-            cast(CVModel.creator_id, UUID).in_(approved_recruitments)
-        )
+        # 🔍 Debug
+        approved_recruitments_list = db.execute(approved_recruitments_query).scalars().all()
+        print("APPROVED RECRUITMENTS:", approved_recruitments_list)
+
+        # ✅ Apply filter ONLY if data exists
+        if approved_recruitments_list:
+            query = query.filter(
+                cast(CVModel.creator_id, UUID).in_(approved_recruitments_query)
+            )
+        else:
+            query = query.filter(False)  # force empty safely
+
 
     elif user.role == "recruitment":
-        approved_agents = (
+        approved_agents_query = (
             select(AgentRecruitmentModel.agent_id)
             .where(
                 AgentRecruitmentModel.recruitment_id == user.id,
-                AgentRecruitmentModel.status == OfferTypeSchema.ACCEPTED
+                func.lower(AgentRecruitmentModel.status).in_(["approved", "accepted"])
             )
         )
-        
-        approved_agents_list = db.execute(approved_agents).scalars().all()
-        print("APPROVED AGENTS DATA:", approved_agents_list)
 
-        query = query.filter(
-            cast(CVModel.creator_id, UUID).in_(approved_agents)
-        )
+        # 🔍 Debug
+        approved_agents_list = db.execute(approved_agents_query).scalars().all()
+        print("APPROVED AGENTS:", approved_agents_list)
+
+        # ✅ Apply filter ONLY if data exists
+        if approved_agents_list:
+            query = query.filter(
+                cast(CVModel.creator_id, UUID).in_(approved_agents_query)
+            )
+        else:
+            query = query.filter(False)
+        
+
 
     # ✅ STEP 3: Other filters
 
