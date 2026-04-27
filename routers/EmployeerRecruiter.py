@@ -491,7 +491,11 @@ async def get_promoted_cvs(
             )
         )
 
-    
+    print(
+        db.query(CVModel.nationality)
+        .filter(cast(CVModel.creator_id, UUID) == user.id)
+        .all()
+    )
 
     if category:
         query = query.filter(
