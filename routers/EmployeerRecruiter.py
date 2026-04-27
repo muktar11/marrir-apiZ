@@ -412,6 +412,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import aliased
 from sqlalchemy.dialects import postgresql
 from sqlalchemy import or_
+from sqlalchemy import not_
 
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
@@ -475,6 +476,10 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 3: FILTERS
     # -----------------------------------
+    query = query.filter(
+        cast(CVModel.creator_id, UUID) != user.id
+    )
+
     if nationality:
         query = query.filter(
             CVModel.nationality.ilike(f"%{nationality}%")
