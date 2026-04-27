@@ -456,21 +456,24 @@ async def get_promoted_cvs(
             select(AgentRecruitmentModel.recruitment_id)
             .where(
                 AgentRecruitmentModel.agent_id == user.id,
-                func.lower(func.trim(AgentRecruitmentModel.status)).in_(["approved", "accepted"])
+                func.lower(func.trim(AgentRecruitmentModel.status)).in_(
+                    ["approved", "accepted"]
+                )
             )
         )
 
-        # 🔍 Debug
-        approved_recruitments_list = db.execute(approved_recruitments_query).scalars().all()
+        approved_recruitments_list = db.execute(
+            approved_recruitments_query
+        ).scalars().all()
+
         print("APPROVED RECRUITMENTS:", approved_recruitments_list)
 
-        # ✅ Apply filter ONLY if data exists
         if approved_recruitments_list:
             query = query.filter(
-                cast(CVModel.creator_id, UUID).in_(approved_recruitments_query)
+                cast(CVModel.creator_id, UUID).in_(approved_recruitments_list)
             )
         else:
-            query = query.filter(False)  # force empty safely
+            query = query.filter(False)
 
 
     elif user.role == "recruitment":
@@ -478,24 +481,24 @@ async def get_promoted_cvs(
             select(AgentRecruitmentModel.agent_id)
             .where(
                 AgentRecruitmentModel.recruitment_id == user.id,
-                func.lower(func.trim(AgentRecruitmentModel.status)).in_(["approved", "accepted"])
+                func.lower(func.trim(AgentRecruitmentModel.status)).in_(
+                    ["approved", "accepted"]
+                )
             )
         )
 
-        # 🔍 Debug
-        approved_agents_list = db.execute(approved_agents_query).scalars().all()
+        approved_agents_list = db.execute(
+            approved_agents_query
+        ).scalars().all()
+
         print("APPROVED AGENTS:", approved_agents_list)
 
-        # ✅ Apply filter ONLY if data exists
         if approved_agents_list:
             query = query.filter(
-                cast(CVModel.creator_id, UUID).in_(approved_agents_query)
+                cast(CVModel.creator_id, UUID).in_(approved_agents_list)
             )
         else:
             query = query.filter(False)
-
-        rows = db.query(AgentRecruitmentModel.status).all()
-        print("RAW STATUSES:", [repr(r[0]) for r in rows])
         
 
 
@@ -547,6 +550,38 @@ async def get_promoted_cvs(
             )
         )
     )
+
+    results = query.all()
+    data = []
+    for cv, creator_role in results:
+        data.append({
+            "cv": {
+                "user_id": cv.user_id,
+                "passport_number": cv.passport_number,
+                "english_full_name": cv.english_full_name,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "nationality": cv.nationality,
+                "phone_number": cv.phone_number,
+                "email": cv.email,
+                "sex": cv.sex,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "head_photo": cv.head_photo,
+                "date_of_birth": cv.date_of_birth,
+                "creator_id": cv.creator_id,
+                "creator_role": creator_role if cv.creator_id else None
+            }
+        })
+
+    return {
+        "status_code": 200,
+        "message": "Available CVs fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data,
+    }
 
 from uuid import UUID
 from sqlalchemy import cast
