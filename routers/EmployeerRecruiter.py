@@ -481,15 +481,7 @@ async def get_promoted_cvs(
         )
 
     if recruiter_residence:
-        query = query.outerjoin(
-            CompanyInfoModel,
-            CompanyInfoModel.user_id == UserModel.id
-        ).filter(
-            or_(
-                CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"),
-                CompanyInfoModel.location.is_(None)  # keep rows without company info
-            )
-        )
+        query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
 
     print(
         db.query(CVModel.nationality)
