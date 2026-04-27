@@ -407,26 +407,31 @@ from schemas.enumschema import OfferTypeSchema
 from sqlalchemy.dialects import postgresql
 from sqlalchemy import func
 from sqlalchemy import func
+from sqlalchemy import select, func, cast, or_, exists
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import aliased
+from sqlalchemy.dialects import postgresql
+
 
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
     status_code=200
 )
-
 async def get_promoted_cvs(
     nationality: Optional[str] = Query(None),
     recruiter_residence: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     db: Session = Depends(get_db_raw),
     _=Depends(authentication_context),
-    __=Depends(build_request_context),  # ✅ get logged user
+    __=Depends(build_request_context),
 ):
 
-    # 🔹 alias for creator user
     CreatorUser = aliased(UserModel)
     user = context_actor_user_data.get()
 
-    # ✅ STEP 1: Base query FIRST
+    # -----------------------------------
+    # ✅ STEP 1: BASE QUERY
+    # -----------------------------------
     query = (
         db.query(CVModel, CreatorUser.role.label("creator_role"))
         .join(UserModel, UserModel.id == CVModel.user_id)
@@ -436,78 +441,45 @@ async def get_promoted_cvs(
         )
     )
 
-    rows = db.query(AgentRecruitmentModel).filter(
-        AgentRecruitmentModel.recruitment_id == user.id
-    ).all()
-
-    for r in rows:
-        print(r.agent_id, r.status)
-    print(
-        query.statement.compile(
-            dialect=postgresql.dialect(),
-            compile_kwargs={"literal_binds": True}
-        )
-    )
-
-
-        # ✅ STEP 2: Partner filtering
+    # -----------------------------------
+    # ✅ STEP 2: PARTNER FILTERING (FIXED)
+    # -----------------------------------
     if user.role == "agent":
-        approved_recruitments_query = (
+
+        # Get approved recruitments for this agent
+        approved_recruitments = (
             select(AgentRecruitmentModel.recruitment_id)
             .where(
                 AgentRecruitmentModel.agent_id == user.id,
-                func.lower(func.trim(AgentRecruitmentModel.status)).in_(
-                    ["approved", "accepted"]
-                )
+                func.lower(func.trim(AgentRecruitmentModel.status)) == "approved"
             )
         )
 
-        approved_recruitments_list = db.execute(
-            approved_recruitments_query
-        ).scalars().all()
+        approved_list = db.execute(approved_recruitments).scalars().all()
+        print("APPROVED RECRUITMENTS:", approved_list)
 
-        print("APPROVED RECRUITMENTS:", approved_recruitments_list)
-
-        if approved_recruitments_list:
+        if approved_list:
             query = query.filter(
-                cast(CVModel.creator_id, UUID).in_(approved_recruitments_list)
+                cast(CVModel.creator_id, UUID).in_(approved_recruitments)
             )
         else:
             query = query.filter(False)
-
 
     elif user.role == "recruitment":
-        approved_agents_query = (
-            select(AgentRecruitmentModel.agent_id)
-            .where(
-                AgentRecruitmentModel.recruitment_id == user.id,
-                func.lower(func.trim(AgentRecruitmentModel.status)).in_(
-                    ["approved", "accepted"]
-                )
-            )
+
+        # Recruitment sees ONLY their own CVs
+        query = query.filter(
+            cast(CVModel.creator_id, UUID) == user.id
         )
 
-        approved_agents_list = db.execute(
-            approved_agents_query
-        ).scalars().all()
-
-        print("APPROVED AGENTS:", approved_agents_list)
-
-        if approved_agents_list:
-            query = query.filter(
-                cast(CVModel.creator_id, UUID).in_(approved_agents_list)
-            )
-        else:
-            query = query.filter(False)
-        
-
-
-    # ✅ STEP 3: Other filters
-
+    # -----------------------------------
+    # ✅ STEP 3: FILTERS
+    # -----------------------------------
     if nationality:
-        query = query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
+        query = query.filter(
+            CVModel.nationality.ilike(f"%{nationality}%")
+        )
 
-    # ⚠️ BUG FIX: you forgot JOIN for CompanyInfoModel
     if recruiter_residence:
         query = query.join(
             CompanyInfoModel,
@@ -530,13 +502,16 @@ async def get_promoted_cvs(
             )
         )
 
-    # ✅ Exclusions
+    # -----------------------------------
+    # ✅ STEP 4: EXCLUSIONS
+    # -----------------------------------
     query = query.filter(
         ~exists(
             select(1).where(
-                and_(
-                    cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
-                    RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED", "PENDING"])
+                cast(RecruitmentSetReserveModel.cv_id, UUID)
+                == CVModel.user_id,
+                RecruitmentSetReserveModel.status.in_(
+                    ["reserved", "approved", "pending"]
                 )
             )
         )
@@ -545,13 +520,29 @@ async def get_promoted_cvs(
     query = query.filter(
         ~exists(
             select(1).where(
-                cast(RecruitmentAgentPrivateReserveModel.employee_id, UUID)
-                == CVModel.user_id
+                cast(
+                    RecruitmentAgentPrivateReserveModel.employee_id,
+                    UUID
+                ) == CVModel.user_id
             )
         )
     )
 
+    # -----------------------------------
+    # ✅ STEP 5: DEBUG FINAL QUERY
+    # -----------------------------------
+    print(
+        query.statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+
+    # -----------------------------------
+    # ✅ STEP 6: EXECUTE
+    # -----------------------------------
     results = query.all()
+
     data = []
     for cv, creator_role in results:
         data.append({
@@ -582,6 +573,8 @@ async def get_promoted_cvs(
         "count": len(data),
         "data": data,
     }
+
+
 
 from uuid import UUID
 from sqlalchemy import cast
