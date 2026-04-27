@@ -433,6 +433,13 @@ async def get_promoted_cvs(
             CreatorUser.id == cast(CVModel.creator_id, UUID)
         )
     )
+
+    rows = db.query(AgentRecruitmentModel).filter(
+        AgentRecruitmentModel.recruitment_id == user.id
+    ).all()
+
+    for r in rows:
+        print(r.agent_id, r.status)
     print(
         query.statement.compile(
             dialect=postgresql.dialect(),
