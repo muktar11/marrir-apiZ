@@ -441,9 +441,10 @@ async def get_promoted_cvs(
                 AgentRecruitmentModel.status == "APPROVED"
             )
         )
+        print("APPROVED:", approved_recruitments)
 
         query = query.filter(
-            cast(CVModel.user_id).in_(approved_recruitments)
+            cast(CVModel.creator_id, UUID).in_(approved_recruitments)
         )
 
     elif user.role == "recruitment":
@@ -454,9 +455,10 @@ async def get_promoted_cvs(
                 AgentRecruitmentModel.status == "APPROVED"
             )
         )
+        print("APPROVED AGENTS:", approved_agents)
 
         query = query.filter(
-            cast(CVModel.user_id).in_(approved_agents)
+            cast(CVModel.creator_id, UUID).in_(approved_agents)
         )
 
     # ✅ STEP 3: Other filters
