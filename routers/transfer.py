@@ -903,6 +903,7 @@ class PaymentRequest(BaseModel):
 
 logger = logging.getLogger("hyperpay")
 
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
 
 @transfer_router.post("/pay/hyper")
