@@ -1183,7 +1183,11 @@ def verify_transfer_payment(
 
         result_code = res.get("result", {}).get("code", "")
         description = res.get("result", {}).get("description", "")
-
+        logger.info("=== TRANSFER DEBUG ===")
+        logger.info(f"DB: {db.bind}")
+        logger.info(f"Transfer count: {db.query(TransferModel).count()}")
+        logger.info(f"Transfer 15 exists: {db.query(TransferModel).filter(TransferModel.id == 15).first()}")
+        logger.info("======================")
         logger.info(f"Result code: {result_code}")
         logger.info(f"Description: {description}")
 
