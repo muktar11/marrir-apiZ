@@ -1220,8 +1220,15 @@ def verify_transfer_payment(
             # ===============================
             if invoice.type == "transfer":
 
-                transfer_ids = [int(tid) for tid in invoice.object_id.split(",")]
-
+   
+                try:
+                    transfer_ids = [int(t.strip()) for t in invoice.object_id.split(",") if t.strip()]
+                    logger.info(f"Parsed transfer_ids: {transfer_ids}")
+                except Exception as e:
+                    logger.error(f"Failed to parse object_id: {invoice.object_id}")
+                    raise
+                logger.info(f"Invoice object_id raw: {invoice.object_id}")
+                logger.info(f"Invoice type: {type(invoice.object_id)}")
                 transfers = db.query(TransferModel).filter(
                     TransferModel.id.in_(transfer_ids)
                 ).all()
