@@ -1152,6 +1152,10 @@ async def pay_transfer_callback(
     return JSONResponse(status_code=200, content={"status": "received"})
 
 '''
+os.makedirs(INVOICE_DIR, exist_ok=True)
+from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+import os
 
 
 
