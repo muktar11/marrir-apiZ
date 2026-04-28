@@ -909,6 +909,7 @@ HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 @transfer_router.post("/pay/hyper")
 async def pay_transfer(
     data: TransferPaySchema,
+    db: Session = Depends(get_db),
     _=Depends(HTTPBearer(scheme_name="bearer")),
     __=Depends(build_request_context),
 ):
@@ -1102,7 +1103,7 @@ from sqlalchemy.orm import Session
 @transfer_router.get("/invoice/{merchantTransactionId}")
 def view_invoice(
     merchantTransactionId: str,
-    db: Session = Depends(get_db_sessions),
+    db: Session = Depends(get_db),
 ):
     invoice = db.query(InvoiceModel).filter(
         InvoiceModel.reference == merchantTransactionId,
@@ -1164,7 +1165,7 @@ import os
 def verify_transfer_payment(
     id: str = Query(None),
     resourcePath: str = Query(None),
-    db: Session = Depends(get_db_sessions)
+    db: Session = Depends(get_db),
 ):
     logger.info("Verifying transfer payment...")
 
