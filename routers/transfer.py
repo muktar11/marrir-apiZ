@@ -1164,7 +1164,7 @@ import os
 def verify_transfer_payment(
     id: str = Query(None),
     resourcePath: str = Query(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db_sessions)
 ):
     logger.info("Verifying transfer payment...")
 
