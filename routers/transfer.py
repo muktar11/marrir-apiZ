@@ -1120,7 +1120,7 @@ def view_invoice(
     )
 
 
-@transfer_router.post("/hyper/payment/verify")
+@transfer_router.get("/hyper/payment/verify")
 async def pay_transfer_callback(
     request: Request,
     background_tasks: BackgroundTasks,
