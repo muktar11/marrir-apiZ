@@ -13,7 +13,7 @@ from models.agentrecruitmentmodel import AgentRecruitmentModel
 from models.batchtransfermodel import BatchTransferModel
 from models.companyinfomodel import CompanyInfoModel
 from models.cvmodel import CVModel
-from models.db import SessionLocal, authentication_context, build_request_context, get_db_session, get_db_sessions
+from models.db import SessionLocal, authentication_context, build_request_context, get_db, get_db_session, get_db_sessions
 
 from models.employeemodel import EmployeeModel
 from models.invoicemodel import InvoiceModel
@@ -1164,7 +1164,7 @@ import os
 def verify_transfer_payment(
     id: str = Query(None),
     resourcePath: str = Query(None),
-    db: Session = Depends(get_db_sessions),
+    db: Session = Depends(get_db)
 ):
     logger.info("Verifying transfer payment...")
 
