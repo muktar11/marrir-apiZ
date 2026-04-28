@@ -978,6 +978,7 @@ async def pay_transfer(
 
         invoice = InvoiceModel(
             reference=merchant_tx_id,
+            checkout_id=checkout_id,
             buyer_id=user.id,
             amount=amount,
             status="pending",
@@ -1219,18 +1220,19 @@ def verify_transfer_payment(
             # ===============================
             if invoice.type == "transfer":
 
-                transfer = db.query(TransferModel).filter(
-                    TransferModel.id == invoice.object_id
-                ).first()
+                transfer_ids = [int(tid) for tid in invoice.object_id.split(",")]
 
-                if not transfer:
-                    raise HTTPException(status_code=404, detail="Transfer not found")
+                transfers = db.query(TransferModel).filter(
+                    TransferModel.id.in_(transfer_ids)
+                ).all()
 
-                # 👉 apply your transfer logic here
-                transfer.status = "completed"
-                transfer.is_paid = True
+                if not transfers:
+                    raise HTTPException(status_code=404, detail="Transfers not found")
 
-                db.add(transfer)
+                for transfer in transfers:
+                    transfer.status = "completed"
+                    transfer.is_paid = True
+                    db.add(transfer)
 
             db.commit()
 
