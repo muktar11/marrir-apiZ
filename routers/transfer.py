@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 import json
 from typing import Any, Optional
-import uuid
+import uuid 
 from fastapi import APIRouter, Depends, Query, Response, BackgroundTasks
 from fastapi.security import HTTPBearer
 from sqlalchemy import UUID
@@ -962,12 +962,10 @@ async def pay_transfer(
             "billing.country": b.country.upper(),
             "billing.postcode": b.postcode,
 
-            "shopperResultUrl": "https://marrir.com/transfer-history",
-            "notificationUrl": "https://api.marrir.com/api/v1/transfer/pay/callback",
         }
 
         res = requests.post(
-            "https://test.oppwa.com/v1/checkouts",
+            f"{HYPERPAY_BASE_URL}/v1/checkouts",
             data=payload,
             headers=get_hyperpay_auth_header(),
             timeout=30,
@@ -1121,7 +1119,7 @@ def view_invoice(
     )
 
 
-@transfer_router.post("/pay/callback")
+@transfer_router.post("/hyper/payment/verify")
 async def pay_transfer_callback(
     request: Request,
     background_tasks: BackgroundTasks,
