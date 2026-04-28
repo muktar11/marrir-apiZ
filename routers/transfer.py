@@ -1120,6 +1120,8 @@ def view_invoice(
     )
 
 
+
+'''
 @transfer_router.get("/hyper/payment/verify")
 async def pay_transfer_callback(
     request: Request,
@@ -1149,8 +1151,103 @@ async def pay_transfer_callback(
         background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
     return JSONResponse(status_code=200, content={"status": "received"})
 
+'''
 
 
+
+@transfer_router.get("/hyper/payment/verify")
+def verify_transfer_payment(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    db: Session = Depends(get_db_sessions),
+):
+    logger.info("Verifying transfer payment...")
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    try:
+        response = requests.get(
+            f"{HYPERPAY_BASE_URL}{resourcePath}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30
+        )
+
+        res = response.json()
+
+        result_code = res.get("result", {}).get("code", "")
+        description = res.get("result", {}).get("description", "")
+
+        logger.info(f"Result code: {result_code}")
+        logger.info(f"Description: {description}")
+
+        merchant_tx_id = res.get("merchantTransactionId")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id
+        ).first()
+
+        if not invoice:
+            return {"status": "not_found"}
+
+        SUCCESS_CODES = [
+            "000.000.000",
+            "000.000.100",
+            "000.000.110",
+            "000.100.110"
+        ]
+
+        if result_code in SUCCESS_CODES:
+
+            if invoice.status == "paid":
+                return {"status": "already_paid"}
+
+            invoice.status = "paid"
+            invoice.payment_id = res.get("id")
+
+            # 🔥 generate invoice
+            file_path = generate_invoice_pdf(invoice)
+            invoice.invoice_file = file_path
+
+            # ===============================
+            # 🔥 TRANSFER BUSINESS LOGIC
+            # ===============================
+            if invoice.type == "transfer":
+
+                transfer = db.query(TransferModel).filter(
+                    TransferModel.id == invoice.object_id
+                ).first()
+
+                if not transfer:
+                    raise HTTPException(status_code=404, detail="Transfer not found")
+
+                # 👉 apply your transfer logic here
+                transfer.status = "completed"
+                transfer.is_paid = True
+
+                db.add(transfer)
+
+            db.commit()
+
+            return {
+                "status": "paid",
+                "type": invoice.type
+            }
+
+        else:
+            invoice.status = "failed"
+            db.commit()
+
+            return {
+                "status": "failed",
+                "code": result_code,
+                "description": description
+            }
+
+    except Exception as e:
+        logger.exception("Error verifying transfer payment")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def poll_pending_transfer_payments():
