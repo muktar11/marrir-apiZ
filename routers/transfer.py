@@ -909,6 +909,7 @@ HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 @transfer_router.post("/pay/hyper")
 async def pay_transfer(
     data: TransferPaySchema,
+    db: Session = Depends(get_db),
     _=Depends(HTTPBearer(scheme_name="bearer")),
     __=Depends(build_request_context),
 ):
@@ -983,8 +984,8 @@ async def pay_transfer(
             amount=amount,
             status="pending",
             type="transfer",
-            #object_id=",".join(str(t.id) for t in transfers),
-            object_id = str(data.transfer_request_ids),
+            object_id=",".join(str(t.id) for t in transfers),
+
             billing_email=b.email,
             billing_country=b.country.upper(),
             billing_street=b.street1,
@@ -1157,7 +1158,7 @@ os.makedirs(INVOICE_DIR, exist_ok=True)
 from weasyprint import HTML
 from jinja2 import Environment, FileSystemLoader
 import os
-
+import re
 
 
 @transfer_router.get("/hyper/payment/verify")
@@ -1222,13 +1223,23 @@ def verify_transfer_payment(
             # ===============================
             # 🔥 TRANSFER BUSINESS LOGIC
             # ===============================
+
             if invoice.type == "transfer":
+
+                
+
+                transfer_ids = list(map(int, re.findall(r"\d+", invoice.object_id)))
+
+                logger.info(f"Parsed transfer_ids: {transfer_ids}")
+                logger.info(f"Invoice object_id raw: {invoice.object_id}")
+
                 transfers = db.query(TransferModel).filter(
-                    TransferModel.id == invoice.object_id
-                ).first()
+                    TransferModel.id.in_(transfer_ids)
+                ).all()
 
                 if not transfers:
                     raise HTTPException(status_code=404, detail="Transfers not found")
+ 
 
                 for transfer in transfers:
                     transfer.status = "completed"
