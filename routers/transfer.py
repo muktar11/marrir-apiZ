@@ -909,7 +909,6 @@ HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 @transfer_router.post("/pay/hyper")
 async def pay_transfer(
     data: TransferPaySchema,
-    db: Session = Depends(get_db),
     _=Depends(HTTPBearer(scheme_name="bearer")),
     __=Depends(build_request_context),
 ):
@@ -985,7 +984,7 @@ async def pay_transfer(
             status="pending",
             type="transfer",
             object_id=",".join(str(t.id) for t in transfers),
-
+            #object_id = str(data.transfer_request_ids),
             billing_email=b.email,
             billing_country=b.country.upper(),
             billing_street=b.street1,
@@ -1225,18 +1224,9 @@ def verify_transfer_payment(
             # ===============================
             if invoice.type == "transfer":
 
-   
-                try:
-                    transfer_ids = [int(t.strip()) for t in invoice.object_id.split(",") if t.strip()]
-                    logger.info(f"Parsed transfer_ids: {transfer_ids}")
-                except Exception as e:
-                    logger.error(f"Failed to parse object_id: {invoice.object_id}")
-                    raise
-                logger.info(f"Invoice object_id raw: {invoice.object_id}")
-                logger.info(f"Invoice type: {type(invoice.object_id)}")
-                transfers = db.query(TransferModel).filter(
-                    TransferModel.id.in_(transfer_ids)
-                ).all()
+                transfer = db.query(TransferModel).filter(
+                    TransferModel.id == invoice.object_id
+                ).first()
 
                 if not transfers:
                     raise HTTPException(status_code=404, detail="Transfers not found")
