@@ -983,8 +983,8 @@ async def pay_transfer(
             amount=amount,
             status="pending",
             type="transfer",
-            object_id=",".join(str(t.id) for t in transfers),
-            #object_id = str(data.transfer_request_ids),
+            #object_id=",".join(str(t.id) for t in transfers),
+            object_id = str(data.transfer_request_ids),
             billing_email=b.email,
             billing_country=b.country.upper(),
             billing_street=b.street1,
@@ -1223,8 +1223,7 @@ def verify_transfer_payment(
             # 🔥 TRANSFER BUSINESS LOGIC
             # ===============================
             if invoice.type == "transfer":
-
-                transfer = db.query(TransferModel).filter(
+                transfers = db.query(TransferModel).filter(
                     TransferModel.id == invoice.object_id
                 ).first()
 
