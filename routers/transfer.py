@@ -1226,20 +1226,16 @@ def verify_transfer_payment(
 
             if invoice.type == "transfer":
 
-                
-
-                transfer_ids = list(map(int, re.findall(r"\d+", invoice.object_id)))
+                transfer_ids = [int(t.strip()) for t in invoice.object_id.split(",") if t.strip()]
 
                 logger.info(f"Parsed transfer_ids: {transfer_ids}")
-                logger.info(f"Invoice object_id raw: {invoice.object_id}")
 
-                transfers = db.query(TransferModel).filter(
-                    TransferModel.id.in_(transfer_ids)
+                transfers = db.query(TransferRequestModel).filter(
+                    TransferRequestModel.id.in_(transfer_ids)
                 ).all()
 
                 if not transfers:
                     raise HTTPException(status_code=404, detail="Transfers not found")
- 
 
                 for transfer in transfers:
                     transfer.status = "completed"
