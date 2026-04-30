@@ -43,6 +43,7 @@ class ApplyJobMultipleBaseSchema(BaseProps):
     user_id: List[uuid.UUID] = []
     status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
 
+from pydantic import field_validator
 
 class JobBaseSchema(BaseProps):
     name: Optional[str] = None
@@ -55,6 +56,13 @@ class JobBaseSchema(BaseProps):
     posted_by: Optional[uuid.UUID] = None
     is_open: Optional[bool] = None
     employment_types: Optional[List[str]] = None
+
+    @field_validator("employment_types", mode="before")
+    @classmethod
+    def parse_employment_types(cls, v):
+        if isinstance(v, str):
+            return v.split(",")
+        return v
     
 
 
