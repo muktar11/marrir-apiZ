@@ -640,10 +640,29 @@ async def get_promoted_cvs(
             query = query.filter(False)
 
     elif user.role == "recruitment":
-        # recruitment sees ONLY their own CVs
-        query = query.filter(
-            cast(CVModel.creator_id, UUID) == user.id
+        # Subquery: approved agent relationships
+        approved_agent_relation = (
+            select(1)
+            .where(
+                AgentRecruitmentModel.agent_id == cast(CVModel.creator_id, UUID),
+                AgentRecruitmentModel.recruitment_id == user.id,
+                func.lower(func.trim(AgentRecruitmentModel.status)) == "approved"
+            )
         )
+
+        query = query.filter(
+            or_(
+                # ✅ CASE 1: creator is NOT agent → allow
+                CreatorUser.role.in_(["employee", "employer"]),
+
+                # ✅ CASE 2: creator is agent → must have approved relation
+                and_(
+                    CreatorUser.role == "agent",
+                    exists(approved_agent_relation)
+                )
+            )
+        )
+    
 
     # -----------------------------------
     # ✅ STEP 3: FILTERS
