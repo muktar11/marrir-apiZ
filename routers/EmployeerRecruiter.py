@@ -648,15 +648,15 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 3: FILTERS
     # -----------------------------------
+
     if nationality:
         query = query.filter(
             CVModel.nationality.ilike(f"%{nationality}%")
         )
 
     if recruiter_residence:
-        query = query.filter(
-            CompanyInfoModel.location.ilike(f"%{recruiter_residence}%")
-        )
+        query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
+
 
     if category:
         query = query.filter(
