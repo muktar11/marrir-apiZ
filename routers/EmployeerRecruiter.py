@@ -413,7 +413,7 @@ from sqlalchemy.orm import aliased
 from sqlalchemy.dialects import postgresql
 from sqlalchemy import or_
 from sqlalchemy import not_
-
+'''
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
     status_code=200
@@ -579,7 +579,170 @@ async def get_promoted_cvs(
         "count": len(data),
         "data": data,
     }
+'''
+@recruiter_reserve_employeer_router.get(
+    "/reserve-promotion-set-for-employeer",
+    status_code=200
+)
+async def get_promoted_cvs(
+    nationality: Optional[str] = Query(None),
+    recruiter_residence: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    CreatorUser = aliased(UserModel)
+    user = context_actor_user_data.get()
 
+    # -----------------------------------
+    # ✅ STEP 1: BASE QUERY
+    # -----------------------------------
+    query = (
+        db.query(CVModel, CreatorUser.role.label("creator_role"))
+        .join(UserModel, UserModel.id == CVModel.user_id)
+        .outerjoin(
+            CreatorUser,
+            CreatorUser.id == cast(CVModel.creator_id, UUID)
+        )
+        # ✅ FIX: Proper join instead of cross join
+        .join(
+            CompanyInfoModel,
+            CompanyInfoModel.user_id == cast(CVModel.creator_id, UUID)
+        )
+    )
+
+    # -----------------------------------
+    # ✅ STEP 2: ROLE-BASED FILTERING
+    # -----------------------------------
+    if user.role == "agent":
+
+        approved_recruitments = (
+            select(AgentRecruitmentModel.recruitment_id)
+            .where(
+                AgentRecruitmentModel.agent_id == user.id,
+                func.lower(func.trim(AgentRecruitmentModel.status)) == "approved"
+            )
+        )
+
+        approved_list = db.execute(approved_recruitments).scalars().all()
+        print("APPROVED RECRUITMENTS:", approved_list)
+
+        if approved_list:
+            query = query.filter(
+                cast(CVModel.creator_id, UUID).in_(approved_recruitments)
+            )
+            # agent should not see their own CVs
+            query = query.filter(
+                cast(CVModel.creator_id, UUID) != user.id
+            )
+        else:
+            query = query.filter(False)
+
+    elif user.role == "recruitment":
+        # recruitment sees ONLY their own CVs
+        query = query.filter(
+            cast(CVModel.creator_id, UUID) == user.id
+        )
+
+    # -----------------------------------
+    # ✅ STEP 3: FILTERS
+    # -----------------------------------
+    if nationality:
+        query = query.filter(
+            CVModel.nationality.ilike(f"%{nationality}%")
+        )
+
+    if recruiter_residence:
+        query = query.filter(
+            CompanyInfoModel.location.ilike(f"%{recruiter_residence}%")
+        )
+
+    if category:
+        query = query.filter(
+            or_(
+                CVModel.employment_types.ilike(f'{{{category}}}'),
+                CVModel.employment_types.ilike(f'{{"{category}"}}'),
+                CVModel.employment_types.ilike(f'{{{category},%'),
+                CVModel.employment_types.ilike(f'{{"{category}",%'),
+                CVModel.employment_types.ilike(f'%,{category},%'),
+                CVModel.employment_types.ilike(f'%,"{category}",%'),
+                CVModel.employment_types.ilike(f'%,{category}}}'),
+                CVModel.employment_types.ilike(f'%,"{category}"}}')
+            )
+        )
+
+    # -----------------------------------
+    # ✅ STEP 4: EXCLUSIONS
+    # -----------------------------------
+    query = query.filter(
+        ~exists(
+            select(1).where(
+                cast(RecruitmentSetReserveModel.cv_id, UUID)
+                == CVModel.user_id,
+                RecruitmentSetReserveModel.status.in_(
+                    ["reserved", "approved", "pending"]
+                )
+            )
+        )
+    )
+
+    query = query.filter(
+        ~exists(
+            select(1).where(
+                cast(
+                    RecruitmentAgentPrivateReserveModel.employee_id,
+                    UUID
+                ) == CVModel.user_id
+            )
+        )
+    )
+
+    # -----------------------------------
+    # ✅ STEP 5: DEBUG QUERY
+    # -----------------------------------
+    print(
+        query.statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+
+    # -----------------------------------
+    # ✅ STEP 6: EXECUTE
+    # -----------------------------------
+    results = query.all()
+
+    data = []
+    for cv, creator_role in results:
+        data.append({
+            "cv": {
+                "user_id": cv.user_id,
+                "passport_number": cv.passport_number,
+                "english_full_name": cv.english_full_name,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "nationality": cv.nationality,
+                "phone_number": cv.phone_number,
+                "email": cv.email,
+                "sex": cv.sex,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "head_photo": cv.head_photo,
+                "date_of_birth": cv.date_of_birth,
+                "creator_id": cv.creator_id,
+                "creator_role": creator_role if cv.creator_id else None
+            }
+        })
+
+    return {
+        "status_code": 200,
+        "message": "Available CVs fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data,
+    }
 
 
 from uuid import UUID
@@ -1661,9 +1824,7 @@ def verify_payment(
     resourcePath: str = Query(None),
     db: Session = Depends(get_db)
 ):
-
     logger.info("Verifying payment...")
-
     if not id or not resourcePath:
         return {"status": "failed"}
 
