@@ -702,6 +702,7 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 4: EXCLUSIONS
     # -----------------------------------
+    '''
     query = query.filter(
         ~exists(
             select(1).where(
@@ -713,6 +714,7 @@ async def get_promoted_cvs(
             )
         )
     )
+    '''
 
     query = query.filter(
         ~exists(
@@ -830,6 +832,7 @@ async def sponsor_create_private_reserve(
     }
 """
 
+'''
 @recruiter_reserve_employeer_router.post(
     "/private-reserve-employeer",
     status_code=201
@@ -879,6 +882,95 @@ async def sponsor_create_private_reserve(
         cv_id=payload.cv_id,
         passport_number=payload.passport_number
     )
+
+    db.add(new_reserve)
+    db.commit()
+    db.refresh(new_reserve)
+
+    return {
+        "status_code": 201,
+        "message": "Private reservation created successfully",
+        "error": False,
+        "data": {
+            "recruitment_id": new_reserve.recruitment_id,
+            "sponsor_id": new_reserve.sponsor_id,
+            "cv_id": new_reserve.cv_id,
+            "employee_id": new_reserve.employee_id,
+            "agent_id": new_reserve.agent_id,
+            "selfsponsor_id": new_reserve.selfsponsor_id,
+            "status": new_reserve.status
+        }
+    }
+'''
+@recruiter_reserve_employeer_router.post(
+    "/private-reserve-employeer",
+    status_code=201
+)
+async def sponsor_create_private_reserve(
+    payload: PrivateReserveCreateSchema,
+    db: Session = Depends(get_db_raw),
+):
+    """
+    Universal private reservation (works for all roles)
+    """
+
+    # ✅ Ensure at least one target exists
+    if not any([
+        payload.employee_id,
+        payload.recruitment_id,
+        payload.sponsor_id,
+        payload.agent_id,
+        payload.selfsponsor_id
+    ]):
+        raise HTTPException(
+            status_code=400,
+            detail="A target (employee, recruitment, agent, sponsor, selfsponsor) must be provided"
+        )
+
+    # ✅ Check duplicate
+    existing = db.query(RecruitmentAgentPrivateReserveModel).filter(
+        RecruitmentAgentPrivateReserveModel.cv_id == payload.cv_id,
+    ).first()
+
+    if existing:
+        return {
+            "status_code": 200,
+            "message": "Reservation already exists",
+            "error": False,
+            "data": {
+                "recruitment_id": existing.recruitment_id,
+                "sponsor_id": existing.sponsor_id,
+                "employee_id": existing.employee_id,
+                "agent_id": existing.agent_id,
+                "status": existing.status
+            }
+        }
+
+    # ✅ Create model
+    new_reserve = RecruitmentAgentPrivateReserveModel(
+        cv_id=payload.cv_id,
+        passport_number=payload.passport_number,
+
+        # target (CV owner)
+        agent_id=payload.agent_id,
+        recruitment_id=payload.recruitment_id,
+        sponsor_id=payload.sponsor_id,
+        selfsponsor_id=payload.selfsponsor_id,
+        employee_id=payload.employee_id,
+    )
+
+    # ✅ Assign ACTOR safely (no overwrite)
+    if payload.actor_role == "agent":
+        if not new_reserve.agent_id:
+            new_reserve.agent_id = payload.actor_id
+
+    elif payload.actor_role == "recruitment":
+        if not new_reserve.recruitment_id:
+            new_reserve.recruitment_id = payload.actor_id
+
+    elif payload.actor_role == "employer":
+        if not new_reserve.sponsor_id:
+            new_reserve.sponsor_id = payload.actor_id
 
     db.add(new_reserve)
     db.commit()
