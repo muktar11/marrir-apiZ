@@ -1604,7 +1604,7 @@ async def get_accepted_reserves_by_role(
     # Base query: only ACCEPTED reserves
 
     user_uuid = str(uuid.UUID(user_id))
-    user_uuid_new = UUID(user_id) 
+    user_uuid_new = uuid.UUID(user_id) 
     query = db.query(RecruitmentAgentPrivateReserveModel).filter(
         RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.ACCEPTED
     )
