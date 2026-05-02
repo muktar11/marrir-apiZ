@@ -235,6 +235,8 @@ class PrivateReserveCreateSchema(BaseModel):
     agent_id: Optional[uuid.UUID] = None
     cv_id: Optional[uuid.UUID] = None
     passport_number: Optional[str] = None
+    actor_id: Optional[uuid.UUID] = None
+    actor_role: Optional[str] = None
 
 class ApproveReserveSchema(BaseModel):
     reserve_id: int  # The ID of the reservation to approve
