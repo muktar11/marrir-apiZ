@@ -2845,8 +2845,6 @@ async def approve_sponsor_private_reserve_for_recruiter(
         .filter(
             RecruitmentAgentPrivateReserveModel.recruitment_id == recruiter_uuid,
             RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
-            RecruitmentAgentPrivateReserveModel.agent_id.is_(None),
         )
         .first()
     )
