@@ -614,9 +614,11 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ❗ ALWAYS EXCLUDE OWN CVs
     # -----------------------------------
+    '''
     query = query.filter(
         cast(CVModel.creator_id, UUID) != user.id
     )
+    '''
 
     # -----------------------------------
     # ✅ STEP 2: ROLE-BASED FILTERING
