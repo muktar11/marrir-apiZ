@@ -702,20 +702,8 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 4: EXCLUSIONS
     # -----------------------------------
-    '''
-    query = query.filter(
-        ~exists(
-            select(1).where(
-                cast(RecruitmentSetReserveModel.cv_id, UUID)
-                == CVModel.user_id,
-                RecruitmentSetReserveModel.status.in_(
-                    ["reserved", "approved", "pending"]
-                )
-            )
-        )
-    )
-    '''
 
+    '''
     query = query.filter(
         ~exists(
             select(1).where(
@@ -726,6 +714,7 @@ async def get_promoted_cvs(
             )
         )
     )
+    '''
 
     # -----------------------------------
     # ✅ STEP 5: DEBUG QUERY
