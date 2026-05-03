@@ -598,6 +598,7 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 1: BASE QUERY
     # -----------------------------------
+    '''    
     query = (
         db.query(CVModel, CreatorUser.role.label("creator_role"))
         .join(UserModel, UserModel.id == CVModel.user_id)
@@ -610,15 +611,29 @@ async def get_promoted_cvs(
             CompanyInfoModel.user_id == cast(CVModel.creator_id, UUID)
         )
     )
+    '''
 
+    query = (
+        db.query(CVModel, CreatorUser.role.label("creator_role"))
+        .join(UserModel, UserModel.id == CVModel.user_id)
+        .outerjoin(
+            CreatorUser,
+            CreatorUser.id == cast(CVModel.creator_id, UUID)
+        ).outerjoin(
+            CompanyInfoModel,
+            CompanyInfoModel.user_id == cast(CVModel.creator_id, UUID)
+        )
+    )
+
+# FIX 2
     # -----------------------------------
     # ❗ ALWAYS EXCLUDE OWN CVs
     # -----------------------------------
-    '''
+    
     query = query.filter(
         cast(CVModel.creator_id, UUID) != user.id
     )
-    '''
+    
 
     # -----------------------------------
     # ✅ STEP 2: ROLE-BASED FILTERING
@@ -677,15 +692,24 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 3: FILTERS
     # -----------------------------------
-    '''
+    
     if nationality:
         query = query.filter(
             CVModel.nationality.ilike(f"%{nationality}%")
         )
-
+    '''
     if recruiter_residence:
         query = query.filter(
             CompanyInfoModel.location.ilike(f"%{recruiter_residence}%")
+        )
+    '''
+    
+    if recruiter_residence:
+        query = query.filter(
+            or_(
+                CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"),
+                CompanyInfoModel.user_id.is_(None)
+            )
         )
 
     if category:
@@ -701,12 +725,12 @@ async def get_promoted_cvs(
                 CVModel.employment_types.ilike(f'%,"{category}"}}')
             )
         )
-    '''
+    
     # -----------------------------------
     # ✅ STEP 4: EXCLUSIONS
     # -----------------------------------
 
-    '''
+    
     query = query.filter(
         ~exists(
             select(1).where(
@@ -717,7 +741,7 @@ async def get_promoted_cvs(
             )
         )
     )
-    '''
+    
 
     # -----------------------------------
     # ✅ STEP 5: DEBUG QUERY
