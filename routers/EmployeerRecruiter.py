@@ -677,6 +677,7 @@ async def get_promoted_cvs(
     # -----------------------------------
     # ✅ STEP 3: FILTERS
     # -----------------------------------
+    '''
     if nationality:
         query = query.filter(
             CVModel.nationality.ilike(f"%{nationality}%")
@@ -700,7 +701,7 @@ async def get_promoted_cvs(
                 CVModel.employment_types.ilike(f'%,"{category}"}}')
             )
         )
-
+    '''
     # -----------------------------------
     # ✅ STEP 4: EXCLUSIONS
     # -----------------------------------
