@@ -75,9 +75,6 @@ class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
     recruitment_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("table_users.id"), nullable=True
     )
-    #agent_id: Mapped[uuid.UUID] = mapped_column(
-    #    ForeignKey("table_users.id"), nullable=True
-    #)
     agent_id: Mapped[uuid.UUID] = mapped_column(
         pgUUID(as_uuid=True),
         ForeignKey("table_users.id"),
@@ -96,6 +93,9 @@ class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
         default=110
     )
     status: Mapped[str] = mapped_column(String, default=TransferStatusSchema.PENDING)
+    accepted_by = Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
     recruitment = relationship("UserModel", backref="recruitment_agent_private_reserve", lazy="select", foreign_keys=[recruitment_id])
     agent = relationship("UserModel", backref="agent_agent_private_reserve", lazy="select", foreign_keys=[agent_id])
     sponsor = relationship("UserModel", backref="sponsor_agent_private_reserve", lazy="select", foreign_keys=[sponsor_id])
