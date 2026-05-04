@@ -2634,7 +2634,9 @@ async def get_employeer_reserve_requests(
 async def approve_sponsor_private_reserve(
     employee_id: str,
     payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw)
+    db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context), 
 ):
     """
     Approve a pending private reservation created by a sponsor (employer).
@@ -2669,8 +2671,10 @@ async def approve_sponsor_private_reserve(
         )
 
     # Step 2: Approve reservation
+    user = context_actor_user_data.get()
     reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.accepted_by = user.id
 
     try:
         db.commit()
@@ -2768,7 +2772,9 @@ async def get_employer_company_accepted_reserves(
 async def approve_agency_private_reserve(
     employee_id: str,
     payload: ApproveAgencyReserveSchema,
-    db: Session = Depends(get_db_raw)
+    db: Session = Depends(get_db_raw),
+     _=Depends(authentication_context),
+    __=Depends(build_request_context),
     
 ):
     """
@@ -2808,8 +2814,10 @@ async def approve_agency_private_reserve(
         )
 
     # Step 2: Approve reservation
+    user = context_actor_user_data.get()
     reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.accepted_by = user.id
 
     try:
         db.commit()
@@ -2839,6 +2847,8 @@ async def approve_sponsor_private_reserve_for_recruiter(
     recruiter_id: str,  # UUID of the recruiter approving
     payload: ApproveAgencyReserveSchema,
     db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
 ):
     """
     Approve a pending private reservation created by a sponsor (employer) for a recruiter.
@@ -2872,8 +2882,10 @@ async def approve_sponsor_private_reserve_for_recruiter(
         )
 
     # Step 2: Approve reservation
+    user = context_actor_user_data.get()
     reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.accepted_by = user.id
 
     try:
         db.commit()
@@ -2904,6 +2916,8 @@ async def approve_sponsor_private_reserve_for_agent(
     agent_id: str,  # UUID of the agent approving
     payload: ApproveAgencyReserveSchema,
     db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
 ):
     """
     Approve a pending private reservation created by a sponsor (employer) for an agent.
@@ -2939,8 +2953,10 @@ async def approve_sponsor_private_reserve_for_agent(
         )
 
     # Step 2: Approve reservation
+    user = context_actor_user_data.get()
     reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.accepted_by = user.id
 
     try:
         db.commit()
@@ -2973,6 +2989,8 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
     selfsponsor_id: str,  # UUID of the selfsponsor approving
     payload: ApproveAgencyReserveSchema,
     db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
 ):
     """
     Approve a pending private reservation created by a sponsor (employer) for a selfsponsor     .
@@ -3010,8 +3028,11 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
         )
 
     # Step 2: Approve reservation
+    user = context_actor_user_data.get()
     reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.accepted_by = user.id
 
     try:
         db.commit()
