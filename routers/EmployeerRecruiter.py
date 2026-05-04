@@ -1470,13 +1470,15 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
     reserve_id: int,   # ✅ FIX HERE
     payload: ApproveAgencyReserveSchema,
     db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),  # ✅ get logged user
+    
 ):
     reserve = (
         db.query(RecruitmentAgentPrivateReserveModel)
         .filter(
             RecruitmentAgentPrivateReserveModel.id == reserve_id,  # ✅ FIX
             RecruitmentAgentPrivateReserveModel.status == TransferStatusSchema.PENDING,
-            RecruitmentAgentPrivateReserveModel.sponsor_id.isnot(None),
         )
         .first()
     )
@@ -1486,9 +1488,11 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
             status_code=404,
             detail="Pending reservation not found"
         )
-
+    
+    user = context_actor_user_data.get()
     reserve.with_passport = payload.with_passport
     reserve.status = TransferStatusSchema.ACCEPTED
+    reserve.accepted_by = user.id 
 
     try:
         db.commit()
@@ -1531,10 +1535,6 @@ async def get_accepted_reserves_by_role(
 
     user_uuid = str(uuid.UUID(user_id))
 
-
-    #query = db.query(RecruitmentAgentPrivateReserveModel).filter(
-    #    RecruitmentAgentPrivateReserveModel.is_reserved.is_(False)
-    #)
     query = db.query(RecruitmentAgentPrivateReserveModel)
 
     if role == "recruiter":
