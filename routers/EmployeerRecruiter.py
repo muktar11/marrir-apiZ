@@ -1571,7 +1571,7 @@ async def get_accepted_reserves_by_role(
     data = []
     for reserve in reserves:
         accepted_by_me = (
-            reserve.accepted_by is not None and reserve.accepted_by == user_uuid
+            reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
         )
         data.append({
             "reserve_id": reserve.id,
