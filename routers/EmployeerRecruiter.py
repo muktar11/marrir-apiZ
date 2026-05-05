@@ -1653,6 +1653,9 @@ async def get_accepted_reserves_by_role(
     # Build response
     data = []
     for reserve in reserves:
+        accepted_by_me = (
+            reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
+        )
         items = {
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
@@ -1669,6 +1672,7 @@ async def get_accepted_reserves_by_role(
             "price": reserve.price,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
+            "accepted_by_me": accepted_by_me,
         }
         data.append(items)
         
