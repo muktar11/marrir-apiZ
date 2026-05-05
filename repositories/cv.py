@@ -1579,6 +1579,15 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         employment_types = normalize_string_list(getattr(entity, "employment_types", None))
         flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
 
+        logger.debug(
+            "CV export download values | user_id=%s | raw_employment_types=%r | normalized_employment_types=%r | raw_flexi_durations=%r | normalized_flexi_durations=%r",
+            getattr(entity, "user_id", None),
+            getattr(entity, "employment_types", None),
+            employment_types,
+            getattr(entity, "flexi_durations", None),
+            flexi_durations,
+        )
+
 
 
         try:
@@ -1780,6 +1789,31 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         
         video_url = f"{video_url}" if video_url else None
 
+        def normalize_string_list(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if item]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item]
+                except Exception:
+                    pass
+                return [
+                    item.strip().strip('"').strip("'")
+                    for item in text.strip("{}[]").split(",")
+                    if item and item.strip()
+                ]
+            return [str(value).strip()]
+
+        employment_types = normalize_string_list(getattr(entity, "employment_types", None))
+        flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
+
 
 
         try:
@@ -1795,7 +1829,9 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 owner=owner_data,
                 description=getattr(entity, 'summary', ''),
                 age=age,
-                video_url=video_url
+                video_url=video_url,
+                employment_types=employment_types,
+                flexi_durations=flexi_durations
             )
             
             logger.info(f"Successfully generated PDF content for CV: {entity.id}")
