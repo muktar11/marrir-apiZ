@@ -1625,38 +1625,65 @@ async def get_accepted_reserves_by_role(
         # --------------------------------
     # DEBUG RESERVES
     # --------------------------------
-    print("\n===== RESERVES =====")
+    print("\n========== RESERVES ==========")
 
-    reserves_debug = db.query(
+    reserves = db.query(
         RecruitmentAgentPrivateReserveModel
-    ).limit(20).all()
+    ).all()
 
-    for r in reserves_debug:
-        print({
-            "reserve_id": r.id,
-            "cv_id": r.cv_id,
-            "employee_id": r.employee_id,
-            "recruitment_id": r.recruitment_id,
-            "agent_id": r.agent_id,
-            "sponsor_id": r.sponsor_id,
-        })
+    for r in reserves:
+        print(
+            "RESERVE:",
+            {
+                "reserve_id": r.id,
+                "cv_id": r.cv_id,
+                "employee_id": r.employee_id,
+                "agent_id": r.agent_id,
+                "recruitment_id": r.recruitment_id,
+            }
+        )
 
-    # --------------------------------
-    # DEBUG CVS
-    # --------------------------------
-    print("\n===== CVS =====")
+    print("\n========== CVS ==========")
 
-    cvs_debug = db.query(CVModel).limit(20).all()
+    cvs = db.query(CVModel).all()
 
-    for cv in cvs_debug:
-        print({
-            "cv_table_id": cv.id,
-            "cv_user_id": cv.user_id,
-            "cv_creator_id": cv.creator_id,
-            "passport_number": cv.passport_number,
-            "english_full_name": cv.english_full_name,
-        })
+    for cv in cvs:
+        print(
+            "CV:",
+            {
+                "cv_table_id": cv.id,
+                "cv_user_id": cv.user_id,
+                "english_full_name": cv.english_full_name,
+            }
+        )
 
+    print("\n========== MATCH TEST ==========")
+
+    for r in reserves:
+
+        matched = False
+
+        for cv in cvs:
+
+            if str(r.cv_id) == str(cv.user_id):
+                print(
+                    f"MATCH USER_ID -> reserve {r.id} "
+                    f"matches CV.user_id {cv.user_id}"
+                )
+                matched = True
+
+            if str(r.cv_id) == str(cv.id):
+                print(
+                    f"MATCH TABLE_ID -> reserve {r.id} "
+                    f"matches CV.id {cv.id}"
+                )
+                matched = True
+
+        if not matched:
+            print(
+                f"NO MATCH -> reserve {r.id} "
+                f"cv_id={r.cv_id}"
+            )
     
 
     # --------------------------------
