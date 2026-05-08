@@ -1622,6 +1622,43 @@ async def get_accepted_reserves_by_role(
         RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id
     )
 
+        # --------------------------------
+    # DEBUG RESERVES
+    # --------------------------------
+    print("\n===== RESERVES =====")
+
+    reserves_debug = db.query(
+        RecruitmentAgentPrivateReserveModel
+    ).limit(20).all()
+
+    for r in reserves_debug:
+        print({
+            "reserve_id": r.id,
+            "cv_id": r.cv_id,
+            "employee_id": r.employee_id,
+            "recruitment_id": r.recruitment_id,
+            "agent_id": r.agent_id,
+            "sponsor_id": r.sponsor_id,
+        })
+
+    # --------------------------------
+    # DEBUG CVS
+    # --------------------------------
+    print("\n===== CVS =====")
+
+    cvs_debug = db.query(CVModel).limit(20).all()
+
+    for cv in cvs_debug:
+        print({
+            "cv_table_id": cv.id,
+            "cv_user_id": cv.user_id,
+            "cv_creator_id": cv.creator_id,
+            "passport_number": cv.passport_number,
+            "english_full_name": cv.english_full_name,
+        })
+
+    
+
     # --------------------------------
     # ROLE FILTERS
     # --------------------------------
