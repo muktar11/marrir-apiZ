@@ -1587,6 +1587,8 @@ async def get_accepted_reserves_by_role(
         "data": data
     }
 '''
+from sqlalchemy import String
+
 @recruiter_reserve_employeer_router.get(
     "/all/pending-reserves/reserves/incoming",
     status_code=200
@@ -1607,12 +1609,17 @@ async def get_accepted_reserves_by_role(
     # --------------------------------
     # BASE QUERY WITH OUTER JOIN
     # --------------------------------
+
+
+
     query = db.query(
         RecruitmentAgentPrivateReserveModel,
         CVModel
     ).outerjoin(
         CVModel,
-        RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id
+        cast(RecruitmentAgentPrivateReserveModel.cv_id, String)
+        ==
+        cast(CVModel.user_id, String)
     )
 
     # --------------------------------
