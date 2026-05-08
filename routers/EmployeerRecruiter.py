@@ -1587,6 +1587,7 @@ async def get_accepted_reserves_by_role(
         "data": data
     }
 '''
+
 from sqlalchemy import String
 
 @recruiter_reserve_employeer_router.get(
@@ -1611,15 +1612,14 @@ async def get_accepted_reserves_by_role(
     # --------------------------------
 
 
-
+    #query = db.query(RecruitmentAgentPrivateReserveModel)
+    #query = query.filter(RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id)
     query = db.query(
         RecruitmentAgentPrivateReserveModel,
         CVModel
     ).outerjoin(
         CVModel,
-        cast(RecruitmentAgentPrivateReserveModel.cv_id, String)
-        ==
-        cast(CVModel.user_id, String)
+        RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id
     )
 
     # --------------------------------
