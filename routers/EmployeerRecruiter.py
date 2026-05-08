@@ -1692,16 +1692,7 @@ async def get_accepted_reserves_by_role(
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
             "accepted_by_me": accepted_by_me,
-
-            "cv": {
-                "id": cv.id,
-                "english_full_name": cv.english_full_name,
-                "phone_number": cv.phone_number,
-                "nationality": cv.nationality,
-                "occupation": cv.occupation,
-                "passport_number": cv.passport_number,
-                "head_photo": cv.head_photo,
-            } if cv else None
+            "cv_user_id": cv.user_id if cv else None,  
         })
 
     return {
