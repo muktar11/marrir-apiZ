@@ -1614,77 +1614,30 @@ async def get_accepted_reserves_by_role(
 
     #query = db.query(RecruitmentAgentPrivateReserveModel)
     #query = query.filter(RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id)
-    query = db.query(
-        RecruitmentAgentPrivateReserveModel,
-        CVModel
-    ).outerjoin(
-        CVModel,
-        RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id
+    query = (
+        db.query(
+            RecruitmentAgentPrivateReserveModel,
+            UserModel,
+            CVModel
+        )
+        .outerjoin(
+            UserModel,
+            RecruitmentAgentPrivateReserveModel.cv_id == UserModel.id
+        )
+        .outerjoin(
+            CVModel,
+            UserModel.id == CVModel.user_id
+        )
     )
+
+    results = query.order_by(
+        RecruitmentAgentPrivateReserveModel.created_at.desc()
+    ).all()
 
         # --------------------------------
     # DEBUG RESERVES
     # --------------------------------
-    print("\n========== RESERVES ==========")
 
-    reserves = db.query(
-        RecruitmentAgentPrivateReserveModel
-    ).all()
-
-    for r in reserves:
-        print(
-            "RESERVE:",
-            {
-                "reserve_id": r.id,
-                "cv_id": r.cv_id,
-                "employee_id": r.employee_id,
-                "agent_id": r.agent_id,
-                "recruitment_id": r.recruitment_id,
-            }
-        )
-
-    print("\n========== CVS ==========")
-
-    cvs = db.query(CVModel).all()
-
-    for cv in cvs:
-        print(
-            "CV:",
-            {
-                "cv_table_id": cv.id,
-                "cv_user_id": cv.user_id,
-                "english_full_name": cv.english_full_name,
-            }
-        )
-
-    print("\n========== MATCH TEST ==========")
-
-    for r in reserves:
-
-        matched = False
-
-        for cv in cvs:
-
-            if str(r.cv_id) == str(cv.user_id):
-                print(
-                    f"MATCH USER_ID -> reserve {r.id} "
-                    f"matches CV.user_id {cv.user_id}"
-                )
-                matched = True
-
-            if str(r.cv_id) == str(cv.id):
-                print(
-                    f"MATCH TABLE_ID -> reserve {r.id} "
-                    f"matches CV.id {cv.id}"
-                )
-                matched = True
-
-        if not matched:
-            print(
-                f"NO MATCH -> reserve {r.id} "
-                f"cv_id={r.cv_id}"
-            )
-    
 
     # --------------------------------
     # ROLE FILTERS
@@ -1739,31 +1692,34 @@ async def get_accepted_reserves_by_role(
     # --------------------------------
     data = []
 
-    for reserve, cv in results:
+    for reserve, user, cv in results:
 
         accepted_by_me = (
             reserve.accepted_by is not None
             and reserve.accepted_by == uuid.UUID(user_uuid)
         )
 
+
         data.append({
             "reserve_id": reserve.id,
-            "recruitment_id": reserve.recruitment_id,
-            "agent_id": reserve.agent_id,
-            "sponsor_id": reserve.sponsor_id,
-            "selfsponsor_id": reserve.selfsponsor_id,
-            "employee_id": reserve.employee_id,
-            "status": reserve.status,
-            "with_passport": reserve.with_passport,
-            "passport_number": reserve.passport_number,
-            "price": reserve.price,
-            "is_paid": getattr(reserve, "is_paid", False),
-            "is_reserved": getattr(reserve, "is_reserved", False),
             "cv_id": reserve.cv_id,
-            "created_at": reserve.created_at,
-            "updated_at": reserve.updated_at,
             "accepted_by_me": accepted_by_me,
-            "cv_user_id": cv.user_id if cv else None,  
+
+            "user": {
+                "id": user.id,
+                "first_name": user.first_name,
+                "last_name": user.last_name,
+                "email": user.email,
+            } if user else None,
+
+            "cv": {
+                "cv_table_id": cv.id,
+                "english_full_name": cv.english_full_name,
+                "phone_number": cv.phone_number,
+                "nationality": cv.nationality,
+                "passport_number": cv.passport_number,
+                "head_photo": cv.head_photo,
+            } if cv else None
         })
 
     return {
