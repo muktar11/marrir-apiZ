@@ -1497,6 +1497,7 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
         },
     }
 
+'''
 from sqlalchemy import func
 
 @recruiter_reserve_employeer_router.get(
@@ -1585,7 +1586,129 @@ async def get_accepted_reserves_by_role(
         "count": len(data),
         "data": data
     }
+'''
 
+@recruiter_reserve_employeer_router.get(
+    "/all/pending-reserves/reserves/incoming",
+    status_code=200
+)
+async def get_accepted_reserves_by_role(
+    user_id: str,
+    role: str,
+    db: Session = Depends(get_db_raw)
+):
+    """
+    Retrieve RecruitmentAgentPrivateReserveModel by role
+    along with related CVModel data.
+    """
+
+    # Validate UUID
+    try:
+        user_uuid = UUID(user_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid UUID")
+
+    user_uuid = str(uuid.UUID(user_id))
+
+    query = db.query(RecruitmentAgentPrivateReserveModel)
+
+    if role == "recruiter":
+        query = query.filter(
+            RecruitmentAgentPrivateReserveModel.recruitment_id == cast(user_uuid, pgUUID)
+        )
+
+    elif role == "agent":
+        query = query.filter(
+            RecruitmentAgentPrivateReserveModel.agent_id == cast(user_uuid, pgUUID)
+        )
+
+    elif role == "sponsor":
+        query = query.filter(
+            RecruitmentAgentPrivateReserveModel.sponsor_id == cast(user_uuid, pgUUID)
+        )
+
+    elif role == "employee":
+        query = query.filter(
+            cast(func.trim(RecruitmentAgentPrivateReserveModel.employee_id), pgUUID)
+            == cast(user_uuid, pgUUID)
+        )
+
+    else:
+        raise HTTPException(status_code=400, detail="Invalid role")
+
+    # Execute query
+    try:
+        reserves = query.order_by(
+            RecruitmentAgentPrivateReserveModel.created_at.desc()
+        ).all()
+
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    # -----------------------------
+    # FETCH RELATED CV MODELS
+    # -----------------------------
+    cv_ids = [reserve.cv_id for reserve in reserves if reserve.cv_id]
+
+    cvs = (
+        db.query(CVModel)
+        .filter(CVModel.id.in_(cv_ids))
+        .all()
+    )
+
+    # Convert CV list into dictionary for quick lookup
+    cv_map = {str(cv.id): cv for cv in cvs}
+
+    # -----------------------------
+    # BUILD RESPONSE
+    # -----------------------------
+    data = []
+
+    for reserve in reserves:
+
+        accepted_by_me = (
+            reserve.accepted_by is not None
+            and reserve.accepted_by == uuid.UUID(user_uuid)
+        )
+
+        cv = cv_map.get(str(reserve.cv_id))
+
+        data.append({
+            "reserve_id": reserve.id,
+            "recruitment_id": reserve.recruitment_id,
+            "agent_id": reserve.agent_id,
+            "sponsor_id": reserve.sponsor_id,
+            "selfsponsor_id": reserve.selfsponsor_id,
+            "employee_id": reserve.employee_id,
+            "status": reserve.status,
+            "with_passport": reserve.with_passport,
+            "passport_number": reserve.passport_number,
+            "price": reserve.price,
+            "is_paid": getattr(reserve, "is_paid", False),
+            "is_reserved": getattr(reserve, "is_reserved", False),
+            "cv_id": reserve.cv_id,
+            "created_at": reserve.created_at,
+            "updated_at": reserve.updated_at,
+            "accepted_by_me": accepted_by_me,
+
+            # CV DATA
+            "cv": {
+                "id": cv.id,
+                "full_name": cv.full_name,
+                "phone": cv.phone,
+                "nationality": cv.nationality,
+                "category": cv.category,
+                "experience_years": cv.experience_years,
+            } if cv else None
+        })
+
+    return {
+        "status_code": 200,
+        "message": f"{role} reserves fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data
+    }
 
 
 @recruiter_reserve_employeer_router.get(
