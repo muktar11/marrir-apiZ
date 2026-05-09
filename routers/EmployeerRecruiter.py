@@ -1499,6 +1499,9 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
 
 
 from sqlalchemy import func
+from sqlalchemy.orm import aliased
+from sqlalchemy import func
+
 
 @recruiter_reserve_employeer_router.get(
     "/all/pending-reserves/reserves/incoming",
@@ -1523,7 +1526,7 @@ async def get_accepted_reserves_by_role(
     user_uuid = str(uuid.UUID(user_id))
 
     #query = db.query(RecruitmentAgentPrivateReserveModel)
-
+    '''
     query = db.query(
         RecruitmentAgentPrivateReserveModel,
         CVModel,
@@ -1535,6 +1538,33 @@ async def get_accepted_reserves_by_role(
     ).outerjoin(
         EmployeeModel,
         EmployeeModel.user_id == CVModel.user_id
+    )
+    '''
+    latest_employee_subquery = (
+    db.query(
+            EmployeeModel.user_id,
+            func.max(EmployeeModel.id).label("max_id")
+        )
+        .group_by(EmployeeModel.user_id)
+        .subquery()
+    )
+
+    LatestEmployee = aliased(EmployeeModel)
+
+    query = db.query(
+        RecruitmentAgentPrivateReserveModel,
+        CVModel,
+        LatestEmployee
+    ).outerjoin(
+        CVModel,
+        RecruitmentAgentPrivateReserveModel.passport_number
+        == CVModel.passport_number
+    ).outerjoin(
+        latest_employee_subquery,
+        latest_employee_subquery.c.user_id == CVModel.user_id
+    ).outerjoin(
+        LatestEmployee,
+        LatestEmployee.id == latest_employee_subquery.c.max_id
     )
 
     if role == "recruiter":
