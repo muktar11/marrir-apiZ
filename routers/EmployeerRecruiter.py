@@ -1646,7 +1646,7 @@ async def get_accepted_reserves_by_role(
 
     # Build response
     data = []
-    for reserve in reserves:
+    for reserve, cv in reserves:
         accepted_by_me = (
             reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
         )
@@ -1667,6 +1667,12 @@ async def get_accepted_reserves_by_role(
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
             "accepted_by_me": accepted_by_me,
+            "cv": {
+                "cv_table_id": cv.id,
+                "cv_table_user_id": cv.user_id,
+                "passport_number": cv.passport_number,
+                
+            } if cv else None
         }
         data.append(items)
         
