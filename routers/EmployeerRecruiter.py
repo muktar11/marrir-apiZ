@@ -1573,16 +1573,16 @@ async def get_accepted_reserves_by_role(
     for reserve, cv in reserves:
         
         employee = None
-
+        
         if cv:
             employee = db.query(EmployeeModel).filter(
                 EmployeeModel.user_id == cv.user_id
-            ).first
+            ).first()
 
-        
-        accepted_by_me = (
-            reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
-        )
+            
+            accepted_by_me = (
+                reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
+            )
         data.append({
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
