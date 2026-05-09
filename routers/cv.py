@@ -2,7 +2,7 @@ from datetime import datetime
 from http.client import HTTPException
 import json
 import logging
-from io import BytesIO 
+from io import BytesIO  
 from typing import Any, Optional
 import uuid
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
@@ -410,6 +410,61 @@ async def generate_cv_report(
         
         logger.info("Starting PDF generation process")
         cv_created = cv_repo.export_to_pdf_download(
+            db, request=request, title="Curriculum Vitae", filters=filters
+        )
+
+        res_data = context_set_response_code_message.get()
+        response.status_code = res_data.status_code
+        
+        logger.info(f"PDF generation completed with status code: {res_data.status_code}")
+        logger.debug(f"Response message: {res_data.message}")
+        
+        if res_data.error:
+            logger.warning(f"PDF generation completed with error: {res_data.message}")
+        else:
+            logger.info("PDF generated successfully")
+
+        return {
+            "status_code": res_data.status_code,
+            "message": res_data.message,
+            "error": res_data.error,
+            "data": cv_created,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating CV report: {str(e)}", exc_info=True)
+        raise HTTPException(
+           
+            detail="An error occurred while generating the CV report"
+        )
+    
+
+@cv_router.post(
+    "/generate-report/download/passport",
+    response_model=None,
+    status_code=200,
+)
+async def generate_cv_report(
+    *,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+    filters: Optional[CVFilterSchema] = None,
+    request: Request,
+    response: Response,
+) -> Any:
+    """
+    generate cv report.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Received CV report generation request")
+    logger.debug(f"Request filters: {filters}")
+
+    try:
+        db = get_db_session()
+        cv_repo = CVRepository(entity=CVModel)
+        
+        logger.info("Starting PDF generation process")
+        cv_created = cv_repo.export_to_pdf_download_passport(
             db, request=request, title="Curriculum Vitae", filters=filters
         )
 
