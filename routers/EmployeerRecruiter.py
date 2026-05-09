@@ -1529,8 +1529,7 @@ async def get_accepted_reserves_by_role(
     
     query = db.query(
         RecruitmentAgentPrivateReserveModel,
-        CVModel,
-        EmployeeModel
+        CVModel
     ).outerjoin(
         CVModel,
         RecruitmentAgentPrivateReserveModel.passport_number
@@ -1571,7 +1570,7 @@ async def get_accepted_reserves_by_role(
     data = []
    
 
-    for reserve, cv, employee in reserves:
+    for reserve, cv in reserves:
         
         employee = None
 
@@ -1579,6 +1578,7 @@ async def get_accepted_reserves_by_role(
             employee = db.query(EmployeeModel).filter(
                 EmployeeModel.user_id == cv.user_id
             ).first
+
         
         accepted_by_me = (
             reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
