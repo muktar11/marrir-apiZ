@@ -1590,7 +1590,7 @@ async def get_accepted_reserves_by_role(
                 "user_id": cv.user_id,
                 "passport_number": cv.passport_number,
                 "cv_id": cv.id,
-            }
+            } if cv else None 
         })
 
     return {
