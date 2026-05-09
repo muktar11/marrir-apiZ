@@ -1526,7 +1526,7 @@ async def get_accepted_reserves_by_role(
     user_uuid = str(uuid.UUID(user_id))
 
     #query = db.query(RecruitmentAgentPrivateReserveModel)
-    '''
+    
     query = db.query(
         RecruitmentAgentPrivateReserveModel,
         CVModel,
@@ -1535,38 +1535,8 @@ async def get_accepted_reserves_by_role(
         CVModel,
         RecruitmentAgentPrivateReserveModel.passport_number
         == CVModel.passport_number
-    ).outerjoin(
-        EmployeeModel,
-        EmployeeModel.user_id == CVModel.user_id
     )
-    '''
-    latest_employee_subquery = (
-    db.query(
-            EmployeeModel.user_id,
-            func.max(EmployeeModel.id).label("max_id")
-        )
-        .group_by(EmployeeModel.user_id)
-        .subquery()
-    )
-
-    LatestEmployee = aliased(EmployeeModel)
-
-    query = db.query(
-        RecruitmentAgentPrivateReserveModel,
-        CVModel,
-        LatestEmployee
-    ).outerjoin(
-        CVModel,
-        RecruitmentAgentPrivateReserveModel.passport_number
-        == CVModel.passport_number
-    ).outerjoin(
-        latest_employee_subquery,
-        latest_employee_subquery.c.user_id == CVModel.user_id
-    ).outerjoin(
-        LatestEmployee,
-        LatestEmployee.id == latest_employee_subquery.c.max_id
-    )
-
+    
     if role == "recruiter":
         query = query.filter(
             RecruitmentAgentPrivateReserveModel.recruitment_id == cast(user_uuid, pgUUID)
@@ -1599,8 +1569,17 @@ async def get_accepted_reserves_by_role(
 
     # Build response
     data = []
+   
 
     for reserve, cv, employee in reserves:
+        
+        employee = None
+
+        if cv:
+            employee = db.query(EmployeeModel).filter(
+                EmployeeModel.user_id == cv.user_id
+            ).first
+        
         accepted_by_me = (
             reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
         )
