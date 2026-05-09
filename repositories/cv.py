@@ -1842,6 +1842,231 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             
         return content
 
+    def export_to_pdf_download_passport(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting PDF export for CV with filters: {filters}")
+        
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(passport_number=filters.passport_number).first()
+        if not entity:
+            logger.warning(f"CV not found for passport_number: {filters.passport_number}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+        owner_data = {}
+
+        try:
+            # Check if user exists and has employees
+            if hasattr(entity, 'user') and entity.user is not None:
+                if hasattr(entity.user, 'employees') and entity.user.employees:
+                    # Get the first employee's manager_id
+                    manager_id = entity.user.employees[0].manager_id
+                    
+                    # Query the manager
+                    manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+                    
+                    if manager is not None:
+                        # Check manager role
+                        if hasattr(manager, 'role') and manager.role in ["agent", "recruitment", "sponsor"]:
+                            # Safely get company data
+                            company = getattr(manager, 'company', None)
+                            
+                            # Build owner data with safe defaults
+                            owner_data = {
+                                "company_name": getattr(company, 'company_name', '') if company else '',
+                                "name": f"{getattr(manager, 'first_name', '')} {getattr(manager, 'last_name', '')}".strip(),
+                                "phone_number": getattr(manager, 'phone_number', ''),
+                                "email": getattr(manager, 'email', ''),
+                                "location": getattr(company, 'location', '') if company else ''
+                            }
+                            logger.debug(f"Added owner data for manager: {manager.id}")
+        except Exception as e:
+            logger.warning(f"Error processing manager data: {str(e)}")
+            # Continue with empty owner_data if there's an error
+
+        rate = 0
+        additional_languages = []
+
+        # Safely add language proficiencies with null checks
+        if hasattr(entity, 'amharic') and entity.amharic:
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
+            })
+
+        if hasattr(entity, 'arabic') and entity.arabic:
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
+
+        if hasattr(entity, 'english') and entity.english:
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+        if hasattr(entity, 'references') and entity.references:
+            rate += 1
+            logger.debug("Added rate point for references")
+
+        if hasattr(entity, 'work_experiences') and entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+            logger.debug(f"Added rate points for work experiences: {rate}")
+
+        if hasattr(entity, 'additional_languages') and entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                if lang and hasattr(lang, 'language') and lang.language:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": getattr(lang, 'proficiency', '')
+                    })
+            logger.debug(f"Added rate points for additional languages: {rate}")
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+        is_passport = getattr(entity, "is_passport", False)
+        
+        # Safely check education level
+        education = getattr(entity, 'education', None)
+        education_level = getattr(education, 'highest_level', None) if education else None
+        
+        '''
+        if education_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv-download.html")
+            logger.debug("Using graduate CV template")
+        else:
+            template = templates.get_template("cv_non_graduate_download.html")
+            logger.debug("Using non-graduate CV template")
+        '''
+
+        
+
+        # 🎯 TEMPLATE SELECTION
+        if is_passport:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download-passport.html")
+                logger.debug("Using graduate CV template WITH passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download-passport.html")
+                logger.debug("Using non-graduate CV template WITH passport")
+        else:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download.html")
+                logger.debug("Using graduate CV template WITHOUT passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download.html")
+                logger.debug("Using non-graduate CV template WITHOUT passport")
+
+        age = 0
+
+        try:
+            if hasattr(entity, 'date_of_birth') and entity.date_of_birth:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+        except Exception as e:
+            logger.error(f"Error calculating age: {str(e)}")
+            print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+        def normalize_string_list(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if item]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item]
+                except Exception:
+                    pass
+                return [
+                    item.strip().strip('"').strip("'")
+                    for item in text.strip("{}[]").split(",")
+                    if item and item.strip()
+                ]
+            return [str(value).strip()]
+
+        employment_types = normalize_string_list(getattr(entity, "employment_types", None))
+        flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
+
+
+
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=getattr(entity, 'passport_url', ''),
+               
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=getattr(entity, 'summary', ''),
+                age=age,
+                video_url=video_url,
+                employment_types=employment_types,
+                flexi_durations=flexi_durations
+            )
+            
+            logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating PDF content: {str(e)}")
+            print(e)
+            
+        return content
+
     def export_to_pdf_saudi(
         self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
     ):
