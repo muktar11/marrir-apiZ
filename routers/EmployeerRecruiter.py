@@ -1610,7 +1610,15 @@ async def get_accepted_reserves_by_role(
     # Base query: only ACCEPTED reserves
 
     user_uuid = str(uuid.UUID(user_id))
-    query = db.query(RecruitmentAgentPrivateReserveModel)
+    #query = db.query(RecruitmentAgentPrivateReserveModel)
+    query = db.query(
+            RecruitmentAgentPrivateReserveModel,
+            CVModel
+        ).outerjoin(
+            CVModel,
+            RecruitmentAgentPrivateReserveModel.passport_number
+            == CVModel.passport_number
+        )
 
     if role == "recruiter":
         query = query.filter(
