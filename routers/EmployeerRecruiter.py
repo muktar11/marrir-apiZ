@@ -1497,7 +1497,7 @@ async def approve_sponsor_private_reserve_for_selfsponsor(
         },
     }
 
-'''
+
 from sqlalchemy import func
 
 @recruiter_reserve_employeer_router.get(
@@ -1586,149 +1586,7 @@ async def get_accepted_reserves_by_role(
         "count": len(data),
         "data": data
     }
-'''
 
-from sqlalchemy import String
-
-@recruiter_reserve_employeer_router.get(
-    "/all/pending-reserves/reserves/incoming",
-    status_code=200
-)
-async def get_accepted_reserves_by_role(
-    user_id: str,
-    role: str,
-    db: Session = Depends(get_db_raw)
-):
-
-    try:
-        user_uuid = UUID(user_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid UUID")
-
-    user_uuid = str(uuid.UUID(user_id))
-
-    # --------------------------------
-    # BASE QUERY WITH OUTER JOIN
-    # --------------------------------
-
-
-    #query = db.query(RecruitmentAgentPrivateReserveModel)
-    #query = query.filter(RecruitmentAgentPrivateReserveModel.cv_id == CVModel.user_id)
-    query = (
-        db.query(
-            RecruitmentAgentPrivateReserveModel,
-            UserModel,
-            CVModel
-        )
-        .outerjoin(
-            UserModel,
-            RecruitmentAgentPrivateReserveModel.cv_id == UserModel.id
-        )
-        .outerjoin(
-            CVModel,
-            UserModel.id == CVModel.user_id
-        )
-    )
-
-    results = query.order_by(
-        RecruitmentAgentPrivateReserveModel.created_at.desc()
-    ).all()
-
-        # --------------------------------
-    # DEBUG RESERVES
-    # --------------------------------
-
-
-    # --------------------------------
-    # ROLE FILTERS
-    # --------------------------------
-    if role == "recruiter":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.recruitment_id
-            == cast(user_uuid, pgUUID)
-        )
-
-    elif role == "agent":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.agent_id
-            == cast(user_uuid, pgUUID)
-        )
-
-    elif role == "sponsor":
-        query = query.filter(
-            RecruitmentAgentPrivateReserveModel.sponsor_id
-            == cast(user_uuid, pgUUID)
-        )
-
-    elif role == "employee":
-        query = query.filter(
-            cast(
-                func.trim(
-                    RecruitmentAgentPrivateReserveModel.employee_id
-                ),
-                pgUUID
-            ) == cast(user_uuid, pgUUID)
-        )
-
-    else:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    # --------------------------------
-    # EXECUTE
-    # --------------------------------
-    try:
-        results = query.order_by(
-            RecruitmentAgentPrivateReserveModel.created_at.desc()
-        ).all()
-
-    except SQLAlchemyError as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Database error: {e}"
-        )
-
-    # --------------------------------
-    # RESPONSE
-    # --------------------------------
-    data = []
-
-    for reserve, user, cv in results:
-
-        accepted_by_me = (
-            reserve.accepted_by is not None
-            and reserve.accepted_by == uuid.UUID(user_uuid)
-        )
-
-
-        data.append({
-            "reserve_id": reserve.id,
-            "cv_id": reserve.cv_id,
-            "accepted_by_me": accepted_by_me,
-
-            "user": {
-                "id": user.id,
-                "first_name": user.first_name,
-                "last_name": user.last_name,
-                "email": user.email,
-            } if user else None,
-
-            "cv": {
-                "cv_table_id": cv.id,
-                "english_full_name": cv.english_full_name,
-                "phone_number": cv.phone_number,
-                "nationality": cv.nationality,
-                "passport_number": cv.passport_number,
-                "head_photo": cv.head_photo,
-            } if cv else None
-        })
-
-    return {
-        "status_code": 200,
-        "message": f"{role} reserves fetched successfully",
-        "error": False,
-        "count": len(data),
-        "data": data
-    }
 
 @recruiter_reserve_employeer_router.get(
     "/selfsponsor/pending-reserves/reserves/accepted",
