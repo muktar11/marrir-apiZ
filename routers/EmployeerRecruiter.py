@@ -4,6 +4,7 @@ import json
 from typing import Any, List, Optional 
 from unicodedata import category  
 import uuid  
+from Marrir_API.schemas.jobschema import BillingSchema
 from models.agentrecruitmentmodel import AgentRecruitmentModel
 from schemas.promotionschema import PromotionStatusSchema
 from schemas.reserveschema import ApproveReserveSchema, PrivateReserveCreateSchema
@@ -1740,6 +1741,7 @@ from pydantic import BaseModel
 class ReservePaymentSchema(BaseModel):
     reserve_id: int
     cv_id: str
+    billing: BillingSchema | None = None
 
 
 @recruiter_reserve_employeer_router.post("/reserve/payment/init")
@@ -1771,6 +1773,11 @@ def create_reserve_checkout(
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
 
+    user = context_actor_user_data.get()
+    user_email = user.email
+    user_first = user.first_name
+    user_last = user.last_name
+
 
     # ✅ DO NOT overwrite payload
     hyperpay_payload = {
@@ -1784,14 +1791,13 @@ def create_reserve_checkout(
 
 
        
-        "customer.email": "test@test.com",  
-        "customer.givenName": "first",
-        "customer.surname": "last",
-        "billing.street1": "Reserve Payment",
-        "billing.city": "Dubai",
-        "billing.country": "AE",
-        "billing.postcode": "00000",
-        "customer.email": "test@test.com",
+        "customer.email": user_email,
+        "customer.givenName": user_first,
+        "customer.surname": user_last,
+        "billing.street1":  payload.billing.street1,
+        "billing.city":  payload.billing.city,
+        "billing.country":  payload.billing.country,
+        "billing.postcode":  payload.billing.postcode,
     }
 
     try:
