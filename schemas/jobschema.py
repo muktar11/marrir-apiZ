@@ -113,6 +113,9 @@ class JobApplicationDeleteSchema(ApplyJobSingleBaseSchema):
 from pydantic import BaseModel, Field
 
 class BillingSchema(BaseModel):
+    email: EmailStr | None = None
+    first_name: str | None = None
+    last_name: str | None = None
     street1: str
     city: str
     state: str | None = None
