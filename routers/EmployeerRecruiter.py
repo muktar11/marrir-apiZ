@@ -1786,13 +1786,23 @@ def create_reserve_checkout(
 
 
        
-        "customer.email": payload.user_email,
-        "customer.givenName": payload.user_first,
-        "customer.surname": payload.user_last,
+        "customer.email": payload.email,
+        "customer.givenName": payload.first_name,
+        "customer.surname": payload.last_name,
         "billing.street1":  payload.billing.street1,
         "billing.city":  payload.billing.city,
         "billing.country":  payload.billing.country,
         "billing.postcode":  payload.billing.postcode,
+
+
+        "customer.email": payload.billing.email if payload.billing else None,
+        "customer.givenName": payload.billing.first_name if payload.billing else None,
+        "customer.surname": payload.billing.last_name if payload.billing else None,
+
+        "billing.street1": payload.billing.street1 if payload.billing else None,
+        "billing.city": payload.billing.city if payload.billing else None,
+        "billing.country": payload.billing.country if payload.billing else None,
+        "billing.postcode": payload.billing.postcode if payload.billing else None,
     }
 
     try:
