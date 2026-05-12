@@ -1774,11 +1774,6 @@ def create_reserve_checkout(
     amount = reserve.price or 10.00
 
 
-    user_email = user.email
-    user_first = user.first_name
-    user_last = user.last_name
-
-
     # ✅ DO NOT overwrite payload
     hyperpay_payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
