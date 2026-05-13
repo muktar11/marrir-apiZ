@@ -1840,6 +1840,7 @@ def create_reserve_checkout(
 
 class ReserveTransferPaymentSchema(BaseModel):
     reserve_id: int
+    billing: BillingSchema | None = None
     
 
 
@@ -1881,14 +1882,15 @@ def create_reserve_transfer_checkout(
 
 
        
-        "customer.email": "test@test.com",  
-        "customer.givenName": "first",
-        "customer.surname": "last",
-        "billing.street1": "Reserve Payment",
-        "billing.city": "Dubai",
-        "billing.country": "AE",
-        "billing.postcode": "00000",
-        "customer.email": "test@test.com",
+        "customer.email": payload.billing.email if payload.billing else None,
+        "customer.givenName": payload.billing.first_name if payload.billing else None,
+        "customer.surname": payload.billing.last_name if payload.billing else None,
+
+        "billing.street1": payload.billing.street1 if payload.billing else None,
+        "billing.city": payload.billing.city if payload.billing else None,
+        "billing.country": payload.billing.country if payload.billing else None,
+        "billing.postcode": payload.billing.postcode if payload.billing else None,
+
     }
 
     try:
