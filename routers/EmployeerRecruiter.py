@@ -1705,7 +1705,7 @@ async def get_accepted_reserves_by_role(
     }
 
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
