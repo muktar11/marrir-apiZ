@@ -903,7 +903,7 @@ class PaymentRequest(BaseModel):
 
 logger = logging.getLogger("hyperpay")
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 
 @transfer_router.post("/pay/hyper")
@@ -1011,7 +1011,7 @@ async def pay_transfer(
 
 
 def verify_hyperpay_payment(payment_id: str) -> bool:
-    url = f"https://test.oppwa.com/v1/payments/{payment_id}"
+    url = f"https://eu-prod.oppwa.com/v1/payments/{payment_id}"
     params = {"entityId": settings.HYPERPAY_ENTITY_ID}
     headers = get_hyperpay_auth_header()
 
@@ -1274,7 +1274,7 @@ def poll_pending_transfer_payments():
 
         for invoice in invoices:
             res = requests.get(
-                "https://test.oppwa.com/v1/payments",
+                "https://eu-prod.oppwa.com/v1/payments",
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
@@ -1304,7 +1304,7 @@ def process_transfer_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
         res = requests.get(
-            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            f"https://eu-prod.oppwa.com/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
             headers=get_hyperpay_auth_header(),
             timeout=30,
