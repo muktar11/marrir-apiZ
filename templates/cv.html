@@ -713,19 +713,25 @@
 
         
         <!-- Content Section -->
-        <div class="content-section">
+                <div class="content-section">
             <!-- Description Section -->
             <div class="section">
                 <div class="section-title">
                     <i class="fas fa-file-alt"></i>Professional Summary
                 </div>
                 <div class="description">
-                  {{ description or "No description available" }}
-                    {% if user.description %}
-                          <div class="description">
-                            {{ description or "No description available" }}
-                        </div>
-                    {% endif %}
+            {% if user.employment_types %}
+  {% set cleaned = user.employment_types.strip('{}') %}
+  {% set types = cleaned.split(',') %}
+
+  <div class="description">
+    <ul>
+      {% for type in types %}
+        <li>{{ type.strip().replace('_', ' ').title() }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+{% endif %}
                   
 
                 </div>
