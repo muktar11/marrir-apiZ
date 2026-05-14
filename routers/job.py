@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 import json
-from typing import Any, List, Optional
+from typing import Any, List, Optional 
 import uuid
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
 from starlette.requests import Request
@@ -376,7 +376,7 @@ from sqlalchemy.orm import Session
 
 INVOICE_DIR = "media/invoices"
 os.makedirs(INVOICE_DIR, exist_ok=True)
-#from weasyprint import HTML
+from weasyprint import HTML
 from jinja2 import Environment, FileSystemLoader
 import os
 
@@ -398,7 +398,7 @@ def generate_invoice_pdf(invoice):
             "amount": f"{invoice.amount:.2f}",
             "vat": f"{vat:.2f}",
             "total": f"{total:.2f}",
-            "description": invoice.description or "Service",
+            "description": invoice.description or "Job Application",
             "billing_email": invoice.billing_email,
             "billing_country": invoice.billing_country,
             "card_holder": invoice.card_holder,
@@ -1022,7 +1022,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("routers.job")
 
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 
 router = APIRouter()
@@ -1270,14 +1270,15 @@ async def update_job_application_status(
         "customParameters[3DS2_enrolled]": "true",
         "integrity": "true",
 
-        "customer.email": user_email,
-        "customer.givenName": user_first,
-        "customer.surname": user_last,
+        "customer.email": payload.billing.email if payload.billing else None,
+        "customer.givenName": payload.billing.first_name if payload.billing else None,
+        "customer.surname": payload.billing.last_name if payload.billing else None,
 
-        "billing.street1": data.billing.street1,
-        "billing.city": data.billing.city,
-        "billing.country": data.billing.country,
-        "billing.postcode": data.billing.postcode,
+        "billing.street1": payload.billing.street1 if payload.billing else None,
+        "billing.city": payload.billing.city if payload.billing else None,
+        "billing.country": payload.billing.country if payload.billing else None,
+        "billing.postcode": payload.billing.postcode if payload.billing else None,
+
 
        
     }
@@ -1310,6 +1311,7 @@ async def update_job_application_status(
     return {
         "checkoutId": checkout_id,
     }
+
 
 
 @job_router.get("/payment/verify")
@@ -1356,7 +1358,7 @@ def verify_payment(
 
         invoice.status = "paid"
         invoice.payment_id = payment_id
-        
+
         # ✅ GENERATE PDF INVOICE
         file_path = generate_invoice_pdf(invoice)
 
