@@ -1242,7 +1242,17 @@ async def update_job_application_status(
         return {"message": "Applications declined"}
 
     # ---------------- ACCEPT → PAYMENT ----------------
+    package_role = "sponsor" if user.role == "selfsponsor" else user.role
 
+    package = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.role == package_role,
+            PromotionPackagesModel.category == "job_application",
+        )
+        .first()
+    )
+    '''
     package = (
         db.query(PromotionPackagesModel)
         .filter(
@@ -1251,6 +1261,7 @@ async def update_job_application_status(
         )
         .first()
     )
+    '''
 
     amount = package.price * len(applications)
 
