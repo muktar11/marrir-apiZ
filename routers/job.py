@@ -344,7 +344,7 @@ async def get_my_applications(job_id: int,_=Depends(authentication_context),__=D
         db = get_db_session()
         user = context_actor_user_data.get()
 
-        if user.role != "recruitment" and user.role != "sponsor":
+        if user.role != "recruitment" and user.role != "sponsor"  and user.role != "selfsponsor":
             return Response(status_code=403, content=json.dumps({"message": "Unauthorized"}), media_type="application/json")
         
         jobs = db.query(JobModel).filter(JobModel.id == job_id, JobModel.posted_by == user.id).first()
@@ -1210,7 +1210,7 @@ async def update_job_application_status(
     db = get_db_session()
     user = context_actor_user_data.get()
 
-    if user.role not in ["recruitment", "sponsor"]:
+    if user.role not in ["recruitment", "sponsor", "selfsponsor"]:
         return Response(status_code=403, content="Unauthorized")
 
     job = db.query(JobModel).filter(JobModel.id == job_id).first()
