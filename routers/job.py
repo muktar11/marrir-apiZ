@@ -1267,7 +1267,10 @@ async def update_job_application_status(
 
     merchant_tx_id = secrets.token_hex(6)
     for app in applications:
-
+        user_email = app.user.email
+        user_first = app.user.first_name
+        user_last = app.user.last_name
+    
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
         "amount": f"{amount:.2f}",
@@ -1291,6 +1294,7 @@ async def update_job_application_status(
        
     }
 
+    
     res = requests.post(
         f"{HYPERPAY_BASE_URL}/v1/checkouts",
         data=payload,
