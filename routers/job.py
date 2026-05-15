@@ -1267,9 +1267,6 @@ async def update_job_application_status(
 
     merchant_tx_id = secrets.token_hex(6)
     for app in applications:
-        user_email = app.user.email
-        user_first = app.user.first_name
-        user_last = app.user.last_name
 
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
@@ -1281,14 +1278,14 @@ async def update_job_application_status(
         "customParameters[3DS2_enrolled]": "true",
         "integrity": "true",
 
-        "customer.email": payload.billing.email if payload.billing else None,
-        "customer.givenName": payload.billing.first_name if payload.billing else None,
-        "customer.surname": payload.billing.last_name if payload.billing else None,
+        "customer.email": data.billing.email if data.billing else None,
+        "customer.givenName": data.billing.first_name if data.billing else None,
+        "customer.surname": data.billing.last_name if data.billing else None,
 
-        "billing.street1": payload.billing.street1 if payload.billing else None,
-        "billing.city": payload.billing.city if payload.billing else None,
-        "billing.country": payload.billing.country if payload.billing else None,
-        "billing.postcode": payload.billing.postcode if payload.billing else None,
+        "billing.street1": data.billing.street1 if data.billing else None,
+        "billing.city": data.billing.city if data.billing else None,
+        "billing.country": data.billing.country if data.billing else None,
+        "billing.postcode": data.billing.postcode if data.billing else None,
 
 
        
