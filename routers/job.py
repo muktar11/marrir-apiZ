@@ -1194,7 +1194,7 @@ def verify_payment(
             "message": str(e)
         }
     
-
+from decimal import Decimal
 from fastapi import Query
 from sqlalchemy.orm import Session
 
@@ -1306,7 +1306,7 @@ async def update_job_application_status(
 
     if not checkout_id:
         return Response(status_code=400, content=json.dumps(res))
-    vat_amount = amount * 0.15
+    vat_amount = amount * Decimal("0.05")
     invoice = InvoiceModel(
         reference=merchant_tx_id,
         checkout_id=checkout_id,
