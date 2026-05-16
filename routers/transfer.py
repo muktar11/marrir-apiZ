@@ -905,7 +905,7 @@ logger = logging.getLogger("hyperpay")
 
 HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
-
+from decimal import Decimal
 @transfer_router.post("/pay/hyper")
 async def pay_transfer(
     data: TransferPaySchema,
@@ -976,7 +976,7 @@ async def pay_transfer(
         checkout_id = res.get("id")
         if not checkout_id:
             return Response(status_code=400, content=json.dumps(res))
-        vat_amount = amount * 0.15
+        vat_amount = amount * Decimal("0.05")
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
