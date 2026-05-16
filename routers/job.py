@@ -1325,7 +1325,7 @@ async def update_job_application_status(
         db,
         app.user.id,
         "Job Application Accepted",
-        f"Your application for job '{job.title}' was accepted and payment is being processed.",
+        f"Your application for job at Marrir was accepted and payment is being processed.",
         "job_application"
     )
 
@@ -1336,7 +1336,7 @@ async def update_job_application_status(
         description=f"""
         Hello {app.user.first_name},
 
-        Your application for the job '{job.title}' has been accepted.
+        Your application for the job at Marrir has been accepted.
 
         Please complete the payment process to continue.
 
