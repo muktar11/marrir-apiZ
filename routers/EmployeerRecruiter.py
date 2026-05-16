@@ -4,6 +4,7 @@ import json
 from typing import Any, List, Optional 
 from unicodedata import category  
 import uuid  
+from Marrir_API.routers import job
 from schemas.jobschema import BillingSchema
 from models.agentrecruitmentmodel import AgentRecruitmentModel
 from schemas.promotionschema import PromotionStatusSchema
@@ -1747,6 +1748,7 @@ class ReservePaymentSchema(BaseModel):
 @recruiter_reserve_employeer_router.post("/reserve/payment/init")
 def create_reserve_checkout(
     payload: ReservePaymentSchema,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _=Depends(authentication_context),
     __=Depends(build_request_context),  # ✅ get logged user
@@ -1813,10 +1815,11 @@ def create_reserve_checkout(
             raise HTTPException(status_code=400, detail=res)
 
         # ✅ SAVE INVOICE PROPERLY
+        vat_amount = amount * 0.15
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
-            amount=amount,
+            amount=vat_amount,
             status="pending",
             type="reserve",
             object_id=str(reserve_id),
@@ -1826,6 +1829,35 @@ def create_reserve_checkout(
 
         db.add(invoice)
         db.commit()
+
+        background_tasks.add_task(
+                send_notification,
+                db,
+                user.id,
+                "Job Application Accepted",
+                f"Your application for job '{job.title}' was accepted and payment is being processed.",
+                "job_application"
+            )
+
+        background_tasks.add_task(
+            send_email,
+            email= payload.billing.email if payload.billing else None,
+            title="Job Application Accepted",
+            description=f"""
+            
+            Hello {payload.billing.first_name if payload.billing else 'User'},
+
+            Your application for the cv reserve has been accepted.
+
+            Please complete the payment process to continue.
+
+            Thank you.
+
+            HyperPay Team
+            Marrir.com
+        """
+    )
+
 
         return {
             "checkoutId": checkout_id
@@ -1844,10 +1876,10 @@ class ReserveTransferPaymentSchema(BaseModel):
     
 
 
-
 @recruiter_reserve_employeer_router.post("/recruiter-transfer/reserve/payment/init")
 def create_reserve_transfer_checkout(
     payload: ReserveTransferPaymentSchema,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _=Depends(authentication_context),
     __=Depends(build_request_context), 
@@ -1868,6 +1900,7 @@ def create_reserve_transfer_checkout(
 
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
+    vat_amount = amount * 0.15
 
 
     #  DO NOT overwrite payload
@@ -1911,7 +1944,7 @@ def create_reserve_transfer_checkout(
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
-            amount=amount,
+            amount=vat_amount,
             status="pending",
             type="reserve-transfer",
             object_id=str(reserve_id),
@@ -1921,6 +1954,36 @@ def create_reserve_transfer_checkout(
 
         db.add(invoice)
         db.commit()
+
+
+        background_tasks.add_task(
+                send_notification,
+                db,
+                user.id,
+                "Job Application Accepted",
+                f"Your application for job '{job.title}' was accepted and payment is being processed.",
+                "job_application"
+            )
+
+        background_tasks.add_task(
+            send_email,
+            email= payload.billing.email if payload.billing else None,
+            title="Job Application Accepted",
+            description=f"""
+            
+            Hello {payload.billing.first_name if payload.billing else 'User'},
+
+            Your application for the cv reserve has been accepted.
+
+            Please complete the payment process to continue.
+
+            Thank you.
+
+            HyperPay Team
+            Marrir.com
+        """
+    )
+
 
         return {
             "checkoutId": checkout_id
