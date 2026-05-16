@@ -1306,12 +1306,12 @@ async def update_job_application_status(
 
     if not checkout_id:
         return Response(status_code=400, content=json.dumps(res))
-
+    vat_amount = amount * 0.15
     invoice = InvoiceModel(
         reference=merchant_tx_id,
         checkout_id=checkout_id,
         buyer_id=user.id,
-        amount=amount,
+        amount=vat_amount,
         status="pending",
         type="job_application",
         object_id=",".join(str(a.id) for a in applications),
@@ -1319,6 +1319,33 @@ async def update_job_application_status(
 
     db.add(invoice)
     db.commit()
+
+    background_tasks.add_task(
+        send_notification,
+        db,
+        app.user.id,
+        "Job Application Accepted",
+        f"Your application for job '{job.title}' was accepted and payment is being processed.",
+        "job_application"
+    )
+
+    background_tasks.add_task(
+        send_email,
+        email=app.user.email,
+        title="Job Application Accepted",
+        description=f"""
+        Hello {app.user.first_name},
+
+        Your application for the job '{job.title}' has been accepted.
+
+        Please complete the payment process to continue.
+
+        Thank you.
+
+        HyperPay Team
+        Marrir.com
+        """
+    )
 
     return {
         "checkoutId": checkout_id,
