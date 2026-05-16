@@ -1835,7 +1835,7 @@ def create_reserve_checkout(
                 db,
                 user.id,
                 "Job Application Accepted",
-                f"Your application for job '{job.title}' was accepted and payment is being processed.",
+                f"Your application for job at Marrir was accepted and payment is being processed.",
                 "job_application"
             )
 
@@ -1961,7 +1961,7 @@ def create_reserve_transfer_checkout(
                 db,
                 user.id,
                 "Job Application Accepted",
-                f"Your application for job '{job.title}' was accepted and payment is being processed.",
+                f"Your application for job at Marrir was accepted and payment is being processed.",
                 "job_application"
             )
 
