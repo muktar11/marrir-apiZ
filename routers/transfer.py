@@ -976,12 +976,12 @@ async def pay_transfer(
         checkout_id = res.get("id")
         if not checkout_id:
             return Response(status_code=400, content=json.dumps(res))
-
+        vat_amount = amount * 0.15
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
             buyer_id=user.id,
-            amount=amount,
+            amount=vat_amount,
             status="pending",
             type="transfer",
             object_id=",".join(str(t.id) for t in transfers),
