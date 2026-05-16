@@ -4,7 +4,7 @@ import json
 from typing import Any, List, Optional 
 from unicodedata import category  
 import uuid  
-from Marrir_API.routers import job
+from routers import job
 from schemas.jobschema import BillingSchema
 from models.agentrecruitmentmodel import AgentRecruitmentModel
 from schemas.promotionschema import PromotionStatusSchema
@@ -1744,7 +1744,7 @@ class ReservePaymentSchema(BaseModel):
     cv_id: str
     billing: BillingSchema | None = None
 
-
+from decimal import Decimal
 @recruiter_reserve_employeer_router.post("/reserve/payment/init")
 def create_reserve_checkout(
     payload: ReservePaymentSchema,
@@ -1815,7 +1815,7 @@ def create_reserve_checkout(
             raise HTTPException(status_code=400, detail=res)
 
         # ✅ SAVE INVOICE PROPERLY
-        vat_amount = amount * 0.15
+        vat_amount = amount * Decimal("0.05")
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
@@ -1900,7 +1900,7 @@ def create_reserve_transfer_checkout(
 
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
-    vat_amount = amount * 0.15
+    vat_amount = amount * Decimal("0.05")
 
 
     #  DO NOT overwrite payload
