@@ -1197,6 +1197,7 @@ def verify_payment(
 from decimal import Decimal
 from fastapi import Query
 from sqlalchemy.orm import Session
+from decimal import Decimal, ROUND_HALF_UP
 
 @job_router.patch("/my-applications/{job_id}/status/hyper")
 async def update_job_application_status(
@@ -1263,17 +1264,31 @@ async def update_job_application_status(
     )
     '''
 
-    amount = package.price * len(applications)
+    #amount = package.price * len(applications)
+    total_amount = Decimal(str(package.price)) * Decimal(len(applications))
+
+    # extract VAT from inclusive amount
+    subtotal = (total_amount / Decimal("1.05")).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP
+    )
+
+    vat_amount = (total_amount - subtotal).quantize(
+        Decimal("0.01"),
+        rounding=ROUND_HALF_UP
+    )
+
 
     merchant_tx_id = secrets.token_hex(6)
     for app in applications:
         user_email = app.user.email
         user_first = app.user.first_name
         user_last = app.user.last_name
+
     
     payload = {
         "entityId": settings.HYPERPAY_ENTITY_ID,
-        "amount": f"{amount:.2f}",
+        "amount": f"{total_amount:.2f}",
         "currency": "AED",
         "paymentType": "DB",
 
@@ -1306,15 +1321,18 @@ async def update_job_application_status(
 
     if not checkout_id:
         return Response(status_code=400, content=json.dumps(res))
-    vat_amount = amount * Decimal("0.05")
+
     invoice = InvoiceModel(
         reference=merchant_tx_id,
         checkout_id=checkout_id,
         buyer_id=user.id,
-        amount=vat_amount,
         status="pending",
         type="job_application",
         object_id=",".join(str(a.id) for a in applications),
+
+        amount=total_amount,
+        subtotal=subtotal,
+        vat_amount=vat_amount,
     )
 
     db.add(invoice)
