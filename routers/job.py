@@ -1022,7 +1022,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("routers.job")
 
 
-HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
 
 router = APIRouter()
@@ -1329,7 +1329,6 @@ async def update_job_application_status(
         status="pending",
         type="job_application",
         object_id=",".join(str(a.id) for a in applications),
-
         amount=total_amount,
         subtotal=subtotal,
         vat_amount=vat_amount,
