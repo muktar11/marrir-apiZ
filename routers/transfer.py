@@ -1056,6 +1056,7 @@ INVOICE_DIR = "media/invoices"
 os.makedirs(INVOICE_DIR, exist_ok=True)
 
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+'''
 def generate_invoice_pdf(invoice):
     template = env.get_template("invoice.html")
 
@@ -1082,18 +1083,43 @@ def generate_invoice_pdf(invoice):
     HTML(string=html_content).write_pdf(file_path)
 
     return file_path
+'''
+
+def generate_invoice_pdf(invoice):
+    template = env.get_template("invoice.html")
+
+    amount = invoice.amount or 0
+
+    # Compute fallbacks if DB values are missing
+    subtotal = invoice.subtotal if invoice.subtotal is not None else round(amount / 1.05, 2)
+    vat_amount = invoice.vat_amount if invoice.vat_amount is not None else round(amount - subtotal, 2)
+    total = round(subtotal + vat_amount, 2)
+
+    html_content = template.render(
+        invoice={
+            "invoice_number": invoice.invoice_number,
+            "payment_id": invoice.payment_id,
+            "vat_amount": f"{vat_amount:.2f}",       # ← use local var, not invoice.vat_amount
+            "amount": f"{amount:.2f}",
+            "sub_total": f"{subtotal:.2f}",           # ← use local var, not invoice.subtotal
+            "total": f"{total:.2f}",
+            "description": invoice.description or "Service",
+            "billing_email": invoice.billing_email,
+            "billing_country": invoice.billing_country,
+            "card_holder": invoice.card_holder,
+            "date": invoice.created_at.strftime("%d %B %Y"),
+        }
+    )
+
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+    HTML(string=html_content).write_pdf(file_path)
+    return file_path
 
 def generate_invoice_number():
     return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
 
-def finalize_invoice(db, invoice):
-    if not invoice.invoice_number:
-        invoice.invoice_number = generate_invoice_number()
-
-    if not invoice.invoice_file:
-        invoice.invoice_file = generate_invoice_pdf(invoice)
-
+'''
 def finalize_invoice(db, invoice):
     if not invoice.invoice_number:
         invoice.invoice_number = generate_invoice_number()
@@ -1112,8 +1138,27 @@ def finalize_invoice(db, invoice):
         invoice.invoice_file = generate_invoice_pdf(invoice)
 
     db.commit()
+'''
 
 
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    amount = invoice.amount or 0
+
+    if invoice.subtotal is None:
+        invoice.subtotal = round(amount / Decimal("1.05"), 2)
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = round(amount - invoice.subtotal, 2)
+
+    db.commit()        # ← commit FIRST so values are persisted
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)  # ← now subtotal/vat are set
+        db.commit()    # ← commit the file path too
 
 from fastapi import Depends, HTTPException
 from fastapi.responses import FileResponse
