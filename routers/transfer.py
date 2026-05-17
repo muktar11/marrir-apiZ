@@ -1094,6 +1094,24 @@ def finalize_invoice(db, invoice):
     if not invoice.invoice_file:
         invoice.invoice_file = generate_invoice_pdf(invoice)
 
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    # populate missing values
+    if invoice.subtotal is None:
+        invoice.subtotal = invoice.amount - invoice.vat_amount if invoice.vat_amount else invoice.amount
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = round(invoice.amount * 0.05, 2)
+
+    db.commit()
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
+
+    db.commit()
 
 
 
