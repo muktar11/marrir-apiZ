@@ -1066,9 +1066,9 @@ def generate_invoice_pdf(invoice):
         invoice={
             "invoice_number": invoice.invoice_number,
             "payment_id": invoice.payment_id,
-            "vat": f"{invoice.vat_amount:.2f}",
-            "subtotal":f"{invoice.subtotal:.2f}",
+            "vat_amount": f"{invoice.vat_amount:.2f}",
             "amount": f"{invoice.amount:.2f}",
+            "sub_total": f"{invoice.subtotal:.2f}",
             "total": f"{total:.2f}",
             "description": invoice.description or "Service",
             "billing_email": invoice.billing_email,
