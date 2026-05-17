@@ -1,6 +1,6 @@
 import json
 from typing import Any, Optional
-from typing import List, Optional
+from typing import List, Optional 
 from models.employeemodel import EmployeeModel
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, HTTPException, BackgroundTasks
 from fastapi.security import HTTPBearer
@@ -718,6 +718,8 @@ async def get_payments(
             "ref": payment.stripe_session_id,
             "status": payment.status,
             "amount": payment.amount,
+            "subtotal": payment.subtotal,
+            "vat_amount": payment.vat_amount,
             "currency": payment.currency,
             "type": payment.type,
             "card": payment.card,
