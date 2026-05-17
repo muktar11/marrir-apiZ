@@ -1055,6 +1055,8 @@ TEMPLATE_DIR = "templates"
 INVOICE_DIR = "media/invoices"
 os.makedirs(INVOICE_DIR, exist_ok=True)
 
+from decimal import Decimal, ROUND_HALF_UP
+
 env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
 '''
 def generate_invoice_pdf(invoice):
@@ -1086,28 +1088,34 @@ def generate_invoice_pdf(invoice):
 '''
 
 def generate_invoice_pdf(invoice):
+    print("DEBUG subtotal:", invoice.subtotal)
+    print("DEBUG vat_amount:", invoice.vat_amount)
+    print("DEBUG amount:", invoice.amount)
     template = env.get_template("invoice.html")
 
-    amount = invoice.amount or 0
+    amount   = Decimal(str(invoice.amount or 0))
+    subtotal = Decimal(str(invoice.subtotal)) if invoice.subtotal is not None \
+               else (amount / Decimal("1.05")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    vat      = Decimal(str(invoice.vat_amount)) if invoice.vat_amount is not None \
+               else (amount - subtotal).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total    = (subtotal + vat).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
-    # Compute fallbacks if DB values are missing
-    subtotal = invoice.subtotal if invoice.subtotal is not None else round(amount / 1.05, 2)
-    vat_amount = invoice.vat_amount if invoice.vat_amount is not None else round(amount - subtotal, 2)
-    total = round(subtotal + vat_amount, 2)
+    # Hard confirm before render
+    print(f"PDF → amount={amount} subtotal={subtotal} vat={vat} total={total}")
 
     html_content = template.render(
         invoice={
-            "invoice_number": invoice.invoice_number,
-            "payment_id": invoice.payment_id,
-            "vat_amount": f"{vat_amount:.2f}",       # ← use local var, not invoice.vat_amount
-            "amount": f"{amount:.2f}",
-            "sub_total": f"{subtotal:.2f}",           # ← use local var, not invoice.subtotal
-            "total": f"{total:.2f}",
-            "description": invoice.description or "Service",
-            "billing_email": invoice.billing_email,
+            "invoice_number":  invoice.invoice_number,
+            "payment_id":      invoice.payment_id,
+            "sub_total":       f"{subtotal:.2f}",   # ← matches {{ invoice.sub_total }}
+            "vat_amount":      f"{vat:.2f}",         # ← matches {{ invoice.vat_amount }}
+            "amount":          f"{amount:.2f}",
+            "total":           f"{total:.2f}",       # ← matches {{ invoice.total }}
+            "description":     invoice.description or "Service",
+            "billing_email":   invoice.billing_email,
             "billing_country": invoice.billing_country,
-            "card_holder": invoice.card_holder,
-            "date": invoice.created_at.strftime("%d %B %Y"),
+            "card_holder":     invoice.card_holder,
+            "date":            invoice.created_at.strftime("%d %B %Y"),
         }
     )
 
@@ -1119,26 +1127,7 @@ def generate_invoice_number():
     return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
 
 
-'''
-def finalize_invoice(db, invoice):
-    if not invoice.invoice_number:
-        invoice.invoice_number = generate_invoice_number()
 
-    # populate missing values
-    if invoice.subtotal is None:
-        invoice.subtotal = invoice.amount - invoice.vat_amount if invoice.vat_amount else invoice.amount
-
-    if invoice.vat_amount is None:
-        invoice.vat_amount = round(invoice.amount * 0.05, 2)
-
-    db.commit()
-    db.refresh(invoice)
-
-    if not invoice.invoice_file:
-        invoice.invoice_file = generate_invoice_pdf(invoice)
-
-    db.commit()
-'''
 
 
 def finalize_invoice(db, invoice):
@@ -1159,6 +1148,59 @@ def finalize_invoice(db, invoice):
     if not invoice.invoice_file:
         invoice.invoice_file = generate_invoice_pdf(invoice)  # ← now subtotal/vat are set
         db.commit()    # ← commit the file path too
+
+
+from decimal import Decimal, ROUND_HALF_UP
+'''
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    # Normalize amount to Decimal safely regardless of DB type
+    amount = Decimal(str(invoice.amount or 0))
+
+    if invoice.subtotal is None:
+        invoice.subtotal = float(
+            (amount / Decimal("1.05")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = float(
+            (amount - Decimal(str(invoice.subtotal))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    db.commit()
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
+        db.commit()
+'''
+
+
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    # Normalize amount to Decimal safely regardless of DB type
+    amount = Decimal(str(invoice.amount or 0))
+
+    if invoice.subtotal is None:
+        invoice.subtotal = float(
+            (amount / Decimal("1.05")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = float(
+            (amount - Decimal(str(invoice.subtotal))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    db.commit()
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
+        db.commit()
 
 from fastapi import Depends, HTTPException
 from fastapi.responses import FileResponse
