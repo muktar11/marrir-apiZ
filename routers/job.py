@@ -1022,7 +1022,7 @@ from sqlalchemy.orm import Session
 logger = logging.getLogger("routers.job")
 
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 
 router = APIRouter()
