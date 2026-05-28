@@ -607,6 +607,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                         "education",
                         "references",
                         "work_experiences",
+                        "creator_id",
                         "remove_head_photo",
                         "remove_full_body_photo",
                         "remove_intro_video",
