@@ -461,11 +461,35 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
 
             if not existing_cv and passport_number:
                 existing_cv = db.query(CVModel).filter_by(passport_number=passport_number).first()
-                if existing_cv:
-                    obj_in.user_id = existing_cv.user_id  # 🔥 sync user_id
+                #if existing_cv:
+                #    obj_in.user_id = existing_cv.user_id  # 🔥 sync user_id
+                if existing_cv and not existing_cv.creator_id:
+                    existing_cv.creator_id = str(creator.id)
 
             # -----------------------------
-            # 👤 Step 2: Create user ONLY if CV does not exist
+            # 🚫 Restrict EMPLOYEE from creating multiple CVs
+            # -----------------------------
+            creator = context_actor_user_data.get()
+
+            if creator and creator.role == UserRoleSchema.EMPLOYEE:
+                existing_employee_cv = (
+                    db.query(CVModel)
+                    .filter(CVModel.creator_id == str(creator.id))
+                    .first()
+                )
+
+                if existing_employee_cv and not existing_cv:
+                    context_set_response_code_message.set(
+                        BaseGenericResponse(
+                            error=True,
+                            message="Employee already has been registered",
+                            status_code=400,
+                        )
+                    )
+                    return None
+    
+            # -----------------------------
+            # 👤 Step 2+: Create user ONLY if CV does not exist
             # -----------------------------
             if not existing_cv:
                 new_user = UserModel(role=UserRoleSchema.EMPLOYEE)
@@ -576,6 +600,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             # 🆕 Step 4: CREATE CV
             # -----------------------------
             new_cv = CVModel(
+                creator_id=str(creator.id),
                 **obj_in.dict(
                     exclude=[
                         "address",
