@@ -1830,19 +1830,11 @@ def create_reserve_checkout(
         db.add(invoice)
         db.commit()
 
-        background_tasks.add_task(
-                send_notification,
-                db,
-                user.id,
-                "Job Application Accepted",
-                f"Your application for job at Marrir was accepted and payment is being processed.",
-                "job_application"
-            )
 
         background_tasks.add_task(
             send_email,
             email= payload.billing.email if payload.billing else None,
-            title="Job Application Accepted",
+            title="Reserve Accepted",
             description=f"""
             
             Hello {payload.billing.first_name if payload.billing else 'User'},
@@ -1956,19 +1948,11 @@ def create_reserve_transfer_checkout(
         db.commit()
 
 
-        background_tasks.add_task(
-                send_notification,
-                db,
-                user.id,
-                "Job Application Accepted",
-                f"Your application for job at Marrir was accepted and payment is being processed.",
-                "job_application"
-            )
 
         background_tasks.add_task(
             send_email,
             email= payload.billing.email if payload.billing else None,
-            title="Job Application Accepted",
+            title="Reserve Accepted",
             description=f"""
             
             Hello {payload.billing.first_name if payload.billing else 'User'},
