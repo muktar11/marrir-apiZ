@@ -614,7 +614,7 @@ async def get_promoted_cvs(
         )
     )
 
-    # FIX 2
+# FIX 2
     # -----------------------------------
     # ❗ ALWAYS EXCLUDE OWN CVs
     # -----------------------------------
@@ -626,8 +626,6 @@ async def get_promoted_cvs(
     query = query.filter(
         func.lower(func.trim(CreatorUser.role)) != "sponsor"
     )
-
-
     
 
     # -----------------------------------
@@ -693,9 +691,14 @@ async def get_promoted_cvs(
             CVModel.nationality.ilike(f"%{nationality}%")
         )
 
-
+    
     if recruiter_residence:
-        query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
+        query = query.filter(
+            or_(
+                CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"),
+                CompanyInfoModel.user_id.is_(None)
+            )
+        )
 
     if category:
         query = query.filter(
@@ -1812,6 +1815,7 @@ def create_reserve_checkout(
             raise HTTPException(status_code=400, detail=res)
 
         # ✅ SAVE INVOICE PROPERLY
+        
         vat_amount = Decimal(str(amount)) * Decimal("0.05")
         invoice = InvoiceModel(
             reference=merchant_tx_id,
@@ -1890,6 +1894,7 @@ def create_reserve_transfer_checkout(
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
     vat_amount = Decimal(str(amount)) * Decimal("0.05")
+
 
     #  DO NOT overwrite payload
     hyperpay_payload = {
