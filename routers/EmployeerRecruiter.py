@@ -1815,7 +1815,7 @@ def create_reserve_checkout(
             raise HTTPException(status_code=400, detail=res)
 
         # ✅ SAVE INVOICE PROPERLY
-        vat_amount = amount * Decimal("0.05")
+        vat_amount = Decimal(str(amount)) * Decimal("0.05")
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
@@ -1892,8 +1892,7 @@ def create_reserve_transfer_checkout(
 
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
-    vat_amount = amount * Decimal("0.05")
-
+    vat_amount = Decimal(str(amount)) * Decimal("0.05")
 
     #  DO NOT overwrite payload
     hyperpay_payload = {
