@@ -619,9 +619,9 @@ async def get_promoted_cvs(
     # ❗ ALWAYS EXCLUDE OWN CVs
     # -----------------------------------
     
-    query = query.filter(
-        cast(CVModel.creator_id, UUID) != user.id
-    )
+    #query = query.filter(
+    #    cast(CVModel.creator_id, UUID) != user.id
+    #)
 
     #query = query.filter(
     #    func.lower(func.trim(CreatorUser.role)) != "sponsor"
