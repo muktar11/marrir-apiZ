@@ -623,9 +623,11 @@ async def get_promoted_cvs(
         cast(CVModel.creator_id, UUID) != user.id
     )
 
-    query = query.filter(
-        func.lower(func.trim(CreatorUser.role)) != "sponsor"
-    )
+    #query = query.filter(
+    #    func.lower(func.trim(CreatorUser.role)) != "sponsor"
+    #)
+
+
     
 
     # -----------------------------------
@@ -691,18 +693,10 @@ async def get_promoted_cvs(
             CVModel.nationality.ilike(f"%{nationality}%")
         )
 
-    '''
-    if recruiter_residence:
-        query = query.filter(
-            or_(
-                CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"),
-                CompanyInfoModel.user_id.is_(None)
-            )
-        )
-    '''
+
     if recruiter_residence:
         query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
-        
+
     if category:
         query = query.filter(
             or_(
