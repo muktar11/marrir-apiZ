@@ -614,7 +614,7 @@ async def get_promoted_cvs(
         )
     )
 
-# FIX 2
+    # FIX 2
     # -----------------------------------
     # ❗ ALWAYS EXCLUDE OWN CVs
     # -----------------------------------
@@ -691,7 +691,7 @@ async def get_promoted_cvs(
             CVModel.nationality.ilike(f"%{nationality}%")
         )
 
-    
+    '''
     if recruiter_residence:
         query = query.filter(
             or_(
@@ -699,7 +699,10 @@ async def get_promoted_cvs(
                 CompanyInfoModel.user_id.is_(None)
             )
         )
-
+    '''
+    if recruiter_residence:
+        query = query.filter(CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"))
+        
     if category:
         query = query.filter(
             or_(
