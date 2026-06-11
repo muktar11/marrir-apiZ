@@ -86,10 +86,12 @@ from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 def send_emails(to_email: str, subject: str, body: str):
-    #from_email = "muktarabdulmelik9@gmail.com"
-    #app_password = "ppaz whzx xsxz indm"  # 16-character app password
-    from_email = 'portalmarrir@gmail.com'
-    app_password = "otta bmgi xqez hzmu"
+
+    #from_email = 'portalmarrir@gmail.com'
+    #app_password = "sxas tofy febr kjvd"
+
+    from_email = 'ejtiazportal@gmail.com'
+    app_password = "pgbv znhn rfep zuvw"
 
     msg = MIMEMultipart()
     msg["From"] = from_email
@@ -355,7 +357,13 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     phone_number= cv.phone_number,
                     summary=cv.summary,
                     expected_salary= cv.expected_salary,
-                    currency=cv.currency
+                    currency=cv.currency,
+                    skills_one=cv.skills_one,
+                    skills_two=cv.skills_two,
+                    skills_three=cv.skills_three,
+                    skills_four=cv.skills_four,
+                    skills_five=cv.skills_five,
+                    skills_six=cv.skills_six,
                 )
                 if cv
                 else None
