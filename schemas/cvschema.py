@@ -194,6 +194,12 @@ class RedactedCVReadSchema(BaseProps):
     passport_number: Optional[str] = None
     email: Optional[str] = None
     phone_number: Optional[str] = None
+    skills_one: Optional[str] = None
+    skills_two: Optional[str] = None
+    skills_three: Optional[str] = None
+    skills_four: Optional[str] = None
+    skills_five: Optional[str] = None
+    skills_six: Optional[str] = None
 
 class CVDeleteSchema(CVBaseSchema):
     pass
