@@ -820,6 +820,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 # Admin notification
             admin_email = "ejtiazportal@gmail.com"
             subject_admin = "New User Registration Notification"
+            '''
             body_admin = (
                 f"Our new client {db_obj.first_name} with role {db_obj.role} "
                 f"has registered and would like your approval.\n\n"
@@ -827,6 +828,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 "Thanks!"
             )
             send_emails(to_email=admin_email, subject=subject_admin, body=body_admin)
+            '''
 
             # User welcome email
             user_email = db_obj.email  # ✅ send to the user's registered email
