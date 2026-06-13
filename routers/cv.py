@@ -46,7 +46,8 @@ async def create_update_cv(
     cv_data_json: str = Form(...),
     head_photo: Optional[UploadFile] = None,
     full_body_photo: Optional[UploadFile] = None,
-    intro_video: Optional[UploadFile] = None,    
+    passport_photo: Optional[UploadFile] = None,
+    intro_video: Optional[UploadFile] = None,
     _=Depends(authentication_context),
     __=Depends(build_request_context),
     request: Request,
@@ -62,6 +63,7 @@ async def create_update_cv(
         cv_data_json=cv_data_json,
         head_photo=head_photo,
         full_body_photo=full_body_photo,
+        passport_photo=passport_photo,
         intro_video=intro_video,
     )
     res_data = context_set_response_code_message.get()
