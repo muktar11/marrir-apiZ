@@ -436,6 +436,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             cv_data_json: str,
             head_photo: Optional[UploadFile] = None,
             full_body_photo: Optional[UploadFile] = None,
+            passport_photo: Optional[UploadFile] = None,
             intro_video: Optional[UploadFile] = None,
         ) -> EntityType | None:
 
@@ -559,6 +560,9 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 elif cv_data.get("remove_full_body_photo"):
                     existing_cv.full_body_photo = None
 
+                if passport_photo:
+                    existing_cv.passport_url = uploadFileToLocal(passport_photo)
+
                 if intro_video:
                     existing_cv.intro_video = uploadFileToLocal(intro_video)
                 elif cv_data.get("remove_intro_video"):
@@ -639,6 +643,9 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
 
             if full_body_photo:
                 new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+
+            if passport_photo:
+                new_cv.passport_url = uploadFileToLocal(passport_photo)
 
             if intro_video:
                 new_cv.intro_video = uploadFileToLocal(intro_video)
