@@ -2006,12 +2006,21 @@ def create_reserve_checkout(
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
-            amount=vat_amount,
             status="pending",
             type="reserve",
             object_id=str(reserve_id),
             buyer_id=user.id,   # ✅ VERY IMPORTANT
-            cv_id=cv_id
+            cv_id=cv_id,
+            amount=amount,
+            vat_amount=vat_amount,
+            billing_email = payload.billing.email if payload.billing else None,
+            billing_phone = payload.billing.phone if payload.billing else None,
+            billing_country = payload.billing.country if payload.billing else None,
+            billing_city = payload.billing.city if payload.billing else None,
+            billing_street = payload.billing.street1 if payload.billing else None,
+            billing_postcode = payload.billing.postcode if payload.billing else None,
+            billing_state = payload.billing.state if payload.billing else None,  
+            
         )
 
         db.add(invoice)
@@ -2123,12 +2132,21 @@ def create_reserve_transfer_checkout(
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
-            amount=vat_amount,
+           
             status="pending",
             type="reserve-transfer",
             object_id=str(reserve_id),
             buyer_id=user.id,   #  VERY IMPORTANT
-            reserve_id=reserve_id
+            reserve_id=reserve_id,
+            amount=amount,
+            vat_amount=vat_amount,
+            billing_email = payload.billing.email if payload.billing else None,
+            billing_phone = payload.billing.phone if payload.billing else None,
+            billing_country = payload.billing.country if payload.billing else None,
+            billing_city = payload.billing.city if payload.billing else None,
+            billing_street = payload.billing.street1 if payload.billing else None,
+            billing_postcode = payload.billing.postcode if payload.billing else None,
+            billing_state = payload.billing.state if payload.billing else None,  
         )
 
         db.add(invoice)
