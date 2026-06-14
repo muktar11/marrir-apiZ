@@ -583,6 +583,7 @@ async def get_promoted_cvs(
     }
 '''
 
+'''
 @recruiter_reserve_employeer_router.get(
     "/reserve-promotion-set-for-employeer",
     status_code=200
@@ -679,6 +680,191 @@ async def get_promoted_cvs(
 
                 # ✅ must be in approved recruitment list
                 cast(CVModel.creator_id, UUID).in_(approved_recruitments)
+            )
+        )
+
+    # -----------------------------------
+    # ✅ STEP 3: FILTERS
+    # -----------------------------------
+    
+    if nationality:
+        query = query.filter(
+            CVModel.nationality.ilike(f"%{nationality}%")
+        )
+
+    
+    if recruiter_residence:
+        query = query.filter(
+            or_(
+                CompanyInfoModel.location.ilike(f"%{recruiter_residence}%"),
+                CompanyInfoModel.user_id.is_(None)
+            )
+        )
+
+    if category:
+        query = query.filter(
+            or_(
+                CVModel.employment_types.ilike(f'{{{category}}}'),
+                CVModel.employment_types.ilike(f'{{"{category}"}}'),
+                CVModel.employment_types.ilike(f'{{{category},%'),
+                CVModel.employment_types.ilike(f'{{"{category}",%'),
+                CVModel.employment_types.ilike(f'%,{category},%'),
+                CVModel.employment_types.ilike(f'%,"{category}",%'),
+                CVModel.employment_types.ilike(f'%,{category}}}'),
+                CVModel.employment_types.ilike(f'%,"{category}"}}')
+            )
+        )
+    
+    # -----------------------------------
+    # ✅ STEP 4: EXCLUSIONS
+    # -----------------------------------
+
+    
+    query = query.filter(
+        ~exists(
+            select(1).where(
+                cast(
+                    RecruitmentAgentPrivateReserveModel.employee_id,
+                    UUID
+                ) == CVModel.user_id
+            )
+        )
+    )
+    
+
+    # -----------------------------------
+    # ✅ STEP 5: DEBUG QUERY
+    # -----------------------------------
+    print(
+        query.statement.compile(
+            dialect=postgresql.dialect(),
+            compile_kwargs={"literal_binds": True}
+        )
+    )
+
+    # -----------------------------------
+    # ✅ STEP 6: EXECUTE
+    # -----------------------------------
+    results = query.all()
+
+    data = []
+    for cv, creator_role in results:
+        data.append({
+            "cv": {
+                "user_id": cv.user_id,
+                "passport_number": cv.passport_number,
+                "english_full_name": cv.english_full_name,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "nationality": cv.nationality,
+                "phone_number": cv.phone_number,
+                "email": cv.email,
+                "sex": cv.sex,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "head_photo": cv.head_photo,
+                "date_of_birth": cv.date_of_birth,
+                "creator_id": cv.creator_id,
+                "creator_role": creator_role if cv.creator_id else None
+            }
+        })
+
+    return {
+        "status_code": 200,
+        "message": "Available CVs fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data,
+    }
+
+'''
+@recruiter_reserve_employeer_router.get(
+    "/reserve-promotion-set-for-employeer",
+    status_code=200
+)
+async def get_promoted_cvs(
+    nationality: Optional[str] = Query(None),
+    recruiter_residence: Optional[str] = Query(None),
+    category: Optional[str] = Query(None),
+    db: Session = Depends(get_db_raw),
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    CreatorUser = aliased(UserModel)
+    user = context_actor_user_data.get()
+
+    # -----------------------------------
+    # ✅ STEP 1: BASE QUERY
+    # -----------------------------------
+
+    query = (
+        db.query(CVModel, CreatorUser.role.label("creator_role"))
+        .join(UserModel, UserModel.id == CVModel.user_id)
+        .outerjoin(
+            CreatorUser,
+            CreatorUser.id == cast(CVModel.creator_id, UUID)
+        ).outerjoin(
+            CompanyInfoModel,
+            CompanyInfoModel.user_id == cast(CVModel.creator_id, UUID)
+        )
+    )
+
+# FIX 2
+    # -----------------------------------
+    # ❗ ALWAYS EXCLUDE OWN CVs
+    # -----------------------------------
+    
+    query = query.filter(
+        cast(CVModel.creator_id, UUID) != user.id
+    )
+
+    query = query.filter(
+        func.lower(func.trim(CreatorUser.role)) != "sponsor"
+    )
+    
+
+    # -----------------------------------
+    # ✅ STEP 2: ROLE-BASED FILTERING (INVERTED — show all EXCEPT partner CVs)
+    # -----------------------------------
+
+    # =========================
+    # 🟦 RECRUITMENT ROLE
+    # =========================
+    if user.role == "recruitment":
+        # Agent IDs that have an approved relation with this recruiter
+        approved_agent_ids = (
+            select(AgentRecruitmentModel.agent_id)
+            .where(
+                AgentRecruitmentModel.recruitment_id == user.id,
+                func.lower(func.trim(AgentRecruitmentModel.status)) == "approved"
+            )
+        )
+        # Exclude CVs whose creator is one of those partner agents
+        query = query.filter(
+            ~and_(
+                CreatorUser.role == "agent",
+                cast(CVModel.creator_id, UUID).in_(approved_agent_ids)
+            )
+        )
+
+    # =========================
+    # 🟩 AGENT ROLE
+    # =========================
+    elif user.role == "agent":
+        # Recruiter IDs that have an approved relation with this agent
+        approved_recruitment_ids = (
+            select(AgentRecruitmentModel.recruitment_id)
+            .where(
+                AgentRecruitmentModel.agent_id == user.id,
+                func.lower(func.trim(AgentRecruitmentModel.status)) == "approved"
+            )
+        )
+        # Exclude CVs whose creator is one of those partner recruiters
+        query = query.filter(
+            ~and_(
+                CreatorUser.role == "recruitment",
+                cast(CVModel.creator_id, UUID).in_(approved_recruitment_ids)
             )
         )
 
