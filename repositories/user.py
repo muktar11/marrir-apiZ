@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from http.client import HTTPException
 from io import BytesIO
+import json
 from operator import or_
 import random
 import secrets
@@ -322,6 +323,23 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             cv_completed=cv_completed[0],
         )
 
+        def _parse_employment_types(value):
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(i).strip() for i in value if i]
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(i).strip() for i in parsed if i]
+            except Exception:
+                pass
+            return [
+                i.strip().strip('"').strip("'")
+                for i in str(value).strip("{}[]").split(",")
+                if i and i.strip()
+            ]
+
         redacted_employee = RedactedEmployeeReadSchema(
             id=user.id,
             first_name=user.first_name,
@@ -352,11 +370,11 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     english=cv.english,
                     arabic=cv.arabic,
                     additional_languages=cv.additional_languages,
-                    passport_number= cv.passport_number,
-                    email = cv.email,
-                    phone_number= cv.phone_number,
+                    passport_number=cv.passport_number,
+                    email=cv.email,
+                    phone_number=cv.phone_number,
                     summary=cv.summary,
-                    expected_salary= cv.expected_salary,
+                    expected_salary=cv.expected_salary,
                     currency=cv.currency,
                     skills_one=cv.skills_one,
                     skills_two=cv.skills_two,
@@ -364,6 +382,8 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     skills_four=cv.skills_four,
                     skills_five=cv.skills_five,
                     skills_six=cv.skills_six,
+                    employment_types=_parse_employment_types(cv.employment_types),
+                    flexi_durations=cv.flexi_durations or [],
                 )
                 if cv
                 else None
