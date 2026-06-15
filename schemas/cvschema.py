@@ -200,6 +200,8 @@ class RedactedCVReadSchema(BaseProps):
     skills_four: Optional[str] = None
     skills_five: Optional[str] = None
     skills_six: Optional[str] = None
+    employment_types: Optional[List[str]] = []
+    flexi_durations: Optional[List[str]] = []
 
 class CVDeleteSchema(CVBaseSchema):
     pass
