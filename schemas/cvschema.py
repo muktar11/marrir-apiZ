@@ -3,7 +3,7 @@ import json
 from typing import Any, List, Optional, TypeVar
 import uuid
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from schemas.base import BaseProps
 from schemas.enumschema import (
@@ -155,8 +155,27 @@ class CVReadSchema(CVBaseSchema):
     references: List[ReferenceCreateSchema] = []
     summary: Optional[str] = None
     passport_url: Optional[str] = None
+    employment_types: Optional[List[str]] = []
+    flexi_durations: Optional[List[str]] = []
 
-    
+    @field_validator("employment_types", mode="before")
+    @classmethod
+    def parse_employment_types(cls, v):
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(i).strip() for i in v if i]
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return [str(i).strip() for i in parsed if i]
+        except Exception:
+            pass
+        return [
+            i.strip().strip('"').strip("'")
+            for i in str(v).strip("{}[]").split(",")
+            if i and i.strip()
+        ]
 
     class Config:
         orm_mode = True
