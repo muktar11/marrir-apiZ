@@ -1002,3 +1002,58 @@ async def telr_reserve_callback(data: TransferRequestPaymentCallback, background
         db.rollback()
         logger.error(f"Failed to process payment: {str(e)}", exc_info=True)
         return Response(status_code=400, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
+
+
+@payment_router.get(
+    "/admin/retrieve/all/payments",
+    status_code=200,
+)
+async def admin_get_all_payments(
+    db: Session = Depends(get_db),
+):
+    """
+    Admin retrieves all InvoiceModel records with their statuses.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        invoices = db.query(InvoiceModel).order_by(
+            InvoiceModel.created_at.desc()
+        ).all()
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    data = []
+    for inv in invoices:
+        data.append({
+            "id": inv.id,
+            "customer_id": str(inv.customer_id) if inv.customer_id else None,
+            "buyer_id": str(inv.buyer_id) if inv.buyer_id else None,
+            "ref": inv.stripe_session_id,
+            "status": inv.status,
+            "amount": inv.amount,
+            "subtotal": inv.subtotal,
+            "vat_amount": inv.vat_amount,
+            "currency": inv.currency,
+            "type": inv.type,
+            "card": inv.card,
+            "card_brand": inv.card_brand,
+            "card_last4": inv.card_last4,
+            "card_holder": inv.card_holder,
+            "description": inv.description,
+            "object_id": inv.object_id,
+            "invoice_number": inv.invoice_number,
+            "billing_email": inv.billing_email,
+            "billing_phone": inv.billing_phone,
+            "billing_country": inv.billing_country,
+            "created_at": inv.created_at,
+            "updated_at": inv.updated_at,
+        })
+
+    return {
+        "status_code": 200,
+        "message": "All payments fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data,
+    }
