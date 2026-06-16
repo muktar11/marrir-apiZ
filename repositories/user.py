@@ -643,7 +643,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 )
             )
 
-            return {"OTP": user.otp, "expiry_time": user.otp_expiry}
+            return {"expiry_time": user.otp_expiry}
 
 
         otp = str(random.randint(100000, 999999))
@@ -663,7 +663,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             )
         )
 
-        return {"OTP": otp, "expiry_time": otp_expiry}
+        return {"expiry_time": otp_expiry}
 
     def resend_otp(self, db: Session, request_in: EmailRequest):
         user = db.query(UserModel).filter_by(email=request_in.email).first()
@@ -693,16 +693,17 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             )
         )
 
-        return {"OTP": otp, "expiry_time": otp_expiry}
+        return {"expiry_time": otp_expiry}
 
     def verify_otp(self, db: Session, obj_in: OTPRequest):
         user = db.query(UserModel).filter_by(email=obj_in.email).first()
+        current_time = datetime.now()
 
-        if not user or user.otp != obj_in.otp:
+        if not user or user.otp != obj_in.otp or not user.otp_expiry or current_time > user.otp_expiry:
             context_set_response_code_message.set(
                 BaseGenericResponse(
                     error=True,
-                    message="Invalid OTP",
+                    message="Invalid or expired OTP",
                     status_code=400,
                 )
             )
@@ -717,11 +718,12 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
 
     def reset_password(self, db: Session, data: PasswordResetRequest):
         user = db.query(UserModel).filter_by(email=data.email).first()
-        if not user or user.otp != data.otp:
+        current_time = datetime.now()
+        if not user or user.otp != data.otp or not user.otp_expiry or current_time > user.otp_expiry:
             context_set_response_code_message.set(
                 BaseGenericResponse(
                     error=True,
-                    message="Invalid OTP",
+                    message="Invalid or expired OTP",
                     status_code=400,
                 )
             )
@@ -735,7 +737,6 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 )
             )
             return None
-        # Here, you would hash the password. For simplicity, let's just store it directly.
         user.password = data.new_password
         user.otp = None
         user.otp_expiry = None
