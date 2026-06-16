@@ -1891,6 +1891,52 @@ async def get_accepted_reserves_by_role(
         "data": data
     }
 
+@recruiter_reserve_employeer_router.get(
+    "/admin/retrieve/all/reserves",
+    status_code=200
+)
+async def admin_get_all_reserves(
+    db: Session = Depends(get_db_raw)
+):
+    """
+    Admin retrieves all RecruitmentAgentPrivateReserveModel records.
+    """
+
+    try:
+        reserves = db.query(RecruitmentAgentPrivateReserveModel).order_by(
+            RecruitmentAgentPrivateReserveModel.created_at.desc()
+        ).all()
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    data = []
+    for reserve in reserves:
+        items = {
+            "reserve_id": reserve.id,
+            "recruitment_id": reserve.recruitment_id,
+            "agent_id": reserve.agent_id,
+            "sponsor_id": reserve.sponsor_id,
+            "selfsponsor_id": reserve.selfsponsor_id,
+            "cv_id": reserve.cv_id,
+            "employee_id": reserve.employee_id,
+            "status": reserve.status,
+            "with_passport": reserve.with_passport,
+            "passport_number": reserve.passport_number,
+            "is_paid": getattr(reserve, "is_paid", False),
+            "is_reserved": getattr(reserve, "is_reserved", False),
+            "price": reserve.price,
+            "created_at": reserve.created_at,
+            "updated_at": reserve.updated_at,
+        }
+        data.append(items)
+
+    return {
+        "status_code": 200,
+        "message": "All reserves fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data
+    }
 
 HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
@@ -2132,7 +2178,6 @@ def create_reserve_transfer_checkout(
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
-           
             status="pending",
             type="reserve-transfer",
             object_id=str(reserve_id),
