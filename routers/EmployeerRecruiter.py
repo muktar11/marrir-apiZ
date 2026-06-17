@@ -1938,7 +1938,7 @@ async def admin_get_all_reserves(
         "data": data
     }
 
-HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
