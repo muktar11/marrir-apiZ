@@ -1012,7 +1012,7 @@ async def pay_transfer(
 
 
 def verify_hyperpay_payment(payment_id: str) -> bool:
-    url = f"https://eu-test.oppwa.com/v1/payments/{payment_id}"
+    url = f"https://eu-prod.oppwa.com/v1/payments/{payment_id}"
     params = {"entityId": settings.HYPERPAY_ENTITY_ID}
     headers = get_hyperpay_auth_header()
 
@@ -1026,7 +1026,7 @@ def verify_hyperpay_payment(payment_id: str) -> bool:
 from fastapi import Header, HTTPException
 from starlette.responses import JSONResponse
 
-HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C840A014B1F"
+#HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C840A014B1F"
 
 
 from datetime import datetime
