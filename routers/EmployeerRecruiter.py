@@ -1938,7 +1938,7 @@ async def admin_get_all_reserves(
         "data": data
     }
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
@@ -2006,6 +2006,7 @@ def create_reserve_checkout(
 
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
+    
 
 
     # ✅ DO NOT overwrite payload
@@ -2049,6 +2050,7 @@ def create_reserve_checkout(
         # ✅ SAVE INVOICE PROPERLY
         
         vat_amount = Decimal(str(amount)) * Decimal("0.05")
+        subtotal = Decimal(str(amount)) - vat_amount
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
@@ -2059,8 +2061,8 @@ def create_reserve_checkout(
             cv_id=cv_id,
             amount=amount,
             vat_amount=vat_amount,
+            subtotal=subtotal,
             billing_email = payload.billing.email if payload.billing else None,
-            billing_phone = payload.billing.phone if payload.billing else None,
             billing_country = payload.billing.country if payload.billing else None,
             billing_city = payload.billing.city if payload.billing else None,
             billing_street = payload.billing.street1 if payload.billing else None,
@@ -2135,6 +2137,7 @@ def create_reserve_transfer_checkout(
     merchant_tx_id = str(uuid.uuid4())
     amount = reserve.price or 10.00
     vat_amount = Decimal(str(amount)) * Decimal("0.05")
+    subtotal = Decimal(str(amount)) - vat_amount
 
 
     #  DO NOT overwrite payload
@@ -2185,8 +2188,8 @@ def create_reserve_transfer_checkout(
             reserve_id=reserve_id,
             amount=amount,
             vat_amount=vat_amount,
+            subtotal=subtotal,
             billing_email = payload.billing.email if payload.billing else None,
-            billing_phone = payload.billing.phone if payload.billing else None,
             billing_country = payload.billing.country if payload.billing else None,
             billing_city = payload.billing.city if payload.billing else None,
             billing_street = payload.billing.street1 if payload.billing else None,
