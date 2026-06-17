@@ -1266,18 +1266,9 @@ async def update_job_application_status(
 
     #amount = package.price * len(applications)
     total_amount = Decimal(str(package.price)) * Decimal(len(applications))
-
     # extract VAT from inclusive amount
-    subtotal = (total_amount / Decimal("1.05")).quantize(
-        Decimal("0.01"),
-        rounding=ROUND_HALF_UP
-    )
-
-    vat_amount = (total_amount - subtotal).quantize(
-        Decimal("0.01"),
-        rounding=ROUND_HALF_UP
-    )
-
+    vat_amount = Decimal(str(total_amount)) * Decimal("0.05")
+    subtotal = Decimal(str(total_amount)) - vat_amount
 
     merchant_tx_id = secrets.token_hex(6)
     for app in applications:
@@ -1333,7 +1324,6 @@ async def update_job_application_status(
         subtotal=subtotal,
         vat_amount=vat_amount,
         billing_email = payload.billing.email if payload.billing else None,
-        billing_phone = payload.billing.phone if payload.billing else None,
         billing_country = payload.billing.country if payload.billing else None,
         billing_city = payload.billing.city if payload.billing else None,
         billing_street = payload.billing.street1 if payload.billing else None,
