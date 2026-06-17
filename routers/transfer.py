@@ -7,7 +7,7 @@ from fastapi.security import HTTPBearer
 from sqlalchemy import UUID
 from starlette.requests import Request
 from stripe import Webhook
-import stripe
+import stripe 
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
 from models.agentrecruitmentmodel import AgentRecruitmentModel
 from models.batchtransfermodel import BatchTransferModel
@@ -903,7 +903,7 @@ class PaymentRequest(BaseModel):
 
 logger = logging.getLogger("hyperpay")
 
-HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
 
 from decimal import Decimal
 @transfer_router.post("/pay/hyper")
@@ -976,7 +976,8 @@ async def pay_transfer(
         checkout_id = res.get("id")
         if not checkout_id:
             return Response(status_code=400, content=json.dumps(res))
-        vat_amount = amount * Decimal("0.05")
+        vat_amount = Decimal(str(amount)) * Decimal("0.05")
+        
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
@@ -1011,7 +1012,7 @@ async def pay_transfer(
 
 
 def verify_hyperpay_payment(payment_id: str) -> bool:
-    url = f"https://eu-prod.oppwa.com/v1/payments/{payment_id}"
+    url = f"https://eu-test.oppwa.com/v1/payments/{payment_id}"
     params = {"entityId": settings.HYPERPAY_ENTITY_ID}
     headers = get_hyperpay_auth_header()
 
@@ -1269,6 +1270,7 @@ import re
 
 @transfer_router.get("/hyper/payment/verify")
 def verify_transfer_payment(
+    background_tasks: BackgroundTasks,
     id: str = Query(None),
     resourcePath: str = Query(None),
     db: Session = Depends(get_db),
@@ -1349,7 +1351,6 @@ def verify_transfer_payment(
                     db.add(transfer)
 
             db.commit()
-
             return {
                 "status": "paid",
                 "type": invoice.type
@@ -1380,7 +1381,7 @@ def poll_pending_transfer_payments():
 
         for invoice in invoices:
             res = requests.get(
-                "https://eu-prod.oppwa.com/v1/payments",
+                "https://eu-test.oppwa.com/v1/payments",
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
@@ -1410,7 +1411,7 @@ def process_transfer_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
         res = requests.get(
-            f"https://eu-prod.oppwa.com/v1/payments/{payment_id}",
+            f"https://eu-test.oppwa.com/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
             headers=get_hyperpay_auth_header(),
             timeout=30,
