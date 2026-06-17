@@ -903,7 +903,7 @@ class PaymentRequest(BaseModel):
 
 logger = logging.getLogger("hyperpay")
 
-HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
 
 from decimal import Decimal
 @transfer_router.post("/pay/hyper")
@@ -977,16 +977,17 @@ async def pay_transfer(
         if not checkout_id:
             return Response(status_code=400, content=json.dumps(res))
         vat_amount = Decimal(str(amount)) * Decimal("0.05")
-        
+        subtotal = Decimal(str(amount)) - vat_amount
         invoice = InvoiceModel(
             reference=merchant_tx_id,
             checkout_id=checkout_id,
             buyer_id=user.id,
-            amount=vat_amount,
+            amount=amount,
+            subtotal=subtotal,
+            vat_amount=vat_amount,
             status="pending",
             type="transfer",
             object_id=",".join(str(t.id) for t in transfers),
-
             billing_email=b.email,
             billing_country=b.country.upper(),
             billing_street=b.street1,
@@ -1381,7 +1382,7 @@ def poll_pending_transfer_payments():
 
         for invoice in invoices:
             res = requests.get(
-                "https://eu-test.oppwa.com/v1/payments",
+                "https://eu-prod.oppwa.com/v1/payments",
                 params={
                     "entityId": settings.HYPERPAY_ENTITY_ID,
                     "merchantTransactionId": invoice.reference,
@@ -1411,7 +1412,7 @@ def process_transfer_payment_by_payment_id(payment_id: str):
     db = SessionLocal()
     try:
         res = requests.get(
-            f"https://eu-test.oppwa.com/v1/payments/{payment_id}",
+            f"https://eu-prod.oppwa.com/v1/payments/{payment_id}",
             params={"entityId": settings.HYPERPAY_ENTITY_ID},
             headers=get_hyperpay_auth_header(),
             timeout=30,
