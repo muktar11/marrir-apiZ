@@ -1902,15 +1902,33 @@ async def admin_get_all_reserves(
     Admin retrieves all RecruitmentAgentPrivateReserveModel records.
     """
 
+    Sponsor = aliased(UserModel)
+    Recruitment = aliased(UserModel)
+    Agent = aliased(UserModel)
+    SelfSponsor = aliased(UserModel)
+
     try:
-        reserves = db.query(RecruitmentAgentPrivateReserveModel).order_by(
-            RecruitmentAgentPrivateReserveModel.created_at.desc()
-        ).all()
+        reserves = (
+            db.query(
+                RecruitmentAgentPrivateReserveModel,
+                Sponsor,
+                Recruitment,
+                Agent,
+                SelfSponsor,
+            )
+            .outerjoin(Sponsor, Sponsor.id == RecruitmentAgentPrivateReserveModel.sponsor_id)
+            .outerjoin(Recruitment, Recruitment.id == RecruitmentAgentPrivateReserveModel.recruitment_id)
+            .outerjoin(Agent, Agent.id == RecruitmentAgentPrivateReserveModel.agent_id)
+            .outerjoin(SelfSponsor, SelfSponsor.id == RecruitmentAgentPrivateReserveModel.selfsponsor_id)
+            .order_by(RecruitmentAgentPrivateReserveModel.created_at.desc())
+            .all()
+        )
     except SQLAlchemyError as e:
         raise HTTPException(status_code=500, detail=f"Database error: {e}")
 
     data = []
-    for reserve in reserves:
+    for reserve, sponsor, recruitment, agent, selfsponsor in reserves:
+        user = sponsor or recruitment or agent or selfsponsor
         items = {
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
@@ -1925,6 +1943,8 @@ async def admin_get_all_reserves(
             "is_paid": getattr(reserve, "is_paid", False),
             "is_reserved": getattr(reserve, "is_reserved", False),
             "price": reserve.price,
+            "email": user.email if user else None,
+            "phone": user.phone_number if user else None,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
         }
