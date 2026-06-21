@@ -1864,7 +1864,7 @@ async def get_accepted_reserves_by_role(
         )
         price = reserve.price or 0
         vat = round(price * 0.05, 2)
-        total = round(price + vat, 2)
+        subtotal = round(price - vat, 2)
         items = {
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
@@ -1879,9 +1879,9 @@ async def get_accepted_reserves_by_role(
             "is_paid": getattr(reserve, "is_paid", False),
             "is_reserved": getattr(reserve, "is_reserved", False),
             "price": price,
-            "subtotal": price,
+            "subtotal": subtotal,
             "vat": vat,
-            "total": total,
+            "total": price,
             "created_at": reserve.created_at,
             "updated_at": reserve.updated_at,
             "accepted_by_me": accepted_by_me,
