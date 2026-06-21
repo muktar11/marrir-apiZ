@@ -1771,6 +1771,9 @@ async def get_accepted_reserves_by_role(
             accepted_by_me = (
                 reserve.accepted_by is not None and reserve.accepted_by == uuid.UUID(user_uuid)
             )
+            price = reserve.price or 0
+            vat = round(price * 0.05, 2)
+            subtotal = round(price - vat, 2)
         data.append({
             "reserve_id": reserve.id,
             "recruitment_id": reserve.recruitment_id,
@@ -1781,7 +1784,10 @@ async def get_accepted_reserves_by_role(
             "status": reserve.status,
             "with_passport": reserve.with_passport,
             "passport_number": reserve.passport_number,
-            "price": reserve.price,
+            "price": price,
+            "subtotal": subtotal,
+            "vat": vat,
+            "total": price,
             "is_paid": getattr(reserve, "is_paid", False),
             "is_reserved": getattr(reserve, "is_reserved", False),
             "cv_id": reserve.cv_id,
