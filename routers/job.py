@@ -156,7 +156,7 @@ async def read_job_posts(
 
 
 @job_router.post(
-    "/single", response_model=GenericSingleResponse[JobReadSchema], status_code=200
+    "/single", status_code=200
 )
 @rbac_access_checker(resource=RBACResource.job, rbac_access_type=RBACAccessType.read)
 async def read_job_post(
