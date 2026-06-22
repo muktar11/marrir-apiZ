@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
+from decimal import Decimal
 import json
-from typing import Any, List, Optional 
+from typing import Any, List, Optional
 import uuid
 from fastapi import APIRouter, Depends, Query, Response, UploadFile, BackgroundTasks
 from starlette.requests import Request
@@ -174,11 +175,37 @@ async def read_job_post(
     job_read = job_repo.get(db, filters=filters)
     res_data = context_set_response_code_message.get()
     response.status_code = res_data.status_code
+
+    pricing = None
+    try:
+        user = context_actor_user_data.get()
+        package_role = "sponsor" if user.role == "selfsponsor" else user.role
+        package = (
+            db.query(PromotionPackagesModel)
+            .filter(
+                PromotionPackagesModel.role == package_role,
+                PromotionPackagesModel.category == "job_application",
+            )
+            .first()
+        )
+        if package:
+            price = Decimal(str(package.price))
+            vat = price * Decimal("0.05")
+            total = price + vat
+            pricing = {
+                "price": f"{price:.2f}",
+                "vat": f"{vat:.2f}",
+                "total": f"{total:.2f}",
+            }
+    except Exception:
+        pass
+
     return {
         "status_code": res_data.status_code,
         "message": res_data.message,
         "error": res_data.error,
         "data": job_read,
+        "pricing": pricing,
     }
 
 
