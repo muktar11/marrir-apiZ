@@ -19,6 +19,7 @@ class ApplyJobReadSchema(BaseProps):
     user: Optional[UserReadSchema] = None
     status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
     is_open: Optional[bool] = None
+    created_at: Optional[datetime] = None
 
 
 class ApplyJobSingleBaseSchema(BaseProps):
