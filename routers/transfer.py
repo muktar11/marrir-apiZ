@@ -745,32 +745,53 @@ async def transfer_employee(data: TransferRequest,background_tasks: BackgroundTa
         print(e)
 
 @transfer_router.post("/request/status")
-async def update_transfer_request_status(data: TransferRequestStatusSchema, background_tasks: BackgroundTasks, _=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(build_request_context)):
+async def update_transfer_request_status(data: TransferRequestUpdateSchema, background_tasks: BackgroundTasks, _=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(build_request_context)):
     db = get_db_session()
 
     user = context_actor_user_data.get()
     try:
-        transfer_requests = db.query(TransferRequestModel).filter(TransferRequestModel.id.in_(data.transfer_request_id), TransferRequestModel.requester_id == user.id, TransferRequestModel.status == "pending").all()
+        transfer_requests = db.query(TransferRequestModel).filter(TransferRequestModel.id.in_(data.filter.ids), TransferRequestModel.requester_id == user.id, TransferRequestModel.status == "pending").all()
 
         if not transfer_requests:
-            return Response(status_code=404, content=json.dumps({"message": "Transfer requests not found"}), media_type="application/json")  
+            return Response(status_code=404, content=json.dumps({"message": "Transfer requests not found"}), media_type="application/json")
+
+        has_agreement = False
+        if data.update.status == "accepted":
+            manager_id = transfer_requests[0].manager_id
+            has_agreement = db.query(AgentRecruitmentModel).filter(
+                (
+                    (AgentRecruitmentModel.agent_id == user.id) &
+                    (AgentRecruitmentModel.recruitment_id == manager_id)
+                ) | (
+                    (AgentRecruitmentModel.agent_id == manager_id) &
+                    (AgentRecruitmentModel.recruitment_id == user.id)
+                ),
+                AgentRecruitmentModel.status == "approved"
+            ).first() is not None
 
         for transfer_request in transfer_requests:
-            transfer_request.status = data.status
-            transfer_request.reason = data.reason
-            db.add(transfer_request)
-
+            if has_agreement:
+                transfer_request.status = "done"
+                db.add(transfer_request)
+                update_employee_manager(db, transfer_request.user_id, user.id)
+            else:
+                transfer_request.status = data.update.status
+                transfer_request.reason = data.update.reason
+                db.add(transfer_request)
 
         db.commit()
-        background_tasks.add_task(send_notification, db, transfer_requests[0].manager_id, "Transfer Request", f"Transfer requests has been {data.status}", "transfer")
 
-        _user = db.query(UserModel).filter(UserModel.id == transfer_requests[0].manager_id).first() 
-
+        _user = db.query(UserModel).filter(UserModel.id == transfer_requests[0].manager_id).first()
         email = _user.email or _user.company.alternative_email
 
-        background_tasks.add_task(send_email, email=email, title="Transfer Request", description=f"Transfer requests has been {data.status}")
-
-        return {"status": "success", "message": "Transfer request status updated"}
+        if has_agreement:
+            background_tasks.add_task(send_notification, db, transfer_requests[0].manager_id, "Transfer", f"Transfer has been completed", "transfer")
+            background_tasks.add_task(send_email, email=email, title="Transfer", description=f"Transfer has been completed")
+            return {"status": "success", "message": "Transfer completed without payment (agreement exists)"}
+        else:
+            background_tasks.add_task(send_notification, db, transfer_requests[0].manager_id, "Transfer Request", f"Transfer requests has been {data.update.status}", "transfer")
+            background_tasks.add_task(send_email, email=email, title="Transfer Request", description=f"Transfer requests has been {data.update.status}")
+            return {"status": "success", "message": "Transfer request status updated"}
 
     except Exception as e:
         print(e)
@@ -968,7 +989,7 @@ async def pay_transfer(
 
         res = requests.post(
             f"{HYPERPAY_BASE_URL}/v1/checkouts",
-            data=payload,
+            data=payload, 
             headers=get_hyperpay_auth_header(),
             timeout=30,
         ).json()
@@ -1236,7 +1257,7 @@ def view_invoice(
 async def pay_transfer_callback(
     request: Request,
     background_tasks: BackgroundTasks,
-):
+m):
     data = {}
 
     try:
