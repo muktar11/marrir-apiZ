@@ -1323,12 +1323,12 @@ async def update_job_application_status(
         amount=total_amount,
         subtotal=subtotal,
         vat_amount=vat_amount,
-        billing_email = payload.billing.email if payload.billing else None,
-        billing_country = payload.billing.country if payload.billing else None,
-        billing_city = payload.billing.city if payload.billing else None,
-        billing_street = payload.billing.street1 if payload.billing else None,
-        billing_postcode = payload.billing.postcode if payload.billing else None,
-        billing_state = payload.billing.state if payload.billing else None,
+        billing_email = data.billing.email if data.billing else None,
+        billing_country = data.billing.country if data.billing else None,
+        billing_city = data.billing.city if data.billing else None,
+        billing_street = data.billing.street1 if data.billing else None,
+        billing_postcode = data.billing.postcode if data.billing else None,
+        billing_state = data.billing.state if data.billing else None,
     )
 
     db.add(invoice)
