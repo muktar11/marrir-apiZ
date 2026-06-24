@@ -397,3 +397,37 @@ async def get_my_relations(
         "role": user.role,
         "relations": relations
     }
+
+
+class DeleteAgreementRequest(BaseModel):
+    user_id: str
+    partner_id: str
+
+
+@company_info_router.post("/delete-agreement")
+async def delete_agreement(
+    request: DeleteAgreementRequest,
+    db: Session = Depends(get_dbs),
+):
+    user = db.query(UserModel).filter(UserModel.id == request.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    agreement = db.query(AgentRecruitmentModel).filter(
+        (
+            (AgentRecruitmentModel.agent_id == request.user_id)
+            & (AgentRecruitmentModel.recruitment_id == request.partner_id)
+        )
+        | (
+            (AgentRecruitmentModel.agent_id == request.partner_id)
+            & (AgentRecruitmentModel.recruitment_id == request.user_id)
+        )
+    ).first()
+
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+
+    db.delete(agreement)
+    db.commit()
+
+    return {"message": "Agreement deleted successfully"}
