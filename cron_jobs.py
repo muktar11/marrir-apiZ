@@ -4,8 +4,10 @@ from sqlalchemy.orm import Session
 from models.db import get_db_session
 from models.notificationmodel import Notifications
 from models.promotionmodel import PromotionPackagesModel, PromotionSubscriptionModel, PromotionModel
-from models.reservemodel import ReserveModel
-from models.batchreservemodel import BatchReserveModel  # Import the BatchModel
+from models.reservemodel import ReserveModel, RecruitmentAgentPrivateReserveModel
+from models.batchreservemodel import BatchReserveModel
+from models.transferrequestmodel import TransferRequestModel
+from models.batchtransfermodel import BatchTransferModel
 from core.context_vars import context_set_response_code_message
 from schemas.base import BaseGenericResponse
 from utils.send_email import send_email
@@ -116,6 +118,57 @@ def inactive_expired_promotion(db: Session):
     except Exception as e:
         db.rollback()
         print(f"Error setting expired promotions to inactive: {str(e)}")
+
+def delete_unpaid_private_reserves(db: Session):
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        unpaid_reserves = db.query(RecruitmentAgentPrivateReserveModel).filter(
+            RecruitmentAgentPrivateReserveModel.is_paid == False,
+            RecruitmentAgentPrivateReserveModel.created_at < cutoff,
+        ).all()
+
+        count = len(unpaid_reserves)
+        for reserve in unpaid_reserves:
+            db.delete(reserve)
+
+        db.commit()
+        print(f"Deleted {count} unpaid private reserves older than 24 hours.")
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting unpaid private reserves: {str(e)}")
+
+
+def delete_pending_transfer_requests(db: Session):
+    try:
+        cutoff = datetime.now(timezone.utc) - timedelta(hours=24)
+        pending_transfers = db.query(TransferRequestModel).filter(
+            TransferRequestModel.status == "pending",
+            TransferRequestModel.created_at < cutoff,
+        ).all()
+
+        count = len(pending_transfers)
+        batch_ids = set()
+        for transfer in pending_transfers:
+            batch_ids.add(transfer.batch_id)
+            db.delete(transfer)
+
+        for batch_id in batch_ids:
+            remaining = db.query(TransferRequestModel).filter(
+                TransferRequestModel.batch_id == batch_id
+            ).count()
+            if remaining == 0:
+                batch = db.query(BatchTransferModel).filter(
+                    BatchTransferModel.id == batch_id
+                ).first()
+                if batch:
+                    db.delete(batch)
+
+        db.commit()
+        print(f"Deleted {count} pending transfer requests older than 24 hours.")
+    except Exception as e:
+        db.rollback()
+        print(f"Error deleting pending transfer requests: {str(e)}")
+
 
 scheduler = BackgroundScheduler()
 scheduler.start()
