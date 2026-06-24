@@ -37,10 +37,29 @@ from routers.checkout import checkout_router
 from routers.assignagent import assign_agent_router
 from seed import seed_promotion_package
 from utils.exceptions import AppException
-from cron_jobs import inactive_expired_promotion, scheduler, delete_declined_and_cancelled_reserves
+from cron_jobs import inactive_expired_promotion, scheduler, delete_declined_and_cancelled_reserves, delete_unpaid_private_reserves, delete_pending_transfer_requests
 from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
 import stripe
+import logging
+
+# Enable uvicorn + custom logger output
+logging.basicConfig(
+    level=logging.INFO,  # change to DEBUG to see everything
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
+
+logger = logging.getLogger("marrir")
+logger.setLevel(logging.INFO)
+
+# Optional: ensure log prints even if handlers missing
+if not logger.handlers:
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s")
+    handler.setFormatter(formatter)
+    logger.addHandler(handler)
+
+logger.info("🔵 Logging initialized in main.py")
 
 tags_metadata = [
     {"name": "user", "description": "user routes"},
@@ -163,6 +182,8 @@ async def con_job_event():
     if db:
         scheduler.add_job(delete_declined_and_cancelled_reserves, 'interval', hours=24, args=[db])
         scheduler.add_job(inactive_expired_promotion, 'interval', hours=24, args=[db])
+        scheduler.add_job(delete_unpaid_private_reserves, 'interval', hours=1, args=[db])
+        scheduler.add_job(delete_pending_transfer_requests, 'interval', hours=1, args=[db])
         seed_promotion_package(db)
     else:
         print("Failed to get a valid database session.")
