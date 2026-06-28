@@ -19,6 +19,7 @@ class ApplyJobReadSchema(BaseProps):
     user: Optional[UserReadSchema] = None
     status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
     is_open: Optional[bool] = None
+    created_at: Optional[datetime] = None
 
 
 class ApplyJobSingleBaseSchema(BaseProps):
@@ -43,6 +44,7 @@ class ApplyJobMultipleBaseSchema(BaseProps):
     user_id: List[uuid.UUID] = []
     status: Optional[OfferTypeSchema] = OfferTypeSchema.PENDING
 
+from pydantic import field_validator
 
 class JobBaseSchema(BaseProps):
     name: Optional[str] = None
@@ -54,6 +56,15 @@ class JobBaseSchema(BaseProps):
     type: Optional[JobTypeSchema] = None
     posted_by: Optional[uuid.UUID] = None
     is_open: Optional[bool] = None
+    employment_types: Optional[List[str]] = None
+
+    @field_validator("employment_types", mode="before")
+    @classmethod
+    def parse_employment_types(cls, v):
+        if isinstance(v, str):
+            return v.split(",")
+        return v
+    
 
 
 EntityBaseSchema = TypeVar("EntityBaseSchema", bound=JobBaseSchema)
@@ -84,7 +95,7 @@ class JobUpdatePayload(BaseProps):
 
 class JobsFilterSchema(JobBaseSchema):
     id: Optional[int] = None
-
+    
 
 class JobsSearchSchema(BaseProps):
     name: Optional[str] = None
@@ -100,11 +111,24 @@ class JobUpdateSchema(BaseProps):
 class JobApplicationDeleteSchema(ApplyJobSingleBaseSchema):
     pass
 
+from pydantic import BaseModel, Field
+
+class BillingSchema(BaseModel):
+    email: EmailStr | None = None
+    first_name: str | None = None
+    last_name: str | None = None
+    street1: str
+    city: str
+    state: str | None = None
+    country: str = Field(..., min_length=2, max_length=2)
+    postcode: str
+
 
 class ApplicationStatusUpdateSchema(BaseModel):
     status: OfferTypeSchema
 
     job_application_ids: list[int]
+    billing: BillingSchema | None = None
 
 
 class JobApplicationPaymentInfoSchema(BaseModel):

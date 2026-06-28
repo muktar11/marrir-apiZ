@@ -1,6 +1,7 @@
 from datetime import datetime, timedelta
 from http.client import HTTPException
 from io import BytesIO
+import json
 from operator import or_
 import random
 import secrets
@@ -11,6 +12,7 @@ from fastapi import File, Form, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.responses import StreamingResponse
 import pandas as pd
+import io
 
 from sqlalchemy import BinaryExpression, and_, column
 from sqlalchemy.orm import Session
@@ -77,6 +79,37 @@ import logging
 # Configure logging
 logger = logging.getLogger(__name__)
 
+
+
+
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+
+def send_emails(to_email: str, subject: str, body: str):
+
+    #from_email = 'portalmarrir@gmail.com'
+    #app_password = "sxas tofy febr kjvd"
+
+    from_email = 'ejtiazportal@gmail.com'
+    app_password = "pgbv znhn rfep zuvw"
+
+    msg = MIMEMultipart()
+    msg["From"] = from_email
+    msg["To"] = to_email
+    msg["Subject"] = subject
+
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(from_email, app_password)
+            server.send_message(msg)
+        print(f"Email sent to {to_email}")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
+
+from enum import Enum
 
 class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchema]):
     def get_by_id(self, db: Session, entity_id: int) -> EntityType:
@@ -290,6 +323,23 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             cv_completed=cv_completed[0],
         )
 
+        def _parse_employment_types(value):
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(i).strip() for i in value if i]
+            try:
+                parsed = json.loads(value)
+                if isinstance(parsed, list):
+                    return [str(i).strip() for i in parsed if i]
+            except Exception:
+                pass
+            return [
+                i.strip().strip('"').strip("'")
+                for i in str(value).strip("{}[]").split(",")
+                if i and i.strip()
+            ]
+
         redacted_employee = RedactedEmployeeReadSchema(
             id=user.id,
             first_name=user.first_name,
@@ -298,6 +348,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             cv=(
                 RedactedCVReadSchema(
                     id=cv.id,
+                    user_id=cv.user_id,
                     english_full_name=cv.english_full_name,
                     arabic_full_name=cv.arabic_full_name,
                     amharic_full_name=cv.amharic_full_name,
@@ -319,6 +370,20 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     english=cv.english,
                     arabic=cv.arabic,
                     additional_languages=cv.additional_languages,
+                    passport_number=cv.passport_number,
+                    email=cv.email,
+                    phone_number=cv.phone_number,
+                    summary=cv.summary,
+                    expected_salary=cv.expected_salary,
+                    currency=cv.currency,
+                    skills_one=cv.skills_one,
+                    skills_two=cv.skills_two,
+                    skills_three=cv.skills_three,
+                    skills_four=cv.skills_four,
+                    skills_five=cv.skills_five,
+                    skills_six=cv.skills_six,
+                    employment_types=_parse_employment_types(cv.employment_types),
+                    flexi_durations=cv.flexi_durations or [],
                 )
                 if cv
                 else None
@@ -578,7 +643,8 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 )
             )
 
-            return {"OTP": user.otp, "expiry_time": user.otp_expiry}
+            return {"expiry_time": user.otp_expiry}
+
 
         otp = str(random.randint(100000, 999999))
         otp_expiry = current_time + timedelta(minutes=5)
@@ -586,7 +652,8 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
         user.otp_expiry = otp_expiry
         subject = "Your OTP for Password Reset"
         body = f"Here is your OTP: {otp}"
-        send_email(user.email, subject, body)
+        send_email(email=user.email, title=subject, description=body)
+
 
         context_set_response_code_message.set(
             BaseGenericResponse(
@@ -596,7 +663,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             )
         )
 
-        return {"OTP": otp, "expiry_time": otp_expiry}
+        return {"expiry_time": otp_expiry}
 
     def resend_otp(self, db: Session, request_in: EmailRequest):
         user = db.query(UserModel).filter_by(email=request_in.email).first()
@@ -626,16 +693,17 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             )
         )
 
-        return {"OTP": otp, "expiry_time": otp_expiry}
+        return {"expiry_time": otp_expiry}
 
     def verify_otp(self, db: Session, obj_in: OTPRequest):
         user = db.query(UserModel).filter_by(email=obj_in.email).first()
+        current_time = datetime.now()
 
-        if not user or user.otp != obj_in.otp:
+        if not user or user.otp != obj_in.otp or not user.otp_expiry or current_time > user.otp_expiry:
             context_set_response_code_message.set(
                 BaseGenericResponse(
                     error=True,
-                    message="Invalid OTP",
+                    message="Invalid or expired OTP",
                     status_code=400,
                 )
             )
@@ -650,11 +718,12 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
 
     def reset_password(self, db: Session, data: PasswordResetRequest):
         user = db.query(UserModel).filter_by(email=data.email).first()
-        if not user or user.otp != data.otp:
+        current_time = datetime.now()
+        if not user or user.otp != data.otp or not user.otp_expiry or current_time > user.otp_expiry:
             context_set_response_code_message.set(
                 BaseGenericResponse(
                     error=True,
-                    message="Invalid OTP",
+                    message="Invalid or expired OTP",
                     status_code=400,
                 )
             )
@@ -668,7 +737,6 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 )
             )
             return None
-        # Here, you would hash the password. For simplicity, let's just store it directly.
         user.password = data.new_password
         user.otp = None
         user.otp_expiry = None
@@ -679,7 +747,8 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 status_code=200,
             )
         )
-
+       
+    '''
     def create(self, db: Session, *, obj_in: UserCreateSchema) -> EntityType | None:
         obj_in_data = jsonable_encoder(obj_in)
         db_obj = self.entity(**obj_in_data)
@@ -726,6 +795,86 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     status_code=201,
                 )
             )
+        return db_obj
+    '''
+
+    def create(self, db: Session, *, obj_in: UserCreateSchema) -> EntityType | None:
+        obj_in_data = jsonable_encoder(obj_in)
+        db_obj = self.entity(**obj_in_data)
+        exists = self.check_conflict(db, entity=db_obj)
+        if exists:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message="User Already Exists!",
+                    status_code=409,
+                )
+            )
+            return None
+
+        db.add(db_obj)
+        db.commit()
+        db.refresh(db_obj)
+
+        qr_code_data = generate_qr_code(db_obj.id)
+        new_user_profile = UserProfileModel(user_id=db_obj.id, qr_code=qr_code_data)
+        user = context_actor_user_data.get()
+        db.add(new_user_profile)
+
+        if obj_in.role == UserRoleSchema.EMPLOYEE:
+            employee = EmployeeModel(user_id=db_obj.id, manager_id=db_obj.id)
+            if user:
+                employee.manager_id = user.id
+            db.add(employee)
+            new_cv = CVModel(
+                user_id=db_obj.id,
+                english_full_name=db_obj.first_name + " " + db_obj.last_name,
+                email=db_obj.email,
+                phone_number=db_obj.phone_number,
+                creator_id=db_obj.id,
+            )
+            db.add(new_cv)
+        db.commit()
+
+        # ✅ Send confirmation email after user is fully created
+        try:
+                # Admin notification
+            admin_email = "ejtiazportal@gmail.com"
+            subject_admin = "New User Registration Notification"
+            '''
+            body_admin = (
+                f"Our new client {db_obj.first_name} with role {db_obj.role} "
+                f"has registered and would like your approval.\n\n"
+                f"Click the link below to review:\nhttps://marrir.com/\n\n"
+                "Thanks!"
+            )
+            send_emails(to_email=admin_email, subject=subject_admin, body=body_admin)
+            '''
+
+            # User welcome email
+            user_email = db_obj.email  # ✅ send to the user's registered email
+            subject_user = "Welcome to Marri Platform!"
+            body_user = (
+                f"Welcome to Marri, {db_obj.first_name}!\n\n"
+                "Please visit our platform and download + submit the Business Agreement.\n\n"
+                "You can log in and get started here: https://marrir.com/\n\n"
+                "Your account has been created successfully.\n\nThanks!"
+            )
+            send_emails(to_email=user_email, subject=subject_user, body=body_user)
+
+        except Exception as e:
+            # Optionally log this error
+            print(f"Failed to send email: {e}")
+
+        if db_obj is not None:
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                    status_code=201,
+                )
+            )
+
         return db_obj
 
     def update(
@@ -846,24 +995,56 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
     def bulk_upload(self, db: Session, *, file: UploadFile = File(...)):
         try:
             valid, emails, phones = [], set(), set()
-            df = pd.read_excel(file.file, dtype={"phone_number": str}).map(
-                lambda x: None if pd.isna(x) or x == "" else x
-            )
+
+            # ✅ Read excel file safely
+            contents = file.file.read()   # Read uploaded file as bytes
+            df = pd.read_excel(io.BytesIO(contents), dtype={"passport_number": str, "phone_number": str})
+            df = df.map(lambda x: None if pd.isna(x) or x == "" else x)
+
             for index, row in df.iterrows():
                 entity = row.to_dict()
 
+                # ✅ Replace NaN with None
                 for key, value in entity.items():
                     if pd.isna(value):
                         entity[key] = None
 
-                entity = {
-                    key: self.capitalize_string(value) if key in ["first_name", "last_name"] else value
-                    for key, value in entity.items()
-                }
+                # ✅ Ensure phone_number is string
+                if entity.get("phone_number") is not None:
+                    entity["phone_number"] = str(entity["phone_number"])
 
+                # ✅ Split english_full_name into first_name and last_name
+                full_name = entity.get("english_full_name", "")
+                if full_name and isinstance(full_name, str):
+                    parts = full_name.strip().split(" ", 1)
+                    entity["first_name"] = self.capitalize_string(parts[0]) if parts else None
+                    entity["last_name"] = self.capitalize_string(parts[1]) if len(parts) > 1 else None
+                else:
+                    entity["first_name"], entity["last_name"] = None, None
+
+                # ✅ Normalize other fields
+                entity["date_of_birth"] = (
+                    pd.to_datetime(entity.get("date_of_birth"), errors="coerce").date()
+                    if entity.get("date_of_birth")
+                    else None
+                )
+                entity["passport_number"] = str(entity.get("passport_number")) if entity.get("passport_number") else None
+                entity["nationality"] = self.capitalize_string(entity.get("nationality")) if entity.get("nationality") else None
+
+                # ✅ Build User schema
+
+
+                                # ✅ Build User schema
                 obj_in = UserCreateSchema(**entity)
-                db_obj = self.entity(**obj_in.dict())
 
+                # Remove keys that UserModel doesn’t support
+                user_data = obj_in.dict(exclude={"english_full_name"})
+
+                # Create DB object
+                db_obj = self.entity(**user_data)
+
+
+                # ✅ Conflict check
                 exists = self.check_conflict(db, entity=db_obj)
                 if exists or db_obj.email in emails or db_obj.phone_number in phones:
                     context_set_response_code_message.set(
@@ -873,13 +1054,13 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                             status_code=409,
                         )
                     )
-                    
                     return
-                
+
                 valid.append(db_obj)
                 emails.add(db_obj.email)
                 phones.add(db_obj.phone_number)
 
+            # ✅ Persist users + related models
             for db_obj in valid:
                 db.add(db_obj)
                 db.flush()
@@ -891,26 +1072,35 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                 user_id = context_actor_user_data.get().id
 
                 db.add(new_user_profile)
+
                 employee = EmployeeModel(
                     user_id=db_obj.id,
                     manager_id=user_id,
                 )
-
                 db.add(employee)
+
                 new_cv = CVModel(
                     user_id=db_obj.id,
-                    english_full_name=db_obj.first_name + " " + db_obj.last_name,
+                    english_full_name=(db_obj.first_name + " " + db_obj.last_name) if db_obj.first_name else None,
                     email=db_obj.email,
                     phone_number=db_obj.phone_number,
+                    sex=db_obj.sex,
+                    date_of_birth=db_obj.date_of_birth,
+                    passport_number=db_obj.passport_number,
+                    nationality=db_obj.nationality,
                 )
                 db.add(new_cv)
 
             return
         except Exception as e:
             logger.error(f"Error in user bulk_upload: {e}")
-            err = e.errors()[0]
-            _input = err.get("input")
-            _msg = err.get("msg").replace("value", _input)
+            try:
+                err = e.errors()[0]
+                _input = err.get("input")
+                _msg = err.get("msg").replace("value", str(_input))
+            except Exception:
+                _msg = str(e)
+
             context_set_response_code_message.set(
                 BaseGenericResponse(
                     error=True,
@@ -918,8 +1108,8 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
                     status_code=400,
                 )
             )
-
             return None
+
 
     def check_conflict(self, db: Session, entity: EntityType):
         return super().check_conflict(db, entity)
@@ -1030,7 +1220,7 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
 
             new_user = self.create(db=db, obj_in=user_schema)
             new_user.verified = True
-            new_user.gooogle_id = google_id
+            new_user.google_id = google_id
             db.commit()
             db.refresh(new_user)
         elif not user.google_id:
@@ -1044,7 +1234,11 @@ class UserRepository(BaseRepository[UserModel, UserCreateSchema, UserUpdateSchem
             UserTokenSchema(id=user.id, email=user.email, role=user.role)
         )
         return UserTokenResponseSchema(
-            access_token=access_token, refresh_token=refresh_token
+        user_id=user.id,
+        email=user.email,
+        role=user.role.value if isinstance(user.role, Enum) else str(user.role),
+        access_token=access_token,
+        refresh_token=refresh_token,
         )
 
     def refresh(

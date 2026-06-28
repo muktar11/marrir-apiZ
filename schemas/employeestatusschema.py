@@ -8,8 +8,9 @@ from schemas.enumschema import EmployeeStatusTypeSchema
 
 
 class EmployeeStatusBaseSchema(BaseProps):
-    user_id: Optional[uuid.UUID]
+    user_id: Optional[uuid.UUID] = None
     status: Optional[EmployeeStatusTypeSchema] = None
+    reason: Optional[str] = None   # ✅ default makes it optional
 
 
 EntityBaseSchema = TypeVar("EntityBaseSchema", bound=EmployeeStatusBaseSchema)
@@ -18,7 +19,7 @@ EntityBaseSchema = TypeVar("EntityBaseSchema", bound=EmployeeStatusBaseSchema)
 class EmployeeStatusCreateSchema(EmployeeStatusBaseSchema):
     user_id: uuid.UUID
     status: EmployeeStatusTypeSchema
-    reason: Optional[str]
+    reason: Optional[str] = None   # ✅ make optional
 
 
 class EmployeeStatusReadSchema(EmployeeStatusBaseSchema):

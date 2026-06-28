@@ -6,16 +6,17 @@ import uuid
 from fastapi import APIRouter, Depends, Response, Header, UploadFile
 from fastapi.security import HTTPBearer
 from pydantic import EmailStr
-import requests
+import requests 
 from starlette.requests import Request
 from fastapi import File, Form, UploadFile
 from authlib.integrations.starlette_client import OAuth
 from core.auth import rbac_access_checker, RBACResource, RBACAccessType
 from core.context_vars import context_set_response_code_message
 from core.security import Settings
+import os
 from models.db import build_request_context, get_db, get_db_session, authentication_context, get_dbs
 from models.usermodel import UserModel
-from repositories.user import UserRepository
+from repositories.user import UserRepository, send_emails
 from routers import version_prefix
 from schemas.base import GenericSingleResponse, GenericMultipleResponse
 from schemas.cvschema import CVSearchSchema
@@ -56,7 +57,7 @@ user_router_prefix = version_prefix + "user"
 user_router = APIRouter(prefix=user_router_prefix)
 
 
-'''
+
 
 oauth.register(
     name='facebook',
@@ -69,14 +70,13 @@ oauth.register(
     api_base_url='https://graph.facebook.com/',
     client_kwargs={'scope': 'email'},
 )
-'''
+
 
 @user_router.post(
     "/login",
     response_model=GenericSingleResponse[UserTokenResponseSchema],
     status_code=200,
 )
-
 async def login_user(
     *,
     user_in: UserLoginSchema,
@@ -87,13 +87,19 @@ async def login_user(
     db = get_db_session()
     user_repo = UserRepository(entity=UserModel)
     user_token = user_repo.authenticate(db, user_in)
-
+     # If authentication failed, return early
+    if not user_token:
+        response.status_code = 404
+        return {
+            "status_code": 404,
+            "message": "The email or password is incorrect!",
+            "error": True,
+            "data": None,
+        }
     # Fetch full user object
     user = db.query(UserModel).filter(UserModel.email == user_in.email).first()
-
     # Default response values
     res_data = context_set_response_code_message.get()
-
     if not user:
         response.status_code = 404
         return {
@@ -112,14 +118,18 @@ async def login_user(
             "data": user_token,
         }
 
-    if user.role == "selfsponsor":  # or use UserRole.ADMIN if using enums
+    if user.role == "selfsponsor":
+       # user.role = "employee"
+       # db.commit()
+       # db.refresh(user)
         response.status_code = 200
         return {
             "status_code": 200,
-            "message": "Admin login successful.",
+            "message": "User role updated to employee. Login successful.",
             "error": False,
             "data": user_token,
         }
+
     
     if user.role == "employee":  # or use UserRole.ADMIN if using enums
         response.status_code = 200
@@ -174,13 +184,12 @@ async def login_via_google(request: Request):
         "url": f"https://accounts.google.com/o/oauth2/auth?response_type=code&client_id={settings.OAUTH_CLIENT_ID}&redirect_uri={settings.OAUTH_REDIRECT_URI}&scope=openid%20profile%20email"
     }
 
-'''
 @user_router.post("/login/facebook")
 async def login_via_facebook(request: Request):
     return {
         "url": f"https://www.facebook.com/v10.0/dialog/oauth?client_id={os.getenv('FACEBOOK_CLIENT_ID')}&redirect_uri={settings.FACEBOOK_REDIRECT_URI}&scope=email"
     }
-'''
+
 
 @user_router.post("/auth/google")
 async def auth_google(
@@ -207,15 +216,14 @@ async def auth_google(
     return user_tokens
 
 
-'''
-@user_router.post("/test/auth/facebook")
+
+@user_router.post("/auth/facebook")
 async def auth_facebook(
     code: str,
     _=Depends(build_request_context),
 ):
     db = get_db_session()
     user_repo = UserRepository(entity=UserModel)
-
     token_url = "https://graph.facebook.com/v10.0/oauth/access_token"
     data = {
         "client_id": os.getenv("FACEBOOK_CLIENT_ID"),
@@ -223,26 +231,21 @@ async def auth_facebook(
         "client_secret": os.getenv("FACEBOOK_CLIENT_SECRET"),
         "code": code,
     }
-
     # Exchange code for access token
     token_response = requests.get(token_url, params=data)
     access_token = token_response.json().get("access_token")
-
     if not access_token:
         return {"error": "Failed to retrieve access token"}
-
     # Use access token to get user info
     user_info_response = requests.get(
         "https://graph.facebook.com/me",
         params={"fields": "id,name,email", "access_token": access_token},
     )
-
     user_info = user_info_response.json()
-
     # Handle login/registration logic
     user_tokens = user_repo.user_handling_logic(db, user_info)
     return user_tokens
-'''
+
 
 @user_router.get(
     "/refresh", response_model=GenericSingleResponse[UserTokenResponseSchema]
@@ -351,56 +354,37 @@ async def reset_password(
 
 import os
 from sqlalchemy.orm import Session
-
-
-
 import logging
-
 logging.basicConfig(level=logging.DEBUG)
-
-
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import JSONResponse
 import shutil
+from fastapi.staticfiles import StaticFiles
 
+
+'''
 app = FastAPI()
-
-# Endpoint to handle terms upload
-
+app.mount("/uploaded_terms", StaticFiles(directory="uploaded_terms"), name="uploaded_terms")
 @user_router.post("/upload-terms")
 async def upload_terms(email: str = Form(...), terms_file: UploadFile = File(...), db: Session = Depends(get_db)):
-    # Check if the file and email are provided
     if not email:
         raise HTTPException(status_code=400, detail="Email is required")
-
     if not terms_file:
         raise HTTPException(status_code=400, detail="Terms file is required")
-
-    # Find the user by email
     user = db.query(UserModel).filter(UserModel.email == email).first()
-
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-
-    # Ensure the directory for the uploaded terms exists
-    upload_directory = "static/uploaded_terms"
+    upload_directory = "uploaded_terms"
     if not os.path.exists(upload_directory):
         os.makedirs(upload_directory)
-
-    # Save the file
     try:
         file_location = os.path.join(upload_directory, f"{uuid.uuid4()}_{terms_file.filename}")
         with open(file_location, "wb") as buffer:
             shutil.copyfileobj(terms_file.file, buffer)
-
-        # Update the user record with the file path and set is_uploaded to True
         user.terms_file_path = file_location
         user.is_uploaded = True
-
-        # Commit the changes to the database
         db.commit()
-
-        # Return a success message with file location
+        print('filelocation',  file_location)
         return {
             "message": "Terms uploaded successfully",
             "email": email,
@@ -409,6 +393,65 @@ async def upload_terms(email: str = Form(...), terms_file: UploadFile = File(...
 
     except Exception as e:
         db.rollback()  # Rollback in case of an error
+        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+'''
+
+@user_router.post("/upload-terms")
+async def upload_terms(
+    email: str = Form(...),
+    terms_file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    # Validate
+    if not email:
+        raise HTTPException(status_code=400, detail="Email is required")
+    if not terms_file:
+        raise HTTPException(status_code=400, detail="Terms file is required")
+
+    # Find user
+    user = db.query(UserModel).filter(UserModel.email == email).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    upload_directory = "uploaded_terms"
+    if not os.path.exists(upload_directory):
+        os.makedirs(upload_directory)
+
+    try:
+        # Save file
+        file_location = os.path.join(upload_directory, f"{uuid.uuid4()}_{terms_file.filename}")
+        with open(file_location, "wb") as buffer:
+            shutil.copyfileobj(terms_file.file, buffer)
+
+        # Update DB
+        user.terms_file_path = file_location
+        user.is_uploaded = True
+        db.commit()
+
+        # ✅ Send email to admin after successful commit
+        try:
+            subject = "User Terms Uploaded - Approval Required"
+            admin_email = "ejtiazportal@gmail.com"
+            body = (
+                f"Hello Admin,\n\n"
+                f"The user {user.first_name} {user.last_name} ({user.email}) "
+                f"has uploaded their Terms file.\n\n"
+                f"Please review and approve it in the system.\n\n"
+                f"File Path: {file_location}\n\n"
+                f"Thanks,\nMarri Platform"
+            )
+            send_emails(to_email=admin_email, subject=subject, body=body)
+        except Exception as e:
+            print(f"⚠️ Failed to send notification email: {e}")
+
+        return {
+            "message": "Terms uploaded successfully",
+            "email": email,
+            "file_location": file_location,
+        }
+
+    except Exception as e:
+        db.rollback()
         raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
 
 
@@ -433,39 +476,54 @@ async def get_pending_approval_users(
 '''
 
 from fastapi import Request
-
 @user_router.get("/pending-approvals")
 async def get_pending_approval_users(
     request: Request,
     db: Session = Depends(get_db)
-):
-    users = db.query(UserModel).filter(
-        UserModel.is_uploaded == True,
-        UserModel.is_admin_approved == False,
-        UserModel.is_admin_rejected == False
-    ).all()
-
+    ):
+    users = db.query(UserModel).filter(UserModel.is_uploaded == True,).all()
     base_url = str(request.base_url)
-
     result = []
     for user in users:
         result.append({
             "id": str(user.id),
-           
             "first_name": user.first_name,
             "last_name": user.last_name,
             "email": user.email,
             "phone_number": user.phone_number,
-            
             "is_uploaded": user.is_uploaded,
-            "terms_file_path": f"{base_url}static/{user.terms_file_path}" if user.terms_file_path else None,
+            "is_approved": user.is_admin_approved,
+            "is_rejected":user.is_admin_rejected,
+            "terms_file_path": f"{base_url}{user.terms_file_path}" if user.terms_file_path else None,
+            "created_at":user.created_at,
             # include other fields as needed
         })
-
     return result
-
 from uuid import UUID
 
+
+@user_router.get("/my-approvals/{user_id}")
+async def get_user_approval_by_id(
+    user_id: str,
+    request: Request,
+    db: Session = Depends(get_db)
+):
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    base_url = str(request.base_url)
+    return {
+        "id": str(user.id),
+        "first_name": user.first_name,
+        "last_name": user.last_name,
+        "email": user.email,
+        "phone_number": user.phone_number,
+        "is_uploaded": user.is_uploaded,
+        "is_approved": user.is_admin_approved,
+        "is_rejected": user.is_admin_rejected,
+        "terms_file_path": f"{base_url}{user.terms_file_path}" if user.terms_file_path else None,
+    }
 
 @user_router.put("/approve/{user_id}")
 async def approve_user(user_id: UUID, 
@@ -480,6 +538,26 @@ async def approve_user(user_id: UUID,
 
     user.is_admin_approved = True
     user.is_admin_rejected = False
+
+           # ✅ Send confirmation email after user is fully created
+    try:
+            # User welcome email
+            user_email = user.email  # ✅ send to the user's registered email
+            subject_user = "Welcome to Marri Platform!"
+            body_user = (
+                f"Welcome to Marri, {user.first_name}!\n\n"
+                "Please visit our platform your account has been approved and ready to go!\n\n"
+                "You can log in and get started here: https://marrir.com/\n\n"
+                "Your account has been created successfully.\n\nThanks!"
+            )
+            send_emails(to_email=user_email, subject=subject_user, body=body_user)
+
+    except Exception as e:
+            # Optionally log this error
+            print(f"Failed to send email: {e}")
+
+
+    
     db.commit()
 
     return {
@@ -662,6 +740,7 @@ async def read_non_employee_users(
     }
 
 
+
 @user_router.post(
     "/single", response_model=GenericSingleResponse[UserReadSchema], status_code=200
 )
@@ -749,8 +828,27 @@ async def read_employee(
         "error": res_data.error,
         "data": user_read,
     }
+    
+from openai import OpenAI
+client = OpenAI(api_key=settings.OPENAI_API_KEY)
+@user_router.post(
+    "/api/chat",
+    status_code=200,
+)
+async def chat(request: Request):
+    data = await request.json()
+    message = data.get("message", "")
 
-
+    try:
+        completion = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[{"role": "user", "content": message}],
+        )
+        reply = completion.choices[0].message.content
+        return {"reply": reply}
+    except Exception as e:
+        return {"error": str(e)}
+    
 @user_router.post(
     "/employee/redacted",
     response_model=GenericSingleResponse[RedactedEmployeeReadSchema],
@@ -836,9 +934,9 @@ async def read_managed_users(
     response_model=GenericMultipleResponse[UserReadSchema],
     status_code=200,
 )
-@rbac_access_checker(
-    resource=RBACResource.user, rbac_access_type=RBACAccessType.read_multiple
-)
+#@rbac_access_checker(
+#    resource=RBACResource.user, rbac_access_type=RBACAccessType.read_multiple
+#)
 async def read_managed_user_cvs(
     *,
     _=Depends(authentication_context),
@@ -946,7 +1044,6 @@ async def update_user(
     """
     Update a user
     """
-
     db = get_db_session()
     user_repo = UserRepository(entity=UserModel)
     user_updated = user_repo.update(

@@ -1,9 +1,7 @@
 import uuid
 from sqlalchemy import ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
-
 from schemas.enumschema import OfferTypeSchema
-
 from .base import EntityBaseModel
 from .db import Base
 

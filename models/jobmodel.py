@@ -22,3 +22,4 @@ class JobModel(Base, EntityBaseModel):
     job_poster = relationship(UserModel, backref="job_poster")
     job_applications = relationship(JobApplicationModel, backref="job")
     is_open: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    employment_types: Mapped[str] = mapped_column(String, nullable=True)

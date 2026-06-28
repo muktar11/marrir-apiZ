@@ -8,8 +8,8 @@ from core.auth import RBACAccessType, RBACResource, rbac_access_checker
 from models.agentrecruitmentmodel import AgentRecruitmentModel
 from models.companyinfomodel import CompanyInfoData, CompanyInfoModel
 from models.notificationmodel import Notifications
-from models.db import authentication_context, build_request_context, get_db_session
-from models.usermodel import UserModel
+from models.db import authentication_context, build_request_context, get_db, get_db_session, get_dbs
+from models.usermodel import UserAgentRecruitment, UserModel
 from repositories.agentrecruitment import AgentRecruitmentRepository
 from repositories.companyinfo import CompanyInfoRepository
 from routers import version_prefix
@@ -114,6 +114,7 @@ async def create_update_company_info(
         "error": res_data.error,
         "data": new_company_info,
     }
+
 
 
 @company_info_router.post(
@@ -247,7 +248,7 @@ async def assign_agent_recruitment(
                 agent_id=dealer_id,
                 recruitment_id=user.id,
                 status="pending",
-                document_url=doc_url
+                document_url=f"static/{doc_url}"
             )
         db.add(agent_recruitment)
         db.commit()
@@ -276,3 +277,157 @@ async def assign_agent_recruitment(
         return {"message": "Failed to create a deal"}
 
     return {"message": "A deal has been created", "data": dealer}
+
+'''
+@company_info_router.post("/assign-agent-recruitment")
+async def assign_agent_recruitment(
+    document: Annotated[UploadFile, File()],
+    dealer_id: Annotated[str, Form()],
+    background_tasks: BackgroundTasks,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+        role = user.role
+        doc_url = uploadFileToLocal(document)
+        dealer: dict = {"user_id": "", "name": "", "status": "pending"}
+
+        # Create relation directly in UserAgentRecruitment table
+        if role == "agent":
+            relation = UserAgentRecruitment(
+                agent_id=user.id,
+                recruitment_id=dealer_id,
+                status="pending",
+                document_url=f"static/{doc_url}"
+            )
+
+        elif role == "recruitment":
+            relation = UserAgentRecruitment(
+                agent_id=dealer_id,
+                recruitment_id=user.id,
+                status="pending",
+                document_url=f"static/{doc_url}"
+            )
+
+        db.add(relation)
+        db.commit()
+        db.refresh(relation)  # optional: get updated fields like ID
+
+        # Notify admins
+        admins = db.query(UserModel).filter(UserModel.role == "admin").all()
+        title = "New Agent Recruitment Request"
+        description = "A new agent recruitment request has been made."
+
+        for admin in admins:
+            background_tasks.add_task(
+                send_notification, db, admin.id, title, description, "agent_recruitment"
+            )
+            background_tasks.add_task(
+                send_email, admin.email, title, description
+            )
+
+        # Prepare return data
+        if role == "agent":
+            recruitment_user = db.query(UserModel).filter(UserModel.id == dealer_id).first()
+            dealer.update({
+                "user_id": relation.recruitment_id,
+                "name": recruitment_user.company.company_name or recruitment_user.first_name,
+                "status": relation.status
+            })
+        elif role == "recruitment":
+            agent_user = db.query(UserModel).filter(UserModel.id == dealer_id).first()
+            dealer.update({
+                "user_id": relation.agent_id,
+                "name": agent_user.company.company_name or agent_user.first_name,
+                "status": relation.status
+            })
+
+    except Exception as e:
+        print(e)
+        db.rollback()
+        return {"message": "Failed to create a deal"}
+
+    return {"message": "A deal has been created", "data": dealer}
+
+'''
+
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from fastapi import Depends, HTTPException
+
+class RelationRequest(BaseModel):
+    user_id: str
+
+@company_info_router.post("/my-relations")
+async def get_my_relations(
+    request: RelationRequest,
+    
+    db: Session = Depends(get_dbs)
+):
+    user = db.query(UserModel).filter(UserModel.id == request.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    relations = []
+
+    # If user is an agent → show their recruitments
+    for rel in user.agent_recruitments:
+        relations.append({
+            "relation_type": "agent_to_recruitment",
+            "partner_id": str(rel.recruitment.id),
+            "partner_name": rel.recruitment.company.company_name if rel.recruitment.company else rel.recruitment.first_name,
+            "status": rel.status,
+            "document_url": rel.document_url
+        })
+
+    # If user is a recruitment → show their agents
+    for rel in user.recruitment_agents:
+        relations.append({
+            "relation_type": "recruitment_to_agent",
+            "partner_id": str(rel.agent.id),
+            "partner_name": rel.agent.company.company_name if rel.agent.company else rel.agent.first_name,
+            "status": rel.status,
+            "document_url": rel.document_url
+        })
+
+    return {
+        "user_id": str(user.id),
+        "role": user.role,
+        "relations": relations
+    }
+
+
+class DeleteAgreementRequest(BaseModel):
+    user_id: str
+    partner_id: str
+
+
+@company_info_router.post("/delete-agreement")
+async def delete_agreement(
+    request: DeleteAgreementRequest,
+    db: Session = Depends(get_dbs),
+):
+    user = db.query(UserModel).filter(UserModel.id == request.user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    agreement = db.query(AgentRecruitmentModel).filter(
+        (
+            (AgentRecruitmentModel.agent_id == request.user_id)
+            & (AgentRecruitmentModel.recruitment_id == request.partner_id)
+        )
+        | (
+            (AgentRecruitmentModel.agent_id == request.partner_id)
+            & (AgentRecruitmentModel.recruitment_id == request.user_id)
+        )
+    ).first()
+
+    if not agreement:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+
+    db.delete(agreement)
+    db.commit()
+
+    return {"message": "Agreement deleted successfully"}

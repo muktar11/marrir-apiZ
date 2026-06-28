@@ -2,8 +2,9 @@ from datetime import datetime
 from http.client import HTTPException
 import json
 import logging
-from typing import Any, Optional
-import uuid
+from io import BytesIO  
+from typing import Any, Optional 
+import uuid 
 from fastapi import APIRouter, Depends, File, Form, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from fastapi.templating import Jinja2Templates
@@ -13,12 +14,12 @@ from models.additionallanguagemodel import AdditionalLanguageModel
 from models.db import authentication_context, build_request_context, get_db_session
 from models.cvmodel import CVModel
 from models.referencemodel import ReferenceModel
-from models.usermodel import UserModel
+from models.usermodel import UserModel 
 from models.workexperiencemodel import WorkExperienceModel
 from repositories.cv import CVRepository
 from routers import version_prefix
 from core.context_vars import context_set_response_code_message
-from schemas.base import GenericMultipleResponse, GenericSingleResponse
+from schemas.base import DeleteResponse, GenericMultipleResponse, GenericSingleResponse
 from schemas.cvschema import (
     AdditionalLanguageCreateSchema,
     AdditionalLanguageData,
@@ -45,7 +46,8 @@ async def create_update_cv(
     cv_data_json: str = Form(...),
     head_photo: Optional[UploadFile] = None,
     full_body_photo: Optional[UploadFile] = None,
-    intro_video: Optional[UploadFile] = None,    
+    passport_photo: Optional[UploadFile] = None,
+    intro_video: Optional[UploadFile] = None,
     _=Depends(authentication_context),
     __=Depends(build_request_context),
     request: Request,
@@ -61,6 +63,7 @@ async def create_update_cv(
         cv_data_json=cv_data_json,
         head_photo=head_photo,
         full_body_photo=full_body_photo,
+        passport_photo=passport_photo,
         intro_video=intro_video,
     )
     res_data = context_set_response_code_message.get()
@@ -73,8 +76,15 @@ async def create_update_cv(
     }
 
 
+
+
+from fastapi import UploadFile, Request, Response, Depends
+from io import BytesIO
+from typing import List, Any
+from sqlalchemy.orm import Session
+
 @cv_router.post(
-    "/bulk", response_model=GenericSingleResponse[CVReadSchema], status_code=201
+    "/bulk", response_model=GenericSingleResponse[List[CVReadSchema]], status_code=201
 )
 @rbac_access_checker(resource=RBACResource.cv, rbac_access_type=RBACAccessType.create)
 async def bulk_create_cv(
@@ -86,18 +96,23 @@ async def bulk_create_cv(
     response: Response,
 ) -> Any:
     """
-    create many new cv.
+    Create many new CVs via Excel upload.
     """
     db = get_db_session()
     cv_repo = CVRepository(entity=CVModel)
-    cv_created = cv_repo.bulk_upload(db, file=file)
+
+    contents = await file.read()
+    excel_io = BytesIO(contents)
+
+    created_cvs = cv_repo.bulk_upload(db, file=excel_io)
+
     res_data = context_set_response_code_message.get()
     response.status_code = res_data.status_code
     return {
         "status_code": res_data.status_code,
         "message": res_data.message,
         "error": res_data.error,
-        "data": cv_created,
+        "data": created_cvs,
     }
 
 
@@ -312,9 +327,7 @@ async def generate_cv_report(
     }
 '''
 
-'''
 
-'''
 
 @cv_router.post(
     "/generate-report",
@@ -369,10 +382,12 @@ async def generate_cv_report(
            
             detail="An error occurred while generating the CV report"
         )
+    
+
 
 
 @cv_router.post(
-    "/generate-report",
+    "/generate-report/download",
     response_model=None,
     status_code=200,
 )
@@ -396,7 +411,7 @@ async def generate_cv_report(
         cv_repo = CVRepository(entity=CVModel)
         
         logger.info("Starting PDF generation process")
-        cv_created = cv_repo.export_to_pdf(
+        cv_created = cv_repo.export_to_pdf_download(
             db, request=request, title="Curriculum Vitae", filters=filters
         )
 
@@ -421,10 +436,122 @@ async def generate_cv_report(
     except Exception as e:
         logger.error(f"Error generating CV report: {str(e)}", exc_info=True)
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+           
             detail="An error occurred while generating the CV report"
         )
+    
+
+
+@cv_router.post(
+    "/generate-report/view",
+    response_model=None,
+    status_code=200,
+)
+async def generate_cv_report(
+    *,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+    filters: Optional[CVFilterSchema] = None,
+    request: Request,
+    response: Response,
+) -> Any:
+    """
+    generate cv report.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Received CV report generation request")
+    logger.debug(f"Request filters: {filters}")
+
+    try:
+        db = get_db_session()
+        cv_repo = CVRepository(entity=CVModel)
         
+        logger.info("Starting PDF generation process")
+        cv_created = cv_repo.export_to_pdf_view(
+            db, request=request, title="Curriculum Vitae", filters=filters
+        )
+
+        res_data = context_set_response_code_message.get()
+        response.status_code = res_data.status_code
+        
+        logger.info(f"PDF generation completed with status code: {res_data.status_code}")
+        logger.debug(f"Response message: {res_data.message}")
+        
+        if res_data.error:
+            logger.warning(f"PDF generation completed with error: {res_data.message}")
+        else:
+            logger.info("PDF generated successfully")
+
+        return {
+            "status_code": res_data.status_code,
+            "message": res_data.message,
+            "error": res_data.error,
+            "data": cv_created,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating CV report: {str(e)}", exc_info=True)
+        raise HTTPException(
+           
+            detail="An error occurred while generating the CV report"
+        )
+
+@cv_router.post(
+    "/generate-report/download/passport",
+    response_model=None,
+    status_code=200,
+)
+async def generate_cv_report(
+    *,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+    filters: Optional[CVFilterSchema] = None,
+    request: Request,
+    response: Response,
+) -> Any:
+    """
+    generate cv report.
+    """
+    logger = logging.getLogger(__name__)
+    logger.info("Received CV report generation request")
+    logger.debug(f"Request filters: {filters}")
+
+    try:
+        db = get_db_session()
+        cv_repo = CVRepository(entity=CVModel)
+        
+        logger.info("Starting PDF generation process")
+        cv_created = cv_repo.export_to_pdf_download_passport(
+            db, request=request, title="Curriculum Vitae", filters=filters
+        )
+
+        res_data = context_set_response_code_message.get()
+        response.status_code = res_data.status_code
+        
+        logger.info(f"PDF generation completed with status code: {res_data.status_code}")
+        logger.debug(f"Response message: {res_data.message}")
+        
+        if res_data.error:
+            logger.warning(f"PDF generation completed with error: {res_data.message}")
+        else:
+            logger.info("PDF generated successfully")
+
+        return {
+            "status_code": res_data.status_code,
+            "message": res_data.message,
+            "error": res_data.error,
+            "data": cv_created,
+        }
+        
+    except Exception as e:
+        logger.error(f"Error generating CV report: {str(e)}", exc_info=True)
+        raise HTTPException(
+           
+            detail="An error occurred while generating the CV report"
+        )
+
+
+
 @cv_router.post(
     "/generate-saudi",
     response_model=None,
@@ -456,7 +583,7 @@ async def generate_saudi_report(
         "data": cv_created,
     }
 
-
+'''
 @cv_router.delete(
     "/", response_model=GenericSingleResponse[CVReadSchema], status_code=200
 )
@@ -464,6 +591,7 @@ async def generate_saudi_report(
 async def delete_cv(
     *,
     filters: Optional[CVFilterSchema] = None,
+    user_id: uuid.UUID, 
     _=Depends(authentication_context),
     __=Depends(build_request_context),
     request: Request,
@@ -474,7 +602,8 @@ async def delete_cv(
     """
     db = get_db_session()
     cv_repo = CVRepository(entity=CVModel)
-    cv_deleted = cv_repo.delete(db, filters)
+    
+    cv_deleted = cv_repo.delete_employee_and_related(db, filters.user_id)
     res_data = context_set_response_code_message.get()
     response.status_code = res_data.status_code
     return {
@@ -482,6 +611,43 @@ async def delete_cv(
         "message": res_data.message,
         "error": res_data.error,
         "data": cv_deleted,
+    }
+
+'''
+from fastapi import Body
+
+@cv_router.delete(
+    "/", 
+     response_model=GenericSingleResponse[DeleteResponse],
+    status_code=200
+)
+@rbac_access_checker(resource=RBACResource.cv, rbac_access_type=RBACAccessType.delete)
+async def delete_cv(
+    *,
+    filters: CVFilterSchema = Body(...),   # <-- THIS MAKES JSON BODY WORK
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+    request: Request,
+    response: Response,
+):
+    """
+    delete a cv post
+    """
+    db = get_db_session()
+    cv_repo = CVRepository(entity=CVModel)
+
+    cv_deleted = cv_repo.delete_employee_and_related(db, filters.user_id)
+    result = cv_repo.delete_employee_and_related(db, filters.user_id)
+
+    res_data = context_set_response_code_message.get()
+    response.status_code = res_data.status_code
+
+    return {
+        "status_code": res_data.status_code,
+        "message": res_data.message,
+        "error": res_data.error,
+        
+        "data": result 
     }
 
 

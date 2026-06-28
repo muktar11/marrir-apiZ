@@ -31,17 +31,23 @@ from schemas.offerschema import OfferTypeSchema
 from schemas.processschema import ProcessReadSchema
 from schemas.ratingschema import RatingReadSchema, UserRatingSchema
 from schemas.userprofileschema import UserProfileBaseSchema
-
-
+from typing import Optional
+from pydantic import BaseModel, EmailStr
+from datetime import date
 # Shared properties
-class UserBaseSchema(BaseProps):
-    first_name: Optional[str] = None
-    last_name: Optional[str] = None
-    email: Optional[EmailStr] = None
-    phone_number: Optional[PhoneNumber] = None
-    country: Optional[str] = None
-    role: Optional[UserRoleSchema] = None
+class UserBaseSchema(BaseModel):    
+    #english_full_name: Optional[str] = None
+    first_name: Optional[str] = None   # derived from english_full_name
+    last_name: Optional[str] = None    # derived from english_full_name
+    #date_of_birth: Optional[date] = None
+    passport_number: Optional[str] = None
+    #nationality: Optional[str] = None
 
+    # Keep these optional if still useful in other contexts
+    email: Optional[EmailStr] = None
+    phone_number: Optional[str] = None
+    country: Optional[str] = None
+    role: Optional[str] = None   # or UserRoleSchema if you still want roles
 
 EntityBaseSchema = TypeVar("EntityBaseSchema", bound=UserBaseSchema)
 
@@ -104,6 +110,7 @@ class EmployeeReadSchema(BaseProps):
 
 class RedactedEmployeeReadSchema(BaseProps):
     id: Optional[uuid.UUID]
+
     first_name: Optional[str]
     last_name: Optional[str]
     cv: Optional[RedactedCVReadSchema] = None
@@ -203,6 +210,7 @@ class UserTokenSchema(BaseProps):
     id: uuid.UUID
     email: Optional[EmailStr] = None
     phone_number: Optional[PhoneNumber] = None
+    
     role: UserRoleSchema
 
     def as_dict(self):

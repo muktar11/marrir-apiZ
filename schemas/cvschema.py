@@ -3,7 +3,7 @@ import json
 from typing import Any, List, Optional, TypeVar
 import uuid
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
 from schemas.base import BaseProps
 from schemas.enumschema import (
@@ -42,6 +42,8 @@ class CVBaseSchema(BaseProps):
     national_id: Optional[str] = None
     passport_number: Optional[str] = None
     nationality: Optional[str] = None
+    creator_id : Optional[str] = None
+    
     amharic_full_name: Optional[str] = None
     arabic_full_name: Optional[str] = None
     english_full_name: Optional[str] = None
@@ -70,10 +72,21 @@ class CVBaseSchema(BaseProps):
     summary: Optional[str] = None
     passport_url: Optional[str] = None
     expected_salary: Optional[str] = None
+    currency: Optional[str] = None
     facebook: Optional[str] = None
     x: Optional[str] = None
+    instagram: Optional[str] = None
     telegram: Optional[str] = None
     tiktok: Optional[str] = None
+    skills_one: Optional[str] = None
+    skills_two: Optional[str] = None
+    skills_three: Optional[str] = None
+    skills_four: Optional[str] = None
+    skills_five: Optional[str] = None
+    skills_six: Optional[str] = None
+    date_issued: Optional[str] = None
+    place_issued: Optional[str] = None
+    date_of_expiry: Optional[str] = None
 
 
 EntityBaseSchema = TypeVar("EntityBaseSchema", bound=CVBaseSchema)
@@ -129,7 +142,8 @@ class CVUpsertSchema(CVBaseSchema):
     education: Optional[EducationData] = None
     work_experiences: List[WorkExperienceCreateSchema] = []
     references: List[ReferenceCreateSchema] = []
-
+    employment_types: Optional[List[str]] = []
+    flexi_durations: Optional[List[str]] = []
 
 class CVReadSchema(CVBaseSchema):
     id: int
@@ -141,10 +155,36 @@ class CVReadSchema(CVBaseSchema):
     references: List[ReferenceCreateSchema] = []
     summary: Optional[str] = None
     passport_url: Optional[str] = None
+    employment_types: Optional[List[str]] = []
+    flexi_durations: Optional[List[str]] = []
+
+    @field_validator("employment_types", mode="before")
+    @classmethod
+    def parse_employment_types(cls, v):
+        if not v:
+            return []
+        if isinstance(v, list):
+            return [str(i).strip() for i in v if i]
+        try:
+            parsed = json.loads(v)
+            if isinstance(parsed, list):
+                return [str(i).strip() for i in parsed if i]
+        except Exception:
+            pass
+        return [
+            i.strip().strip('"').strip("'")
+            for i in str(v).strip("{}[]").split(",")
+            if i and i.strip()
+        ]
+
+    class Config:
+        orm_mode = True
 
 class RedactedCVReadSchema(BaseProps):
     id: int
+    user_id: Optional[uuid.UUID]
     nationality: Optional[str] = None
+    creator_id: Optional[str] = None
     amharic_full_name: Optional[str] = None
     arabic_full_name: Optional[str] = None
     english_full_name: Optional[str] = None
@@ -168,7 +208,19 @@ class RedactedCVReadSchema(BaseProps):
     additional_languages: List[AdditionalLanguageData] = []
     summary: Optional[str] = None
     expected_salary: Optional[str] = None
+    currency: Optional[str] = None
     passport_url: Optional[str] = None
+    passport_number: Optional[str] = None
+    email: Optional[str] = None
+    phone_number: Optional[str] = None
+    skills_one: Optional[str] = None
+    skills_two: Optional[str] = None
+    skills_three: Optional[str] = None
+    skills_four: Optional[str] = None
+    skills_five: Optional[str] = None
+    skills_six: Optional[str] = None
+    employment_types: Optional[List[str]] = []
+    flexi_durations: Optional[List[str]] = []
 
 class CVDeleteSchema(CVBaseSchema):
     pass
@@ -179,7 +231,7 @@ class CVFilterSchema(BaseProps):
     user_id: Optional[uuid.UUID] = None
     email: Optional[str] = None
     passport_number: Optional[str] = None
-
+    creator_id: Optional[str] = None
 
 class CVSearchSchema(BaseProps):
     english_full_name: Optional[str] = Field(None)

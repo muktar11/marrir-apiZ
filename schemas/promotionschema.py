@@ -16,12 +16,15 @@ class CategoryEnum(enum.Enum):
     promotion = "promotion"
     transfer = "transfer"
     reservation = "reservation"
+    employee = "employee_process"
+    job_application = 'job_application'
 
 class RoleEnum(enum.Enum):
     employee = "employee"
     agent = "agent"
     recruitment= "recruitment"
     sponsor = "sponsor"
+    selfsponsor = "selfsponsor"
 
 class DurationEnum(enum.Enum):
     ONE_MONTH = "1 month"
@@ -92,19 +95,25 @@ class PromotionPackageCreateSchema(BaseModel):
 
 class PromotionPackageUpdateSchema(BaseModel):
     id : int
-    
     category: CategoryEnum | None = None
-
     role: RoleEnum | None = None
-
     duration: DurationEnum | None = None
-
     profile_count: int | None = None
-
     price: float | None = None
 
+
+from pydantic import BaseModel, Field
+
+class BillingSchema(BaseModel):
+    street1: str
+    city: str
+    state: str | None = None
+    country: str = Field(..., min_length=2, max_length=2)
+    postcode: str
+    
 class BuyPromotionPackage(BaseModel):
     id: int
+    billing: BillingSchema | None = None
 
 
 class PromotionCreate(BaseModel):

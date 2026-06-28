@@ -2,10 +2,11 @@ from datetime import datetime
 import io
 import json
 from operator import or_
-import os
+import os 
 import tempfile
 from typing import Any, Dict, Optional, Union, Generic, List
 import uuid
+from models.notificationmodel import Notifications, NotificationReadModel, UserNotificationModel
 from fastapi import BackgroundTasks, File, Form, Request, UploadFile
 from fastapi.encoders import jsonable_encoder
 from fastapi.templating import Jinja2Templates
@@ -27,6 +28,8 @@ from models.userprofilemodel import UserProfileModel
 from models.workexperiencemodel import WorkExperienceModel
 import pdfkit
 
+from fastapi import HTTPException
+
 from repositories.base import (
     BaseRepository,
     EntityType,
@@ -34,7 +37,7 @@ from repositories.base import (
     CreateSchemaType,
     FilterSchemaType,
 )
-from schemas.base import BaseGenericResponse
+from schemas.base import BaseGenericResponse, DeleteResponse
 from schemas.cvschema import (
     AdditionalLanguageCreateSchema,
     AdditionalLanguageReadSchema,
@@ -53,6 +56,7 @@ from utils.mrz_reader import read_mrz
 from utils.uploadfile import uploadFileToLocal
 import logging
 from core.security import settings
+from io import BytesIO
 # Configure logging
 logger = logging.getLogger(__name__)
 
@@ -63,7 +67,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
 
     def progress(self, db: Session, filters: CVFilterSchema) -> Any:
         cv = db.query(CVModel).filter_by(user_id=filters.user_id).first()
-        id_fields = ["national_id", "passport_number", "nationality"]
+        id_fields = ["national_id", "creator_id", "passport_number", "nationality"]
 
         personal_info_fields = [
             "english_full_name",
@@ -425,7 +429,252 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
 
             return new_cv
     '''
+    def upsert(
+            self,
+            db: Session,
+            *,
+            cv_data_json: str,
+            head_photo: Optional[UploadFile] = None,
+            full_body_photo: Optional[UploadFile] = None,
+            passport_photo: Optional[UploadFile] = None,
+            intro_video: Optional[UploadFile] = None,
+        ) -> EntityType | None:
 
+            print("\n=== Incoming CV Data ===")
+            print(f"CV Data JSON: {cv_data_json}")
+            print(f"Head Photo: {'Provided' if head_photo else 'Not provided'}")
+            print(f"Full Body Photo: {'Provided' if full_body_photo else 'Not provided'}")
+            print(f"Intro Video: {'Provided' if intro_video else 'Not provided'}")
+            print("========================\n")
+
+            cv_data = json.loads(cv_data_json)
+            passport_number = cv_data.get("passport_number")
+
+            obj_in = CVUpsertSchema(**cv_data)
+
+            # -----------------------------
+            # 🔍 Step 1: Find existing CV
+            # -----------------------------
+            existing_cv = None
+
+            if obj_in.user_id:
+                existing_cv = db.query(CVModel).filter_by(user_id=obj_in.user_id).first()
+
+            if not existing_cv and passport_number:
+                existing_cv = db.query(CVModel).filter_by(passport_number=passport_number).first()
+                if existing_cv and not obj_in.user_id:
+                    # Passport belongs to an existing employee but user_id was not
+                    # provided — this is a new-employee creation attempt with a
+                    # duplicate passport number.  Reject rather than silently
+                    # overwriting the existing record.
+                    context_set_response_code_message.set(
+                        BaseGenericResponse(
+                            error=True,
+                            message=f"A CV with passport number {passport_number} already exists",
+                            status_code=400,
+                        )
+                    )
+                    return None
+                if existing_cv and not existing_cv.creator_id:
+                    existing_cv.creator_id = str(creator.id)
+
+            # -----------------------------
+            # 🚫 Restrict EMPLOYEE from creating multiple CVs
+            # -----------------------------
+            creator = context_actor_user_data.get()
+
+            if creator and creator.role == UserRoleSchema.EMPLOYEE:
+                existing_employee_cv = (
+                    db.query(CVModel)
+                    .filter(CVModel.creator_id == str(creator.id))
+                    .first()
+                )
+
+                if existing_employee_cv and not existing_cv:
+                    context_set_response_code_message.set(
+                        BaseGenericResponse(
+                            error=True,
+                            message="Employee already has been registered",
+                            status_code=400,
+                        )
+                    )
+                    return None
+    
+            # -----------------------------
+            # 👤 Step 2+: Create user ONLY if CV does not exist
+            # -----------------------------
+            if not existing_cv:
+                new_user = UserModel(role=UserRoleSchema.EMPLOYEE)
+                db.add(new_user)
+                db.commit()
+
+                obj_in.user_id = new_user.id
+
+                qr_code_data = generate_qr_code(new_user.id)
+
+                new_user_profile = UserProfileModel(
+                    user_id=new_user.id,
+                    qr_code=qr_code_data
+                )
+
+                manager_id = context_actor_user_data.get().id
+
+                employee = EmployeeModel(
+                    user_id=new_user.id,
+                    manager_id=manager_id,
+                )
+
+                db.add_all([new_user_profile, employee])
+                db.commit()
+
+            # -----------------------------
+            # 🔄 Step 3: UPDATE
+            # -----------------------------
+            if existing_cv:
+                # Update simple fields
+                for field, value in obj_in.dict(
+                    exclude_unset=True,
+                    exclude=["address", "education", "work_experiences", "references"],
+                ).items():
+                    setattr(existing_cv, field, value)
+
+                # Address
+                if obj_in.address:
+                    existing_address = db.query(AddressModel).filter_by(id=existing_cv.address_id).first()
+                    if existing_address:
+                        for field, value in obj_in.address.dict(exclude_unset=True).items():
+                            setattr(existing_address, field, value)
+                    else:
+                        new_address = AddressModel(**obj_in.address.dict())
+                        existing_cv.address = new_address
+                        db.add(new_address)
+
+                # Education
+                if obj_in.education:
+                    existing_education = db.query(EducationModel).filter_by(cv_id=existing_cv.id).first()
+                    if existing_education:
+                        for field, value in obj_in.education.dict(exclude_unset=True).items():
+                            setattr(existing_education, field, value)
+                    else:
+                        new_education = EducationModel(**obj_in.education.dict())
+                        existing_cv.education = new_education
+                        db.add(new_education)
+
+                # Files
+                if head_photo:
+                    existing_cv.head_photo = uploadFileToLocal(head_photo)
+                elif cv_data.get("remove_head_photo"):
+                    existing_cv.head_photo = None
+
+                if full_body_photo:
+                    existing_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+                elif cv_data.get("remove_full_body_photo"):
+                    existing_cv.full_body_photo = None
+
+                if passport_photo:
+                    existing_cv.passport_url = uploadFileToLocal(passport_photo)
+
+                if intro_video:
+                    existing_cv.intro_video = uploadFileToLocal(intro_video)
+                elif cv_data.get("remove_intro_video"):
+                    existing_cv.intro_video = None
+
+                # Work Experiences (replace)
+                if obj_in.work_experiences:
+                    for we in existing_cv.work_experiences:
+                        db.delete(we)
+
+                # References (replace)
+                if obj_in.references:
+                    for ref in existing_cv.references:
+                        db.delete(ref)
+
+                db.commit()
+
+                # Re-add work experiences
+                for we_data in obj_in.work_experiences:
+                    db.add(WorkExperienceModel(**we_data.dict(), cv_id=existing_cv.id))
+
+                # Re-add references
+                for ref_data in obj_in.references:
+                    db.add(ReferenceModel(**ref_data.dict(), cv_id=existing_cv.id))
+
+                db.commit()
+                db.refresh(existing_cv)
+
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=False,
+                        message=f"{self.entity.get_resource_name(self.entity.__name__)} updated successfully",
+                        status_code=200,
+                    )
+                )
+                return existing_cv
+
+            # -----------------------------
+            # 🆕 Step 4: CREATE CV
+            # -----------------------------
+            new_cv = CVModel(
+                creator_id=str(creator.id),
+                **obj_in.dict(
+                    exclude=[
+                        "address",
+                        "education",
+                        "references",
+                        "work_experiences",
+                        "creator_id",
+                        "remove_head_photo",
+                        "remove_full_body_photo",
+                        "remove_intro_video",
+                    ]
+                )
+            )
+
+            if obj_in.address:
+                new_address = AddressModel(**obj_in.address.dict())
+                new_cv.address = new_address
+                db.add(new_address)
+
+            if obj_in.education:
+                new_education = EducationModel(**obj_in.education.dict())
+                new_cv.education = new_education
+                db.add(new_education)
+
+            db.add(new_cv)
+            db.commit()
+
+            for we_data in obj_in.work_experiences:
+                db.add(WorkExperienceModel(**we_data.dict(exclude_unset=True), cv_id=new_cv.id))
+
+            for ref_data in obj_in.references:
+                db.add(ReferenceModel(**ref_data.dict(exclude_unset=True), cv_id=new_cv.id))
+
+            if head_photo:
+                new_cv.head_photo = uploadFileToLocal(head_photo)
+
+            if full_body_photo:
+                new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+
+            if passport_photo:
+                new_cv.passport_url = uploadFileToLocal(passport_photo)
+
+            if intro_video:
+                new_cv.intro_video = uploadFileToLocal(intro_video)
+
+            db.commit()
+            db.refresh(new_cv)
+
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                    status_code=201,
+                )
+            )
+
+            return new_cv
+
+    '''
     def upsert(
         self,
         db: Session,
@@ -435,7 +684,6 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         full_body_photo: Optional[UploadFile] = None,
         intro_video: Optional[UploadFile] = None,
     ) -> EntityType | None:
-
         try:
             print("\n=== Incoming CV Data ===")
             print(f"CV Data JSON: {cv_data_json}")
@@ -458,39 +706,26 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 )
                 return None
 
-            # Normalize user_id
+            # Normalize IDs
             cv_data["user_id"] = None if cv_data.get("user_id") is None else cv_data["user_id"]
+            cv_data["creator_id"] = cv_data.get("creator_id", None)
 
             # Log parsed CV data
             print("\n=== Parsed CV Data ===")
             print(f"User ID: {cv_data.get('user_id')}")
             print(f"Passport Number: {cv_data.get('passport_number')}")
-            if 'address' in cv_data:
+            if "address" in cv_data:
                 print("\nAddress Data:")
-                for key, value in cv_data['address'].items():
+                for key, value in cv_data["address"].items():
                     print(f"  {key}: {value}")
-            if 'education' in cv_data:
+            if "education" in cv_data:
                 print("\nEducation Data:")
-                for key, value in cv_data['education'].items():
+                for key, value in cv_data["education"].items():
                     print(f"  {key}: {value}")
             print("=====================\n")
 
-            # Check for duplicate passport number
-            passport_number = cv_data.get("passport_number")
-            if passport_number:
-                exists = db.query(CVModel).filter_by(passport_number=passport_number).first()
-                if exists and str(exists.user_id) != cv_data.get("user_id"):
-                    context_set_response_code_message.set(
-                        BaseGenericResponse(
-                            error=True,
-                            message=f"CV with passport number {passport_number} already exists",
-                            status_code=400,
-                        )
-                    )
-                    return None
-
+            # Convert to schema
             try:
-                # Convert to schema
                 obj_in = CVUpsertSchema(**cv_data)
             except Exception as e:
                 print(f"Error creating CVUpsertSchema: {str(e)}")
@@ -506,62 +741,88 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             # Start transaction
             try:
                 with db.begin_nested():
-                    # Create new user if needed
+                    # Create user if not provided
                     if not obj_in.user_id:
                         new_user = UserModel()
                         new_user.role = UserRoleSchema.EMPLOYEE
                         db.add(new_user)
                         db.flush()
-                        
                         obj_in.user_id = new_user.id
-                        
-                        # Create user profile
+
+                        # User profile + employee record
                         qr_code_data = generate_qr_code(new_user.id)
                         new_user_profile = UserProfileModel(
-                            user_id=new_user.id,
-                            qr_code=qr_code_data
+                            user_id=new_user.id, qr_code=qr_code_data
                         )
-                        
-                        # Create employee record
                         user_id = context_actor_user_data.get().id
                         employee = EmployeeModel(
                             user_id=new_user.id,
                             manager_id=user_id,
                         )
-                        
                         db.add(new_user_profile)
                         db.add(employee)
                         db.flush()
 
-                    # Check for existing CV
-                    existing_cv = db.query(CVModel).filter_by(user_id=obj_in.user_id).first()
+                    # 🔎 Check for existing CV by user_id OR passport_number
+                    existing_cv = (
+                        db.query(CVModel)
+                        .filter(
+                            (CVModel.user_id == obj_in.user_id)
+                            | (CVModel.passport_number == obj_in.passport_number)
+                        )
+                        .first()
+                    )
 
                     if existing_cv:
-                        print(f"Updating existing CV for user {obj_in.user_id}")
-                        
-                        # Update basic fields
+                        print(
+                            f"Updating existing CV for user {obj_in.user_id} "
+                            f"or passport {obj_in.passport_number}"
+                        )
+
+                        # ✅ Do NOT update immutable fields (user_id, creator_id)
                         for field, value in obj_in.dict(
                             exclude_unset=True,
-                            exclude=["address", "education", "work_experiences", "references"],
+                            exclude=[
+                                "user_id",
+                                "creator_id",
+                                "address",
+                                "education",
+                                "work_experiences",
+                                "references",
+                            ],
                         ).items():
                             setattr(existing_cv, field, value)
 
-                        # Update address
-                        if obj_in.address:
-                            try:
-                                existing_address = db.query(AddressModel).filter_by(id=existing_cv.address_id).first()
-                                if existing_address:
-                                    for field, value in obj_in.address.dict(exclude_unset=True).items():
-                                        setattr(existing_address, field, value)
-                                else:
-                                    new_address = AddressModel(**obj_in.address.dict())
-                                    existing_cv.address = new_address
-                                    db.add(new_address)
-                            except Exception as e:
-                                print(f"Error updating address: {str(e)}")
-                                raise
+                        if obj_in.passport_number:
+                            existing_cv.passport_number = obj_in.passport_number
 
-                        # Handle file uploads
+                        # Address
+                        if obj_in.address:
+                            existing_address = db.query(AddressModel).filter_by(
+                                id=existing_cv.address_id
+                            ).first()
+                            if existing_address:
+                                for field, value in obj_in.address.dict(exclude_unset=True).items():
+                                    setattr(existing_address, field, value)
+                            else:
+                                new_address = AddressModel(**obj_in.address.dict())
+                                existing_cv.address = new_address
+                                db.add(new_address)
+
+                        # Education
+                        if obj_in.education:
+                            existing_education = (
+                                db.query(EducationModel).filter_by(cv_id=existing_cv.id).first()
+                            )
+                            if existing_education:
+                                for field, value in obj_in.education.dict(exclude_unset=True).items():
+                                    setattr(existing_education, field, value)
+                            else:
+                                new_education = EducationModel(**obj_in.education.dict())
+                                existing_cv.education = new_education
+                                db.add(new_education)
+
+                        # Files
                         if head_photo:
                             existing_cv.head_photo = uploadFileToLocal(head_photo)
                         elif cv_data.get("remove_head_photo"):
@@ -577,7 +838,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                         elif cv_data.get("remove_intro_video"):
                             existing_cv.intro_video = None
 
-                        # Handle work experiences and references
+                        # Work experiences
                         if obj_in.work_experiences:
                             for we in existing_cv.work_experiences:
                                 db.delete(we)
@@ -587,11 +848,14 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                                 )
                                 db.add(work_experience)
 
+                        # References
                         if obj_in.references:
                             for ref in existing_cv.references:
                                 db.delete(ref)
                             for ref_data in obj_in.references:
-                                reference = ReferenceModel(**ref_data.dict(), cv_id=existing_cv.id)
+                                reference = ReferenceModel(
+                                    **ref_data.dict(), cv_id=existing_cv.id
+                                )
                                 db.add(reference)
 
                         db.flush()
@@ -604,77 +868,73 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                         )
                         return existing_cv
 
-                    else:
-                        print(f"Creating new CV for user {obj_in.user_id}")
-                        
-                        # Create new CV
-                        new_cv = CVModel(
-                            **obj_in.dict(
-                                exclude=[
-                                    "address",
-                                    "education",
-                                    "references",
-                                    "work_experiences",
-                                    "remove_head_photo",
-                                    "remove_full_body_photo",
-                                    "remove_intro_video",
-                                ]
+                    # === CREATE NEW CV ===
+                    print(f"Creating new CV for user {obj_in.user_id}")
+
+                    new_cv = CVModel(
+                        **obj_in.dict(
+                            exclude=[
+                                "address",
+                                "education",
+                                "references",
+                                "work_experiences",
+                                "remove_head_photo",
+                                "remove_full_body_photo",
+                                "remove_intro_video",
+                                "creator_id",  # 👈 add this line to exclude
+                            ]
+                        ),
+                        creator_id=cv_data.get("creator_id"),
+                    )
+
+                    # Address
+                    if obj_in.address:
+                        new_address = AddressModel(**obj_in.address.dict())
+                        new_cv.address = new_address
+                        db.add(new_address)
+
+                    # Education
+                    if obj_in.education:
+                        new_education = EducationModel(**obj_in.education.dict())
+                        new_cv.education = new_education
+                        db.add(new_education)
+
+                    db.add(new_cv)
+                    db.flush()
+
+                    # Work experiences
+                    if obj_in.work_experiences:
+                        for we_data in obj_in.work_experiences:
+                            work_experience = WorkExperienceModel(
+                                **we_data.dict(exclude_unset=True), cv_id=new_cv.id
                             )
-                        )
+                            db.add(work_experience)
 
-                        # Create address
-                        if obj_in.address:
-                            try:
-                                new_address = AddressModel(**obj_in.address.dict())
-                                new_cv.address = new_address
-                                db.add(new_address)
-                            except Exception as e:
-                                print(f"Error creating address: {str(e)}")
-                                raise
-
-                        # Create education
-                        if obj_in.education:
-                            new_education = EducationModel(**obj_in.education.dict())
-                            new_cv.education = new_education
-                            db.add(new_education)
-
-                        db.add(new_cv)
-                        db.flush()
-
-                        # Create work experiences and references
-                        if obj_in.work_experiences:
-                            for we_data in obj_in.work_experiences:
-                                work_experience = WorkExperienceModel(
-                                    **we_data.dict(exclude_unset=True), cv_id=new_cv.id
-                                )
-                                db.add(work_experience)
-
-                        if obj_in.references:
-                            for ref_data in obj_in.references:
-                                reference = ReferenceModel(
-                                    **ref_data.dict(exclude_unset=True), cv_id=new_cv.id
-                                )
-                                db.add(reference)
-
-                        # Handle file uploads
-                        if head_photo:
-                            new_cv.head_photo = uploadFileToLocal(head_photo)
-
-                        if full_body_photo:
-                            new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
-
-                        if intro_video:
-                            new_cv.intro_video = uploadFileToLocal(intro_video)
-
-                        db.flush()
-                        context_set_response_code_message.set(
-                            BaseGenericResponse(
-                                error=False,
-                                message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
-                                status_code=201,
+                    # References
+                    if obj_in.references:
+                        for ref_data in obj_in.references:
+                            reference = ReferenceModel(
+                                **ref_data.dict(exclude_unset=True), cv_id=new_cv.id
                             )
+                            db.add(reference)
+
+                    # Files
+                    if head_photo:
+                        new_cv.head_photo = uploadFileToLocal(head_photo)
+                    if full_body_photo:
+                        new_cv.full_body_photo = uploadFileToLocal(full_body_photo)
+                    if intro_video:
+                        new_cv.intro_video = uploadFileToLocal(intro_video)
+
+                    db.flush()
+                    context_set_response_code_message.set(
+                        BaseGenericResponse(
+                            error=False,
+                            message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                            status_code=201,
                         )
-                        return new_cv
+                    )
+                    return new_cv
 
             except Exception as e:
                 print(f"Database error during CV upsert: {str(e)}")
@@ -698,12 +958,103 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 )
             )
             return None
+
         
 
+    '''
 
-    def delete(self, db: Session, filters: FilterSchemaType) -> EntityType:
-        return super().delete(db, filters)
+    '''
+    def delete_employee_and_related(self, db: Session, user_id: uuid.UUID):
+        
+        
+        # Ensure UUID
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
 
+        # 1. Delete notifications
+        db.query(Notifications).filter_by(user_id=user_id).delete()
+        db.query(NotificationReadModel).filter_by(user_id=user_id).delete()
+        db.query(UserNotificationModel).filter_by(user_id=user_id).delete()
+
+        # 2. Delete employee & profile
+        db.query(EmployeeModel).filter_by(user_id=user_id).delete()
+        db.query(UserProfileModel).filter_by(user_id=user_id).delete()
+
+        # 3. Delete CV and nested tables
+        cv = db.query(CVModel).filter_by(user_id=user_id).first()
+        if cv:
+            # child tables
+            db.query(WorkExperienceModel).filter_by(cv_id=cv.id).delete()
+            db.query(ReferenceModel).filter_by(cv_id=cv.id).delete()
+            db.query(EducationModel).filter_by(cv_id=cv.id).delete()
+
+            # delete CV itself
+            db.delete(cv)
+
+            # delete address after CV
+            if cv.address_id:
+                db.query(AddressModel).filter_by(id=cv.address_id).delete()
+
+        # 4. Delete user
+        db.query(UserModel).filter_by(id=user_id).delete()
+
+        # 5. Commit all changes
+        db.commit()
+
+        return DeleteResponse(message="CV and user deleted successfully")
+
+
+    '''
+    def delete_employee_and_related(self, db: Session, user_id: uuid.UUID):
+        """Delete user, CV, address, and all related tables safely."""
+
+        if isinstance(user_id, str):
+            user_id = uuid.UUID(user_id)
+
+        try:
+            # 1️⃣ Delete notifications
+            db.query(Notifications).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(NotificationReadModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(UserNotificationModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+
+            # 2️⃣ Delete CV and nested tables
+            cv = db.query(CVModel).filter_by(user_id=user_id).first()
+            if cv:
+                # Delete child tables first
+                db.query(WorkExperienceModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+                db.query(ReferenceModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+                db.query(EducationModel).filter_by(cv_id=cv.id).delete(synchronize_session=False)
+
+                # Delete CV itself
+                db.delete(cv)
+                db.flush()  # Flush to DB so FK is cleared
+
+                # Now it's safe to delete address
+                if cv.address_id:
+                    db.query(AddressModel).filter_by(id=cv.address_id).delete(synchronize_session=False)
+
+            # 3️⃣ Delete Employee & Profile
+            db.query(EmployeeModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+            db.query(UserProfileModel).filter_by(user_id=user_id).delete(synchronize_session=False)
+
+            # 4️⃣ Delete the User
+            db.query(UserModel).filter_by(id=user_id).delete(synchronize_session=False)
+
+            # 5️⃣ Commit all changes
+            db.commit()
+
+            return DeleteResponse(message="User and all related data deleted successfully")
+
+        except Exception as e:
+            db.rollback()
+            raise e
+
+
+
+
+
+
+    '''
     def upload_passport(
         self, db: Session, user_id: Optional[uuid.UUID], file: UploadFile
     ):
@@ -727,10 +1078,12 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             cv["sex"] = SexSchema.MALE if user_data["sex"] == "M" else SexSchema.FEMALE
             cv["passport_url"] = file_path
             return self.upsert(db, cv_data_json=json.dumps(cv))
+        
         except Exception as e:
             cv = dict()
             cv["user_id"] = str(user_id)
             cv["passport_url"] = file_path
+            print('file_path', file_path)
             self.upsert(db, cv_data_json=json.dumps(cv))
             
             context_set_response_code_message.set(
@@ -740,11 +1093,47 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                     status_code=400,
                 )
             )
+    '''
 
-    def bulk_upload(self, db: Session, file: UploadFile = File(...)):
+    def upload_passport(
+            self, db: Session, user_id: Optional[uuid.UUID], file: UploadFile
+        ):
+            try:
+                file_path = uploadFileToLocal(file)
+                
+                cv = dict()
+                cv["user_id"] = str(user_id) if user_id is not None else None
+                cv["passport_url"] = file_path
+
+                print("File saved to:", file_path)
+                print("CV data before upsert:", cv)
+
+                return self.upsert(db, cv_data_json=json.dumps(cv))
+
+            except Exception as e:
+                import traceback
+                print("Upload error:", str(e))
+                traceback.print_exc()
+
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message=f"Unable to upload the passport image: {str(e)}",
+                        status_code=400,
+                    )
+                )
+
+    
+
+
+            
+
+
+                
+    def bulk_upload(self, db: Session, file: BytesIO):
         try:
             df = pd.read_excel(
-                file.file,
+                file,
                 dtype={
                     "phone_number": str,
                     "height": float,
@@ -752,9 +1141,15 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                     "address_street": str,
                     "national_id": str,
                 },
-            ).map(lambda x: None if pd.isna(x) or x == "" else x)
-            for index, row in df.iterrows():
+            )
+            df = df.map(lambda x: None if pd.isna(x) or x == "" else x)
+
+            created_cvs = []
+
+            for _, row in df.iterrows():
                 cv_data = row.to_dict()
+
+                # Split out nested fields
                 address_data = {
                     key.replace("address_", ""): value
                     for key, value in cv_data.items()
@@ -765,31 +1160,49 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                     for key, value in cv_data.items()
                     if key.startswith("education_")
                 }
-    
+
+                # Strip from main dict
                 cv_data = {
                     key: value
                     for key, value in cv_data.items()
                     if not key.startswith("address_") and not key.startswith("education_")
                 }
-    
+
                 cv_data["address"] = address_data
                 cv_data["education"] = education_data
-    
-                # Convert Timestamp objects to strings
+
+                # Convert timestamps to strings
                 for key, value in cv_data.items():
                     if isinstance(value, pd.Timestamp):
                         cv_data[key] = value.strftime('%Y-%m-%d')
 
+                # Convert to JSON
                 cv_data_json = json.dumps(cv_data)
-                self.upsert(
+
+                # Call upsert (returns CVModel or None)
+                cv_instance = self.upsert(
                     db,
                     cv_data_json=cv_data_json,
                     head_photo=None,
                     full_body_photo=None,
                     intro_video=None,
                 )
+
+                if cv_instance:
+                    created_cvs.append(cv_instance)
+
             db.commit()
-            return
+
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=False,
+                    message=f"Successfully processed {len(created_cvs)} CVs.",
+                    status_code=201,
+                )
+            )
+
+            return created_cvs
+
         except Exception as e:
             logger.error(f"Error in bulk_upload: {e}")
             context_set_response_code_message.set(
@@ -800,6 +1213,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 )
             )
             return None
+
         
     '''
     def export_to_pdf(
@@ -1033,7 +1447,6 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
             return content
         
     '''
-
     def export_to_pdf(
         self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
     ):
@@ -1042,6 +1455,16 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         
         templates = Jinja2Templates(directory="templates")
         entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
         qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
         
         if not entity:
@@ -1160,6 +1583,56 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
         except Exception as e:
             logger.error(f"Error calculating age: {str(e)}")
             print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+        def normalize_string_list(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if item]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item]
+                except Exception:
+                    pass
+                return [
+                    item.strip().strip('"').strip("'")
+                    for item in text.strip("{}[]").split(",")
+                    if item and item.strip()
+                ]
+            return [str(value).strip()]
+
+        employment_types = normalize_string_list(getattr(entity, "employment_types", None))
+        flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
+
+        logger.debug(
+            "CV export download values | user_id=%s | raw_employment_types=%r | normalized_employment_types=%r | raw_flexi_durations=%r | normalized_flexi_durations=%r",
+            getattr(entity, "user_id", None),
+            getattr(entity, "employment_types", None),
+            employment_types,
+            getattr(entity, "flexi_durations", None),
+            flexi_durations,
+        )
+
+
 
         try:
             content = template.render(
@@ -1167,13 +1640,693 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
                 user=entity, 
                 img_base64=qr_code, 
                 passport_url=getattr(entity, 'passport_url', ''),
+               
                 base_url=f"{settings.BASE_URL}/static",
                 rate=rate,
                 additional_languages=additional_languages,
                 owner=owner_data,
                 description=getattr(entity, 'summary', ''),
-                age=age
+                age=age,
+                video_url=video_url,
+                employment_types=employment_types,
+                flexi_durations=flexi_durations
             )
+            
+            logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating PDF content: {str(e)}")
+            print(e)
+            
+        return content
+
+
+    def export_to_pdf_download(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting PDF export for CV with filters: {filters}")
+        
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+        owner_data = {}
+
+        try:
+            # Check if user exists and has employees
+            if hasattr(entity, 'user') and entity.user is not None:
+                if hasattr(entity.user, 'employees') and entity.user.employees:
+                    # Get the first employee's manager_id
+                    manager_id = entity.user.employees[0].manager_id
+                    
+                    # Query the manager
+                    manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+                    
+                    if manager is not None:
+                        # Check manager role
+                        if hasattr(manager, 'role') and manager.role in ["agent", "recruitment", "sponsor"]:
+                            # Safely get company data
+                            company = getattr(manager, 'company', None)
+                            
+                            # Build owner data with safe defaults
+                            owner_data = {
+                                "company_name": getattr(company, 'company_name', '') if company else '',
+                                "name": f"{getattr(manager, 'first_name', '')} {getattr(manager, 'last_name', '')}".strip(),
+                                "phone_number": getattr(manager, 'phone_number', ''),
+                                "email": getattr(manager, 'email', ''),
+                                "location": getattr(company, 'location', '') if company else ''
+                            }
+                            logger.debug(f"Added owner data for manager: {manager.id}")
+        except Exception as e:
+            logger.warning(f"Error processing manager data: {str(e)}")
+            # Continue with empty owner_data if there's an error
+
+        rate = 0
+        additional_languages = []
+
+        # Safely add language proficiencies with null checks
+        if hasattr(entity, 'amharic') and entity.amharic:
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
+            })
+
+        if hasattr(entity, 'arabic') and entity.arabic:
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
+
+        if hasattr(entity, 'english') and entity.english:
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+        if hasattr(entity, 'references') and entity.references:
+            rate += 1
+            logger.debug("Added rate point for references")
+
+        if hasattr(entity, 'work_experiences') and entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+            logger.debug(f"Added rate points for work experiences: {rate}")
+
+        if hasattr(entity, 'additional_languages') and entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                if lang and hasattr(lang, 'language') and lang.language:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": getattr(lang, 'proficiency', '')
+                    })
+            logger.debug(f"Added rate points for additional languages: {rate}")
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+        is_passport = getattr(entity, "is_passport", False)
+        
+        # Safely check education level
+        education = getattr(entity, 'education', None)
+        education_level = getattr(education, 'highest_level', None) if education else None
+        
+        '''
+        if education_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv-download.html")
+            logger.debug("Using graduate CV template")
+        else:
+            template = templates.get_template("cv_non_graduate_download.html")
+            logger.debug("Using non-graduate CV template")
+        '''
+
+        
+
+        # 🎯 TEMPLATE SELECTION
+        if is_passport:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download-passport.html")
+                logger.debug("Using graduate CV template WITH passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download-passport.html")
+                logger.debug("Using non-graduate CV template WITH passport")
+        else:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download.html")
+                logger.debug("Using graduate CV template WITHOUT passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download.html")
+                logger.debug("Using non-graduate CV template WITHOUT passport")
+
+        age = 0
+
+        try:
+            if hasattr(entity, 'date_of_birth') and entity.date_of_birth:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+        except Exception as e:
+            logger.error(f"Error calculating age: {str(e)}")
+            print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+        def normalize_string_list(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if item]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item]
+                except Exception:
+                    pass
+                return [
+                    item.strip().strip('"').strip("'")
+                    for item in text.strip("{}[]").split(",")
+                    if item and item.strip()
+                ]
+            return [str(value).strip()]
+
+        employment_types = normalize_string_list(getattr(entity, "employment_types", None))
+        flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
+
+
+
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=getattr(entity, 'passport_url', ''),
+               
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=getattr(entity, 'summary', ''),
+                age=age,
+                video_url=video_url,
+                employment_types=employment_types,
+                flexi_durations=flexi_durations
+            )
+            
+            logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating PDF content: {str(e)}")
+            print(e)
+            
+        return content
+    def export_to_pdf_view(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting PDF export for CV with filters: {filters}")
+        
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(user_id=filters.user_id).first()
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+        owner_data = {}
+
+        try:
+            # Check if user exists and has employees
+            if hasattr(entity, 'user') and entity.user is not None:
+                if hasattr(entity.user, 'employees') and entity.user.employees:
+                    # Get the first employee's manager_id
+                    manager_id = entity.user.employees[0].manager_id
+                    
+                    # Query the manager
+                    manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+                    
+                    if manager is not None:
+                        # Check manager role
+                        if hasattr(manager, 'role') and manager.role in ["agent", "recruitment", "sponsor"]:
+                            # Safely get company data
+                            company = getattr(manager, 'company', None)
+                            
+                            # Build owner data with safe defaults
+                            owner_data = {
+                                "company_name": getattr(company, 'company_name', '') if company else '',
+                                "name": f"{getattr(manager, 'first_name', '')} {getattr(manager, 'last_name', '')}".strip(),
+                                "phone_number": getattr(manager, 'phone_number', ''),
+                                "email": getattr(manager, 'email', ''),
+                                "location": getattr(company, 'location', '') if company else ''
+                            }
+                            logger.debug(f"Added owner data for manager: {manager.id}")
+        except Exception as e:
+            logger.warning(f"Error processing manager data: {str(e)}")
+            # Continue with empty owner_data if there's an error
+
+        rate = 0
+        additional_languages = []
+
+        # Safely add language proficiencies with null checks
+        if hasattr(entity, 'amharic') and entity.amharic:
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
+            })
+
+        if hasattr(entity, 'arabic') and entity.arabic:
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
+
+        if hasattr(entity, 'english') and entity.english:
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+        if hasattr(entity, 'references') and entity.references:
+            rate += 1
+            logger.debug("Added rate point for references")
+
+        if hasattr(entity, 'work_experiences') and entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+            logger.debug(f"Added rate points for work experiences: {rate}")
+
+        if hasattr(entity, 'additional_languages') and entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                if lang and hasattr(lang, 'language') and lang.language:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": getattr(lang, 'proficiency', '')
+                    })
+            logger.debug(f"Added rate points for additional languages: {rate}")
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+        is_passport = getattr(entity, "is_passport", False)
+        
+        # Safely check education level
+        education = getattr(entity, 'education', None)
+        education_level = getattr(education, 'highest_level', None) if education else None
+        
+        '''
+        if education_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv-download.html")
+            logger.debug("Using graduate CV template")
+        else:
+            template = templates.get_template("cv_non_graduate_download.html")
+            logger.debug("Using non-graduate CV template")
+        '''
+
+        
+
+        # 🎯 TEMPLATE SELECTION
+        if is_passport:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-view-passport.html")
+                logger.debug("Using graduate CV template WITH passport")
+            else:
+                template = templates.get_template("cv_non_graduate_view-passport.html")
+                logger.debug("Using non-graduate CV template WITH passport")
+        else:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-view.html")
+                logger.debug("Using graduate CV template WITHOUT passport")
+            else:
+                template = templates.get_template("cv_non_graduate_view.html")
+                logger.debug("Using non-graduate CV template WITHOUT passport")
+
+        age = 0
+
+        try:
+            if hasattr(entity, 'date_of_birth') and entity.date_of_birth:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+        except Exception as e:
+            logger.error(f"Error calculating age: {str(e)}")
+            print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+        def normalize_string_list(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if item]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item]
+                except Exception:
+                    pass
+                return [
+                    item.strip().strip('"').strip("'")
+                    for item in text.strip("{}[]").split(",")
+                    if item and item.strip()
+                ]
+            return [str(value).strip()]
+
+        employment_types = normalize_string_list(getattr(entity, "employment_types", None))
+        flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
+
+
+
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=getattr(entity, 'passport_url', ''),
+               
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=getattr(entity, 'summary', ''),
+                age=age,
+                video_url=video_url,
+                employment_types=employment_types,
+                flexi_durations=flexi_durations
+            )
+            
+            logger.info(f"Successfully generated PDF content for CV: {entity.id}")
+
+        except Exception as e:
+            logger.error(f"Error generating PDF content: {str(e)}")
+            print(e)
+            
+        return content
+    
+    def export_to_pdf_download_passport(
+        self, db: Session, *, request: Request, title: str, filters: CVFilterSchema
+    ):
+        logger = logging.getLogger(__name__)
+        logger.info(f"Starting PDF export for CV with filters: {filters}")
+        
+        templates = Jinja2Templates(directory="templates")
+        entity = db.query(CVModel).filter_by(passport_number=filters.passport_number).first()
+        if not entity:
+            logger.warning(f"CV not found for passport_number: {filters.passport_number}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=404,   # better use 404 than 200
+                )
+            )
+            return None
+        qr_code = my_qr_code(f"{settings.FRONTEND_PUBLIC_CV_URL}/{entity.id}")
+        
+        if not entity:
+            logger.warning(f"CV not found for user_id: {filters.user_id}")
+            context_set_response_code_message.set(
+                BaseGenericResponse(
+                    error=True,
+                    message=f"{self.entity.get_resource_name(self.entity.__name__)} not found",
+                    status_code=200,
+                )
+            )
+            return None
+
+        logger.info(f"Found CV for user_id: {filters.user_id}, proceeding with PDF generation")
+
+        owner_data = {}
+
+        try:
+            # Check if user exists and has employees
+            if hasattr(entity, 'user') and entity.user is not None:
+                if hasattr(entity.user, 'employees') and entity.user.employees:
+                    # Get the first employee's manager_id
+                    manager_id = entity.user.employees[0].manager_id
+                    
+                    # Query the manager
+                    manager = db.query(UserModel).filter(UserModel.id == manager_id).first()
+                    
+                    if manager is not None:
+                        # Check manager role
+                        if hasattr(manager, 'role') and manager.role in ["agent", "recruitment", "sponsor"]:
+                            # Safely get company data
+                            company = getattr(manager, 'company', None)
+                            
+                            # Build owner data with safe defaults
+                            owner_data = {
+                                "company_name": getattr(company, 'company_name', '') if company else '',
+                                "name": f"{getattr(manager, 'first_name', '')} {getattr(manager, 'last_name', '')}".strip(),
+                                "phone_number": getattr(manager, 'phone_number', ''),
+                                "email": getattr(manager, 'email', ''),
+                                "location": getattr(company, 'location', '') if company else ''
+                            }
+                            logger.debug(f"Added owner data for manager: {manager.id}")
+        except Exception as e:
+            logger.warning(f"Error processing manager data: {str(e)}")
+            # Continue with empty owner_data if there's an error
+
+        rate = 0
+        additional_languages = []
+
+        # Safely add language proficiencies with null checks
+        if hasattr(entity, 'amharic') and entity.amharic:
+            additional_languages.append({
+                "language": "Amharic",
+                "proficiency": entity.amharic
+            })
+
+        if hasattr(entity, 'arabic') and entity.arabic:
+            additional_languages.append({
+                "language": "Arabic",
+                "proficiency": entity.arabic
+            })
+
+        if hasattr(entity, 'english') and entity.english:
+            additional_languages.append({
+                "language": "English",
+                "proficiency": entity.english
+            })
+
+        if hasattr(entity, 'references') and entity.references:
+            rate += 1
+            logger.debug("Added rate point for references")
+
+        if hasattr(entity, 'work_experiences') and entity.work_experiences:
+            if len(entity.work_experiences) >= 2:
+                rate += 2
+            elif len(entity.work_experiences) == 1:
+                rate += 1
+            logger.debug(f"Added rate points for work experiences: {rate}")
+
+        if hasattr(entity, 'additional_languages') and entity.additional_languages:
+            if len(entity.additional_languages) > 2:
+                rate += 1.5
+            elif len(entity.additional_languages) == 2:
+                rate += 1
+            else:
+                rate += 0.5
+
+            for lang in entity.additional_languages:
+                if lang and hasattr(lang, 'language') and lang.language:
+                    additional_languages.append({
+                        "language": lang.language.capitalize().rstrip().lstrip(),
+                        "proficiency": getattr(lang, 'proficiency', '')
+                    })
+            logger.debug(f"Added rate points for additional languages: {rate}")
+
+        additional_languages.sort(key=lambda x: x["language"], reverse=False)
+        is_passport = getattr(entity, "is_passport", False)
+        
+        # Safely check education level
+        education = getattr(entity, 'education', None)
+        education_level = getattr(education, 'highest_level', None) if education else None
+        
+        '''
+        if education_level in ["bsc", "msc", "phd"]:
+            template = templates.get_template("cv-download.html")
+            logger.debug("Using graduate CV template")
+        else:
+            template = templates.get_template("cv_non_graduate_download.html")
+            logger.debug("Using non-graduate CV template")
+        '''
+
+        
+
+        # 🎯 TEMPLATE SELECTION
+        if is_passport:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download-passport.html")
+                logger.debug("Using graduate CV template WITH passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download-passport.html")
+                logger.debug("Using non-graduate CV template WITH passport")
+        else:
+            if education_level in ["bsc", "msc", "phd"]:
+                template = templates.get_template("cv-download.html")
+                logger.debug("Using graduate CV template WITHOUT passport")
+            else:
+                template = templates.get_template("cv_non_graduate_download.html")
+                logger.debug("Using non-graduate CV template WITHOUT passport")
+
+        age = 0
+
+        try:
+            if hasattr(entity, 'date_of_birth') and entity.date_of_birth:
+                date_str = entity.date_of_birth.split('T')[0]
+                age = datetime.now().year - datetime.strptime(date_str, "%Y-%m-%d").year
+                logger.debug(f"Calculated age: {age}")
+        except Exception as e:
+            logger.error(f"Error calculating age: {str(e)}")
+            print(e)
+        
+        def build_video_url(entity) -> str:
+            try:
+                if hasattr(entity, 'intro_video') and entity.intro_video:
+                    return f"{settings.BASE_URL}/static/{entity.intro_video.strip('/')}"
+            except Exception as e:
+                logging.getLogger(__name__).error(f"Error building video URL: {str(e)}")
+            return ""
+
+
+        video_url = build_video_url(entity)
+
+        
+        video_url = f"{video_url}" if video_url else None
+
+        def normalize_string_list(value: Any) -> List[str]:
+            if not value:
+                return []
+            if isinstance(value, list):
+                return [str(item).strip() for item in value if item]
+            if isinstance(value, str):
+                text = value.strip()
+                if not text:
+                    return []
+                try:
+                    parsed = json.loads(text)
+                    if isinstance(parsed, list):
+                        return [str(item).strip() for item in parsed if item]
+                except Exception:
+                    pass
+                return [
+                    item.strip().strip('"').strip("'")
+                    for item in text.strip("{}[]").split(",")
+                    if item and item.strip()
+                ]
+            return [str(value).strip()]
+
+        employment_types = normalize_string_list(getattr(entity, "employment_types", None))
+        flexi_durations = normalize_string_list(getattr(entity, "flexi_durations", None))
+
+
+
+        try:
+            content = template.render(
+                request=request,
+                user=entity, 
+                img_base64=qr_code, 
+                passport_url=getattr(entity, 'passport_url', ''),
+               
+                base_url=f"{settings.BASE_URL}/static",
+                rate=rate,
+                additional_languages=additional_languages,
+                owner=owner_data,
+                description=getattr(entity, 'summary', ''),
+                age=age,
+                video_url=video_url,
+                employment_types=employment_types,
+                flexi_durations=flexi_durations
+            )
+            
             logger.info(f"Successfully generated PDF content for CV: {entity.id}")
 
         except Exception as e:
@@ -1201,7 +2354,7 @@ class CVRepository(BaseRepository[CVModel, CVUpsertSchema, CVUpsertSchema]):
 
         template = templates.get_template("Saudi.html")
         content = template.render(
-            request=request, user=entity, base_url="http://localhost:8000/static"
+            request=request, user=entity, base_url="https://api.marrir.com/static"
         )
 
         return content

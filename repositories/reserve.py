@@ -1,7 +1,11 @@
-from datetime import datetime
+from datetime import date, datetime
+from http.client import HTTPException
 from operator import or_
-from typing import Any, Dict, Optional, Union, Generic, List
+from typing import Any, Dict, Optional, Union, Generic, List, cast
 import uuid
+from schemas.promotionschema import PromotionStatusSchema
+from sqlalchemy import not_, cast
+
 from fastapi import File, UploadFile
 from fastapi.encoders import jsonable_encoder
 import pandas as pd
@@ -14,12 +18,13 @@ from sqlalchemy.orm import Session, joinedload
 from models.batchreservemodel import BatchReserveModel
 from models.cvmodel import CVModel
 from models.employeemodel import EmployeeModel
-from models.notificationmodel import NotificationModel
+from models.notificationmodel import NotificationModel, Notifications
 from models.promotionmodel import PromotionModel
-from models.reservemodel import ReserveModel
+from models.reservemodel import RecruitmentAgentPrivateReserveModel, RecruitmentReserveModel, RecruitmentSetReserveModel, ReserveModel
 from sqlalchemy.sql import exists
+from models.agentrecruitmentmodel import AgentRecruitmentModel
+from models.usermodel import UserAgentRecruitment, UserModel
 
-from models.usermodel import UserModel
 from repositories.base import (
     BaseRepository,
     EntityType,
@@ -36,6 +41,7 @@ from schemas.notificationschema import (
 )
 from schemas.reserveschema import (
     MultipleReserveFilterSchema,
+    RecruitmentSetReserveCreateSchema,
     ReserveCVFilterSchema,
     ReserveCreateSchema,
     ReserveFilterSchema,
@@ -44,6 +50,10 @@ from schemas.reserveschema import (
 from schemas.transferschema import TransferStatusSchema
 from schemas.userschema import UserRoleSchema
 import logging
+import traceback
+
+from sqlalchemy import cast
+from sqlalchemy.dialects.postgresql import UUID
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -53,18 +63,14 @@ class ReserveRepository(
 ):
     def get_received_reserve_requests(self, db: Session, skip: int, limit: int):
         user = context_actor_user_data.get()
-
         reserves = db.query(ReserveModel).filter_by(owner_id=user.id).all()
-
         # Get the reservers batch reserve
         batch_reserve_ids = [reserve.batch_id for reserve in reserves]
-
         batch_reserves = (
             db.query(BatchReserveModel)
             .filter(BatchReserveModel.id.in_(batch_reserve_ids))
             .all()
         )
-        
         return batch_reserves
 
     def get_received_reserve_requests_details(
@@ -270,6 +276,54 @@ class ReserveRepository(
 
         return cv_info
 
+    def get_all_active_promoted_employee_cvs(
+        self,
+        db: Session,
+        skip: int,
+        limit: int
+    ):
+        # Get user IDs of actively promoted employees (no self-promotion check)
+        promoted_employee_ids = (
+            db.query(PromotionModel.user_id)
+            .filter(PromotionModel.status == "active")
+            .distinct()
+            .all()
+        )
+        promoted_employee_ids = [id[0] for id in promoted_employee_ids]
+
+        # Query CVs for those users, excluding ones already in Reserve with pending or accepted status
+        query = (
+            db.query(CVModel)
+            .filter(
+                CVModel.user_id.in_(promoted_employee_ids),
+                ~db.query(ReserveModel)
+                .filter(
+                    ReserveModel.cv_id == CVModel.id,
+                    ReserveModel.status.in_([
+                        TransferStatusSchema.PENDING,
+                        TransferStatusSchema.ACCEPTED
+                    ])
+                )
+                .exists()
+            )
+        )
+
+        total_count = query.count()
+
+        cv_info = query.offset(skip).limit(limit).all()
+
+        context_set_response_code_message.set(
+            BaseGenericResponse(
+                error=False,
+                message="Active promoted employees' CVs found",
+                status_code=200,
+                count=total_count,
+            )
+        )
+
+        return cv_info
+
+
     def custom_cv_filter(self, model, filters_dict):
         conditions = []
 
@@ -312,18 +366,37 @@ class ReserveRepository(
 
         return and_(*conditions)
 
-    def send_reserve_request(
-        self, db: Session, *, obj_in: ReserveCreateSchema
-    ) -> EntityType | None:
+    
+
+
+    def send_reserve_request(self, db: Session, *, obj_in: ReserveCreateSchema) -> Any:
         try:
             user = context_actor_user_data.get()
+            if not user or not getattr(user, "id", None):
+                logger.debug("[TRACE] No user found in context")
+                context_set_response_code_message.set(
+                    BaseGenericResponse(
+                        error=True,
+                        message="User not authenticated. Please log in first.",
+                        status_code=401,
+                    )
+                )
+                return None
+
+            logger.debug(f"[TRACE] User from context: id={getattr(user, 'id', None)}, email={getattr(user, 'email', None)}")
+
             reserves = []
+            skipped_cvs = []
+
             batch_reserve = BatchReserveModel(reserver_id=user.id)
             db.add(batch_reserve)
             db.commit()
             db.refresh(batch_reserve)
+            logger.debug(f"[TRACE] Created batch_reserve with ID: {batch_reserve.id}")
 
             for cv_id in obj_in.cv_id:
+                logger.debug(f"[TRACE] Processing CV ID: {cv_id}")
+
                 pending_reserve = (
                     db.query(ReserveModel)
                     .filter(
@@ -335,78 +408,46 @@ class ReserveRepository(
                 )
 
                 if pending_reserve:
-                    context_set_response_code_message.set(
-                        BaseGenericResponse(
-                            error=True,
-                            message=f"{self.entity.get_resource_name(self.entity.__name__)} request already ongoing for {cv_id}",
-                            status_code=400,
-                        )
-                    )
-                    return []
+                    skipped_cvs.append(cv_id)
+                    continue
 
                 cv = db.query(CVModel).filter_by(id=cv_id).first()
-
-                promotion = db.query(PromotionModel).filter_by(user_id=cv.user_id).first()
-
-                if promotion.promoted_by_id == user.id:
-                    context_set_response_code_message.set(
-                        BaseGenericResponse(
-                            error=True,
-                            message=f"Can not reserve a CV promoted by yourself",
-                            status_code=400,
-                        )
-                    )
-                    return []
+                if not cv:
+                    skipped_cvs.append(cv_id)
+                    continue
 
                 single_reserve = ReserveSingleCreateSchema(cv_id=cv_id, reserver_id=user.id)
                 obj_in_data = jsonable_encoder(single_reserve)
                 db_obj = self.entity(**obj_in_data)
                 db_obj.batch_id = batch_reserve.id
-                db_obj.owner_id = promotion.promoted_by_id
                 reserves.append(db_obj)
 
-            db.bulk_save_objects(reserves)
-            db.commit()
+            if reserves:
+                db.bulk_save_objects(reserves)
+                db.commit()
 
-            # Retrieve manager IDs for notifications
-            manager_ids = (
-                db.query(EmployeeModel.manager_id)
-                .join(CVModel, CVModel.user_id == EmployeeModel.user_id)
-                .filter(CVModel.id.in_(obj_in.cv_id))
-                .all()
-            )
-            manager_ids = [id[0] for id in manager_ids]
-
-            notification_repo = NotificationRepository(NotificationModel)
-            notification = NotificationCreateSchema(
-                receipent_ids=manager_ids,
-                description=f"There has been a reserve request made by {user.email} for {len(reserves)} employee(s). Check the reserve page for more details",
-                title="Reservation Request",
-                receipent_type=NotificationReceipentTypeSchema.NONE,
-                type=NotificationTypeSchema.RESERVE_PROFILE,
-                type_metadata=f"{batch_reserve.id}"
-            )
-            notification_repo.send(db, notification)
+            # Build response
+            message = f"{self.entity.get_resource_name(self.entity.__name__)} requested for {len(reserves)} employees."
+            if skipped_cvs:
+                message += f" Skipped {len(skipped_cvs)} CV(s): {', '.join(map(str, skipped_cvs))} (already reserved or not found)."
 
             context_set_response_code_message.set(
-                BaseGenericResponse(
-                    error=False,
-                    message=f"{self.entity.get_resource_name(self.entity.__name__)} requested for {len(reserves)} employees",
-                    status_code=200,
-                )
+                BaseGenericResponse(error=False, message=message, status_code=200)
             )
             return reserves
 
         except Exception as e:
-            logger.error(f"Error in send_reserve_request: {e}")
+            logger.error("Error in send_reserve_request", exc_info=True)
             context_set_response_code_message.set(
                 BaseGenericResponse(
                     error=True,
-                    message="An error occurred while processing the reserve request.",
+                    message=f"An error occurred while processing the reserve request: {str(e)}",
                     status_code=500,
                 )
             )
             return None
+
+
 
     def accept_decline_reserve_request(
         self,
@@ -478,20 +519,617 @@ class ReserveRepository(
             .filter(ReserveModel.reserver_id == user_id)
             .subquery()
         )
-
         # Final query: promotions not promoted by me, and whose users I haven't reserved their CVs
         query = db.query(PromotionModel).filter(
             PromotionModel.promoted_by_id != user_id,
             PromotionModel.user_id.notin_(select(reserved_cv_user_ids_subquery.c.user_id))
         )
-
         total_count = query.count()
         promotions = query.offset(skip).limit(limit).all()
-
         return {
-            "data": promotions,
+            "data": [
+                {
+                    **promotion.__dict__,
+                    "promoter": {
+                        "id": promotion.promoted_by.id,
+                        "full_name": f"{promotion.promoted_by.first_name or ''} {promotion.promoted_by.last_name or ''}".strip(),
+                        "email": promotion.promoted_by.email,
+                        "phone_number": promotion.promoted_by.phone_number,
+                        "role": promotion.promoted_by.role,
+                    }
+                }
+                for promotion in promotions
+            ],
             "count": total_count
         }
+
+    '''
+    '''
+    def get_not_reserved_by_me(
+        self,
+        db: Session,
+        user_id: uuid.UUID,
+        skip: int = 0,
+        limit: int = 10,
+        nationality: str = None,
+    ):
+        # Base query
+        query = db.query(CVModel)
+
+        # Apply nationality filter if provided
+        if nationality:
+            query = query.filter(CVModel.nationality == nationality)
+
+        # Count BEFORE applying pagination
+        total_count = query.count()
+
+        # Apply pagination
+        cvs = query.offset(skip).limit(limit).all()
+
+        # Build results (no need to query PromotionModel since you're returning CVs)
+        results = []
+        for cv in cvs:
+            results.append({
+                **cv.__dict__,
+                "cv": {
+                    "id": cv.id,
+                    "passport_number": cv.passport_number,
+                    "summary": cv.summary,
+                    "email": cv.email,
+                    "national_id": cv.national_id,
+                    "amharic_full_name": cv.amharic_full_name,
+                    "arabic_full_name": cv.arabic_full_name,
+                    "english_full_name": cv.english_full_name,
+                    "sex": cv.sex,
+                    "phone_number": cv.phone_number,
+                    "height": cv.height,
+                    "weight": cv.weight,
+                    "skin_tone": cv.skin_tone,
+                    "date_of_birth": cv.date_of_birth,
+                    "nationality": cv.nationality,
+                }
+            })
+
+        return {
+            "data": results,
+            "count": total_count
+        }
+
+    '''
+
+    
+    '''
+    def get_not_reserved_by_me(
+        self,
+        db: Session,
+        user_id: uuid.UUID,
+        nationality: str = None,
+        skip: int = 0,
+        limit: int = 10,
+    ):
+        # Step 1: get related recruitment/agent IDs
+        related_recruitment_ids = (
+            db.query(UserAgentRecruitment.recruitment_id)
+            .filter(UserAgentRecruitment.agent_id == user_id)
+            .subquery()
+        )
+
+        related_agent_ids = (
+            db.query(UserAgentRecruitment.agent_id)
+            .filter(UserAgentRecruitment.recruitment_id == user_id)
+            .subquery()
+        )
+
+        query = None
+
+        # Step 2: determine if user is agent or recruitment
+        if db.query(UserAgentRecruitment).filter(UserAgentRecruitment.agent_id == user_id).first():
+            # user is agent → get CVs of recruitments
+            query = (
+                db.query(CVModel)
+                .join(UserModel, cast(CVModel.creator_id, UUID) == UserModel.id)
+                .filter(UserModel.id.in_(related_recruitment_ids))
+            )
+        elif db.query(UserAgentRecruitment).filter(UserAgentRecruitment.recruitment_id == user_id).first():
+            # user is recruitment → get CVs promoted by agents
+            query = (
+                db.query(CVModel)
+                .join(UserModel, cast(CVModel.creator_id, UUID) == UserModel.id)
+                .filter(UserModel.id.in_(related_agent_ids))
+            )
+        
+        if not query:
+            return {"data": [], "count": 0}
+
+        # Step 3: filter by nationality if provided
+        if nationality:
+            query = query.filter(CVModel.nationality == nationality)
+
+        # Step 4: count total
+        total_count = query.count()
+
+        # Step 5: apply pagination
+        cvs = query.offset(skip).limit(limit).all()
+
+        # Step 6: build response
+        results = [
+            {
+                "id": cv.user_id,
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": cv.expected_salary,
+                "currency":cv.currency,
+            }
+            for cv in cvs
+        ]
+
+        return {"data": results, "count": total_count}
+    '''
+    def get_not_reserved_by_me(
+        self,
+        db: Session,
+        user_id: uuid.UUID,
+        nationality: str = None,
+        skip: int = 0,
+        limit: int = 10,
+        reserve_in: Optional[RecruitmentSetReserveCreateSchema] = None,  # optional input
+    ):
+        """
+        Get all CVs created by agents linked to a recruiter, excluding reserved ones.
+        Also include promoted CVs (from PromotionModel) that are active.
+        """
+
+        # Step 1️⃣: Get current user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            return {"data": [], "count": 0}
+
+        # Step 2️⃣: Ensure the user is a recruiter
+        if user.role.lower() != "recruitment":
+            return {"data": [], "count": 0}
+
+        # Step 3️⃣: Get all related agent IDs
+        related_agent_ids = (
+            db.query(AgentRecruitmentModel.agent_id)
+            .filter(AgentRecruitmentModel.recruitment_id == user_id)
+            .all()
+        )
+        related_agent_ids = [row.agent_id for row in related_agent_ids]
+        if not related_agent_ids:
+            return {"data": [], "count": 0}
+
+        # Step 4️⃣: Query CVs created by these agents
+        query = (
+            db.query(CVModel)
+            .join(UserModel, cast(CVModel.creator_id, UUID) == UserModel.id)
+            .filter(UserModel.id.in_(related_agent_ids))
+        )
+
+        # Step 5️⃣: Exclude reserved CVs
+        reserved_cv_ids = [row.cv_id for row in db.query(RecruitmentSetReserveModel.cv_id).all()]
+        if reserved_cv_ids:
+            query = query.filter(not_(CVModel.user_id.in_(reserved_cv_ids)))
+
+        # Step 6️⃣: Optional nationality filter
+        if nationality:
+            query = query.filter(CVModel.nationality == nationality)
+
+        # Step 7️⃣: Count before pagination
+        total_count = query.count()
+
+        # Step 8️⃣: Apply pagination
+        cvs = query.offset(skip).limit(limit).all()
+
+        # Step 9️⃣: Get promoted CVs (ACTIVE only)
+        promoted_query = (
+            db.query(PromotionModel, CVModel)
+            .join(UserModel, PromotionModel.user_id == UserModel.id)
+            .join(CVModel, CVModel.user_id == UserModel.id)
+            .filter(PromotionModel.end_date >= date.today())
+        )
+
+        if nationality:
+            promoted_query = promoted_query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
+
+        promoted_results = promoted_query.all()
+
+        # Step 🔟: Format both normal and promoted CVs
+        agent_cvs = [
+            {
+                "id": cv.user_id,
+                "type": "agent_cv",
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": getattr(cv, "expected_salary", None),
+                "currency": getattr(cv, "currency", None),
+            }
+            for cv in cvs
+        ]
+
+        promoted_cvs = [
+            {
+                "id": cv.user_id,
+                "type": "promoted_cv",
+                "promotion_id": promotion.id,
+                "promoted_by_id": promotion.promoted_by_id,
+                "status": promotion.status,
+                "start_date": promotion.start_date,
+                "end_date": promotion.end_date,
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": getattr(cv, "expected_salary", None),
+                "currency": getattr(cv, "currency", None),
+            }
+            for promotion, cv in promoted_results
+        ]
+
+        # Step 1️⃣1️⃣: Combine both lists
+        all_cvs = agent_cvs + promoted_cvs
+
+        # Step 1️⃣2️⃣: Return unified response
+        return {
+            "data": all_cvs,
+            "count": len(all_cvs),
+        }
+
+    '''
+    def get_not_reserved_by_me_recruiter(
+        self,
+        db: Session,
+        user_id: uuid.UUID,
+        nationality: str = None,
+        skip: int = 0,
+        limit: int = 10,
+        reserve_in: Optional[RecruitmentSetReserveCreateSchema] = None,  # optional input
+    ):
+
+        # Step 1️⃣: Get current user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user:
+            return {"data": [], "count": 0}
+
+        # Step 2️⃣: Ensure the user is a recruiter
+        if user.role.lower() != "recruitment":
+            return {"data": [], "count": 0}
+
+        # Step 3️⃣: Get all related agent IDs
+        related_agent_ids = (
+            db.query(AgentRecruitmentModel.agent_id)
+            .filter(AgentRecruitmentModel.recruitment_id == user_id)
+            .all()
+        )
+        related_agent_ids = [row.agent_id for row in related_agent_ids]
+        # Step 4️⃣: Query CVs created by these agents
+        query = (
+            db.query(CVModel)
+            .join(UserModel, cast(CVModel.creator_id, UUID) == UserModel.id)
+            .filter(UserModel.id.in_(related_agent_ids))
+        )
+
+        # Step 5️⃣: Exclude reserved CVs
+        reserved_cv_ids = [row.cv_id for row in db.query(RecruitmentSetReserveModel.cv_id).all()]
+        if reserved_cv_ids:
+            query = query.filter(not_(CVModel.user_id.in_(reserved_cv_ids)))
+
+        # Step 6️⃣: Optional nationality filter
+        if nationality:
+            query = query.filter(CVModel.nationality == nationality)
+
+        # Step 7️⃣: Count before pagination
+        total_count = query.count()
+
+        # Step 8️⃣: Apply pagination
+        cvs = query.offset(skip).limit(limit).all()
+
+        # Step 9️⃣: Get promoted CVs (ACTIVE only)
+        promoted_query = (
+            db.query(PromotionModel, CVModel)
+            .join(UserModel, PromotionModel.user_id == UserModel.id)
+            .join(CVModel, CVModel.user_id == UserModel.id)
+            .filter(PromotionModel.end_date >= date.today())
+        )
+
+        if nationality:
+            promoted_query = promoted_query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
+
+        promoted_results = promoted_query.all()
+
+        # Step 🔟: Format both normal and promoted CVs
+        agent_cvs = [
+            {
+                "id": cv.user_id,
+                "type": "agent_cv",
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": getattr(cv, "expected_salary", None),
+                "currency": getattr(cv, "currency", None),
+            }
+            for cv in cvs
+        ]
+
+        promoted_cvs = [
+            {
+                "id": cv.user_id,
+                "type": "promoted_cv",
+                "promotion_id": promotion.id,
+                "promoted_by_id": promotion.promoted_by_id,
+                "status": promotion.status,
+                "start_date": promotion.start_date,
+                "end_date": promotion.end_date,
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": getattr(cv, "expected_salary", None),
+                "currency": getattr(cv, "currency", None),
+            }
+            for promotion, cv in promoted_results
+        ]
+
+        # Step 1️⃣1️⃣: Combine both lists
+        all_cvs = agent_cvs + promoted_cvs
+
+        # Step 1️⃣2️⃣: Return unified response
+        return {
+            "data": all_cvs,
+            "count": len(all_cvs),
+        }
+
+    '''
+    def get_not_reserved_by_me_recruiter(
+            self,
+            db: Session,
+            user_id: uuid.UUID,
+            nationality: str = None,
+            skip: int = 0,
+            limit: int = 10,
+        ):
+        # 1️⃣ Get current user
+        user = db.query(UserModel).filter(UserModel.id == user_id).first()
+        if not user or user.role.lower() != "recruitment":
+            return {"data": [], "count": 0}
+
+        # 2️⃣ Get all related agent IDs
+        related_agent_ids = (
+            db.query(AgentRecruitmentModel.agent_id)
+            .filter(AgentRecruitmentModel.recruitment_id == user_id)
+            .all()
+        )
+        related_agent_ids = [row.agent_id for row in related_agent_ids]
+        if not related_agent_ids:
+            return {"data": [], "count": 0}
+
+        # 3️⃣ Base CV query created by linked agents
+        query = (
+            db.query(CVModel)
+            .join(UserModel, cast(CVModel.creator_id, UUID) == UserModel.id)
+            .filter(UserModel.id.in_(related_agent_ids))
+        )
+
+        # 4️⃣ Nationality filter
+        if nationality:
+            query = query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
+
+        # ✅ 5️⃣ Exclude CVs reserved in RecruitmentSetReserveModel
+        query = query.filter(
+            ~exists(
+                select(1).where(
+                    and_(
+                        cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
+                        RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED"])
+                    )
+                )
+            )
+        )
+
+        # ✅ 6️⃣ Exclude CVs that have Private Agent Reservations
+        query = query.filter(
+            ~exists(
+                select(1).where(
+                    and_(
+                        cast(RecruitmentAgentPrivateReserveModel.employee_id, UUID) == CVModel.user_id,
+                        RecruitmentAgentPrivateReserveModel.status.in_(["accepted"])
+                    )
+                )
+            )
+        )
+
+        # ✅ 7️⃣ Count after all filters
+        total_count = query.count()
+
+        # ✅ 8️⃣ Pagination
+        agent_cvs = query.offset(skip).limit(limit).all()
+
+        # ✅ 9️⃣ Promoted CVs Query (ACTIVE ONLY)
+        promoted_query = (
+            db.query(PromotionModel, CVModel)
+            .join(UserModel, PromotionModel.user_id == UserModel.id)
+            .join(CVModel, CVModel.user_id == UserModel.id)
+            .filter(PromotionModel.status == PromotionStatusSchema.ACTIVE)
+            .filter(PromotionModel.end_date >= date.today())
+        )
+
+        if nationality:
+            promoted_query = promoted_query.filter(CVModel.nationality.ilike(f"%{nationality}%"))
+
+        # ✅ Exclude reserved (same rules for promoted CVs)
+        promoted_query = promoted_query.filter(
+            ~exists(
+                select(1).where(
+                    and_(
+                        cast(RecruitmentSetReserveModel.cv_id, UUID) == CVModel.user_id,
+                        RecruitmentSetReserveModel.status.in_(["reserved", "APPROVED"])
+                    )
+                )
+            )
+        )
+
+        promoted_query = promoted_query.filter(
+            ~exists(
+                select(1).where(
+                    and_(
+                        cast(RecruitmentAgentPrivateReserveModel.employee_id, UUID) == CVModel.user_id,
+                        RecruitmentAgentPrivateReserveModel.status.in_(["accepted"])
+                    )
+                )
+            )
+        )
+
+        promoted_results = promoted_query.all()
+
+        # ✅ 1️⃣0️⃣ Format output
+        agent_cvs_output = [
+            {
+                "id": cv.user_id,
+                "type": "agent_cv",
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": cv.expected_salary,
+                "currency": cv.currency,
+            }
+            for cv in agent_cvs
+        ]
+
+        promoted_cvs_output = [
+            {
+                "id": cv.user_id,
+                "type": "promoted_cv",
+                "promotion_id": promotion.id,
+                "promoted_by_id": promotion.promoted_by_id,
+                "status": promotion.status,
+                "start_date": promotion.start_date,
+                "end_date": promotion.end_date,
+                "passport_number": cv.passport_number,
+                "summary": cv.summary,
+                "email": cv.email,
+                "national_id": cv.national_id,
+                "amharic_full_name": cv.amharic_full_name,
+                "arabic_full_name": cv.arabic_full_name,
+                "english_full_name": cv.english_full_name,
+                "sex": cv.sex,
+                "phone_number": cv.phone_number,
+                "height": cv.height,
+                "weight": cv.weight,
+                "skin_tone": cv.skin_tone,
+                "date_of_birth": cv.date_of_birth,
+                "nationality": cv.nationality,
+                "head_photo": cv.head_photo,
+                "expected_salary": cv.expected_salary,
+                "currency": cv.currency,
+            }
+            for promotion, cv in promoted_results
+        ]
+
+        # ✅ 1️⃣1️⃣ Combine both CV lists
+        all_cvs = agent_cvs_output + promoted_cvs_output
+
+        # ✅ 1️⃣2️⃣ Final return
+        return {
+            "data": all_cvs,
+            "count": len(all_cvs),
+            "total": total_count + len(promoted_cvs_output),
+        }
+
+
+
+    def reserve_cv(self, db: Session, obj_in: RecruitmentSetReserveCreateSchema):
+        # Check if the CV is already reserved
+        existing_reserve = db.query(self.entity).filter(
+            self.entity.cv_id == obj_in.cv_id
+        ).first()
+
+        if existing_reserve:
+            raise HTTPException(
+                status_code=400,
+                detail="This CV is already reserved."
+            )
+
+        new_reserve = self.entity(
+            recruitment_id=obj_in.recruitment_id,
+            cv_id=obj_in.cv_id,
+            status=obj_in.status
+        )
+
+        db.add(new_reserve)
+        db.commit()
+        db.refresh(new_reserve)
+        return new_reserve
 
     '''
     def get_not_reserved_by_me(self, db: Session, user_id: uuid.UUID, skip: int = 0, limit: int = 10):
@@ -532,3 +1170,112 @@ class ReserveRepository(
             "data": cvs,
             "count": total_count
         }
+    '''
+
+    '''
+    def get_not_reserved_by_me(self, db: Session, user_id: uuid.UUID, skip: int = 0, limit: int = 10):
+        # Subquery: user_ids whose CVs I reserved
+        reserved_cv_user_ids_by_me = (
+            select(CVModel.user_id)
+            .join(ReserveModel, ReserveModel.cv_id == CVModel.id)
+            .filter(ReserveModel.reserver_id == user_id)
+            .subquery()
+        )
+
+        # Subquery: all reserved cv_ids
+        all_reserved_cv_ids = (
+            select(ReserveModel.cv_id)
+            .subquery()
+        )
+
+        # Subquery: Promotions not promoted by me and not among the CVs I reserved
+        unpromoted_user_ids = (
+            select(PromotionModel.user_id)
+            .filter(
+                PromotionModel.promoted_by_id != user_id,
+                PromotionModel.user_id.notin_(select(reserved_cv_user_ids_by_me.c.user_id))
+            )
+            .subquery()
+        )
+
+        # Main query: Join CVs to Promotions and Promoter User (manually)
+        query = (
+            db.query(
+                CVModel,
+                PromotionModel,
+                UserModel
+            )
+            .join(PromotionModel, PromotionModel.user_id == CVModel.user_id)
+            .join(UserModel, UserModel.id == PromotionModel.promoted_by_id)
+            .filter(
+                CVModel.user_id.in_(select(unpromoted_user_ids.c.user_id)),
+                CVModel.id.notin_(select(all_reserved_cv_ids.c.cv_id))
+            )
+        )
+
+        total_count = query.count()
+        rows = query.offset(skip).limit(limit).all()
+
+        # Structure the response manually
+        result = []
+        for cv, promotion, promoter in rows:
+            result.append({
+                **cv.__dict__,
+                "promoter": {
+                    "id": promoter.id,
+                    "full_name": f"{promoter.first_name or ''} {promoter.last_name or ''}".strip(),
+                    "email": promoter.email,
+                    "phone_number": promoter.phone_number,
+                    "role": promoter.role,
+                }
+            })
+
+        return {
+            "data": result,
+            "count": total_count
+        }
+    '''
+
+    '''
+    def get_not_reserved_by_me(self, db: Session, user_id: uuid.UUID, skip: int = 0, limit: int = 10):
+        # Subquery: CVs reserved by me
+        reserved_cv_user_ids_subquery = (
+            select(CVModel.user_id)
+            .join(ReserveModel, ReserveModel.cv_id == CVModel.id)
+            .filter(ReserveModel.reserver_id == user_id)
+            .subquery()
+        )
+
+        # Query promotions not promoted by me and not already reserved by me
+        query = (
+            db.query(PromotionModel)
+            .join(PromotionModel.promoted_by)
+            .options(joinedload(PromotionModel.promoted_by))
+            .filter(
+                PromotionModel.promoted_by_id != user_id,
+                PromotionModel.user_id.notin_(select(reserved_cv_user_ids_subquery.c.user_id)),
+                UserModel.role.in_(["employee", "selfsponsor"])
+            )
+        )
+
+        total_count = query.count()
+        promotions = query.offset(skip).limit(limit).all()
+
+        return {
+            "data": [
+                {
+                    **promotion.__dict__,
+                    "promoter": {
+                        "id": promotion.promoted_by.id,
+                        "full_name": f"{promotion.promoted_by.first_name or ''} {promotion.promoted_by.last_name or ''}".strip(),
+                        "email": promotion.promoted_by.email,
+                        "phone_number": promotion.promoted_by.phone_number,
+                        "role": promotion.promoted_by.role,
+                    }
+                }
+                for promotion in promotions
+            ],
+            "count": total_count
+        }
+
+    '''

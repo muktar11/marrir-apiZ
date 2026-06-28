@@ -144,3 +144,105 @@ class RecruitmentReserveReadSchema(BaseModel):
     employee: UserReadSchema | None = None
     recruitment: UserReadSchema | None = None
     sponsor: UserReadSchema | None = None
+
+
+
+
+from pydantic import BaseModel
+import uuid
+
+class RecruitmentSetReserveCreateSchema(BaseModel):
+    buyer_id: Optional[uuid.UUID] = None
+    recruitment_id: uuid.UUID 
+    #cv_id: uuid.UUID
+    cv_ids: List[uuid.UUID] 
+    status: str = "reserved"
+
+class RecruitmentSetReserveReadSchema(BaseModel):
+    recruitment_id: uuid.UUID
+    buyer_id: Optional[uuid.UUID] = None  # optional recruiter comment
+    cv_id: uuid.UUID
+    status: str
+
+    class Config:
+        orm_mode = True
+
+
+class ReserveSetCreateSchema(BaseModel):
+    recruitment_id: uuid.UUID
+    cv_id: uuid.UUID
+    status: Optional[str] = "reserved"
+
+class BuyerReviewRequestSchema(BaseModel):
+    id: int
+    approve: Optional[bool] = None
+    recruiter_id: uuid.UUID
+    comment: Optional[str] = None
+
+class BuyerPromoterReviewRequestSchema(BaseModel):
+    id: int
+    approve: Optional[bool] = None
+    promoter_id: uuid.UUID
+    comment: Optional[str] = None
+
+
+class BuyerRequestsCVSchema(BaseModel):
+    cv_id: List[uuid.UUID]    
+    buyer_id: uuid.UUID
+
+
+class RecruiterReviewRequestSchema(BaseModel):
+    cv_id: uuid.UUID
+    buyer_id: uuid.UUID
+    approve: bool
+    
+
+class RecruiterReviewByIdSchema(BaseModel):
+    reserve_id: int
+    approve: bool
+    comment: Optional[str] = None
+
+
+class ReviewSetRequestSchema(BaseModel):
+    approve: bool
+    comment: Optional[str] = None  # optional recruiter comment
+
+class PurchaseSetSchema(BaseModel):
+    buyer_id: uuid.UUID
+    cv_id: uuid.UUID
+    payment_confirmed: bool = False
+
+class ReserveSetReadSchema(BaseModel):
+    recruitment_id: uuid.UUID
+    cv_id: uuid.UUID
+    buyer_id: Optional[uuid.UUID]
+    status: str
+    requested: bool
+    approved: bool
+    rejected: bool
+    purchased: bool
+    payment_confirmed: bool
+
+    class Config:
+        orm_mode = True
+
+
+class PrivateReserveCreateSchema(BaseModel):
+    employee_id: Optional[str] = None
+    recruitment_id: Optional[uuid.UUID] = None
+    sponsor_id: Optional[uuid.UUID] = None
+    selfsponsor_id: Optional[uuid.UUID] = None
+    agent_id: Optional[uuid.UUID] = None
+    cv_id: Optional[uuid.UUID] = None
+    passport_number: Optional[str] = None
+    actor_id: Optional[uuid.UUID] = None
+    actor_role: Optional[str] = None
+
+class ApproveReserveSchema(BaseModel):
+    reserve_id: int  # The ID of the reservation to approve
+    employee_id: str  # The employee performing the approval
+
+# Optional payload to include passport info
+class ApprovesReserveSchema(BaseModel):
+    employee_id: str
+    with_passport: Optional[bool] = False  # default False if not provided

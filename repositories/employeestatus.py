@@ -33,10 +33,15 @@ class EmployeeStatusRepository(
         EmployeeStatusModel, EmployeeStatusCreateSchema, EmployeeStatusCreateSchema
     ]
 ):
+    
     def add_employee_status(
         self, db: Session, *, obj_in: EmployeeStatusCreateSchema
     ) -> EntityType | None:
         obj_in_data = jsonable_encoder(obj_in)
+
+        # ✅ Remove None fields before creating db_obj
+        obj_in_data = {k: v for k, v in obj_in_data.items() if v is not None}
+
         db_obj = self.entity(**obj_in_data)
         db.add(db_obj)
         db.commit()
@@ -64,6 +69,7 @@ class EmployeeStatusRepository(
                     status_code=201,
                 )
             )
+
         return db_obj
 
     def get_employee_status(
@@ -211,7 +217,7 @@ class EmployeeStatusRepository(
         content = template.render(
             request=request,
             data=data,
-            base_url="http://localhost:8000/static",
+            base_url="https://api.marrir.com/static",
         )
 
         return content

@@ -1,6 +1,7 @@
 import json
 from typing import Any, Optional
-from typing import List, Optional
+from typing import List, Optional 
+from models.employeemodel import EmployeeModel
 from fastapi import APIRouter, Depends, File, Form, Response, UploadFile, HTTPException, BackgroundTasks
 from fastapi.security import HTTPBearer
 from starlette.requests import Request
@@ -654,7 +655,7 @@ def multiple_process_telr_payment(
         print(f"Error in Telr SDK: {repr(e)}")
         raise
 
-
+'''
 @payment_router.get("/")
 async def get_payments(_=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(build_request_context)):
     db = get_db_session()
@@ -681,6 +682,53 @@ async def get_payments(_=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(b
             "buyer_id": payment.buyer_id,
             "created_at": payment.created_at,
             "updated_at": payment.updated_at
+        })
+
+    return data
+'''
+
+from fastapi import Request
+
+@payment_router.get("/")
+async def get_payments(
+    request: Request,
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    payments = db.query(InvoiceModel).filter(
+        (InvoiceModel.buyer_id == user.id) |
+        (InvoiceModel.customer_id == user.id)
+    ).all()
+
+    base_url = str(request.base_url).rstrip("/")
+
+    data = []
+    for payment in payments:
+        invoice_url = None
+
+        if payment.status == "paid" and payment.invoice_file:
+            invoice_url = f"{base_url}/api/v1/transfer/invoice/{payment.reference}"
+
+        data.append({
+            "id": payment.id,
+            "customer_id": payment.customer_id,
+            "ref": payment.stripe_session_id,
+            "status": payment.status,
+            "amount": payment.amount,
+            "subtotal": payment.subtotal,
+            "vat_amount": payment.vat_amount,
+            "currency": payment.currency,
+            "type": payment.type,
+            "card": payment.card,
+            "description": payment.description,
+            "buyer_id": payment.buyer_id,
+            "created_at": payment.created_at,
+            "updated_at": payment.updated_at,
+            "invoice_url": invoice_url,          # ✅ added
+            "invoice_number": payment.invoice_number,  # optional
         })
 
     return data
@@ -887,9 +935,23 @@ async def telr_reserve_callback(data: TransferRequestPaymentCallback, background
 
         if not reservations:
             return Response(status_code=404, content=json.dumps({"message": "Reservations not found"}), media_type="application/json")
-
+        '''
+        for reservation in reservations:
+            reservation.owner_id = reservation.reserver_id
+           
+            db.add(reservation)
+        '''
         for reservation in reservations:
             reservation.status = "paid"
+            reservation.owner_id = reservation.reserver_id  # Transfer ownership
+
+            # Try to update the EmployeeModel
+            cv_user_id = reservation.cv.user_id  # Assuming CVModel has user_id field
+            employee = db.query(EmployeeModel).filter_by(user_id=cv_user_id).first()
+            if employee:
+                employee.manager_id = reservation.reserver_id
+                db.add(employee)
+
             db.add(reservation)
 
         invoice.status = "paid"
@@ -940,3 +1002,58 @@ async def telr_reserve_callback(data: TransferRequestPaymentCallback, background
         db.rollback()
         logger.error(f"Failed to process payment: {str(e)}", exc_info=True)
         return Response(status_code=400, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
+
+
+@payment_router.get(
+    "/admin/retrieve/all/payments",
+    status_code=200,
+)
+async def admin_get_all_payments(
+    db: Session = Depends(get_db),
+):
+    """
+    Admin retrieves all InvoiceModel records with their statuses.
+    """
+    from sqlalchemy.exc import SQLAlchemyError
+
+    try:
+        invoices = db.query(InvoiceModel).order_by(
+            InvoiceModel.created_at.desc()
+        ).all()
+    except SQLAlchemyError as e:
+        raise HTTPException(status_code=500, detail=f"Database error: {e}")
+
+    data = []
+    for inv in invoices:
+        data.append({
+            "id": inv.id,
+            "customer_id": str(inv.customer_id) if inv.customer_id else None,
+            "buyer_id": str(inv.buyer_id) if inv.buyer_id else None,
+            "ref": inv.stripe_session_id,
+            "status": inv.status,
+            "amount": inv.amount,
+            "subtotal": inv.subtotal,
+            "vat_amount": inv.vat_amount,
+            "currency": inv.currency,
+            "type": inv.type,
+            "card": inv.card,
+            "card_brand": inv.card_brand,
+            "card_last4": inv.card_last4,
+            "card_holder": inv.card_holder,
+            "description": inv.description,
+            "object_id": inv.object_id,
+            "invoice_number": inv.invoice_number,
+            "billing_email": inv.billing_email,
+            "billing_phone": inv.billing_phone,
+            "billing_country": inv.billing_country,
+            "created_at": inv.created_at,
+            "updated_at": inv.updated_at,
+        })
+
+    return {
+        "status_code": 200,
+        "message": "All payments fetched successfully",
+        "error": False,
+        "count": len(data),
+        "data": data,
+    }

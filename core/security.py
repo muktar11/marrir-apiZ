@@ -34,25 +34,39 @@ class Settings(BaseSettings):
     STRIPE_PUBLISHABLE_KEY: str
     STRIPE_SECRET_KEY: str
     STRIPE_WEBHOOK_SECRET: str
+    OPENAI_API_KEY: str
     OAUTH_CLIENT_ID: str
     OAUTH_CLIENT_SECRET: str
     OAUTH_ACCESS_TOKEN_URL: str
     OAUTH_AUTHORIZE_URL: str
-    OAUTH_REDIRECT_URI: str = "http://localhost:5173/google/signin"
+    OAUTH_REDIRECT_URI: str = "https://marrir.com/google/signin"
+    FACEBOOK_CLIENT_ID: str
+    FACEBOOK_CLIENT_SECRET: str
+    FACEBOOK_REDIRECT_URI: str
+    FACEBOOK_CONFIG_ID: str
     EMAIL: str
     APP_PASSWORD: str
-    TELR_RETURN_URL: str = "http://localhost:5173/replace/payments"
-    TELR_TRANSFER_RETURN_URL: str = "http://localhost:5173/replace/transfer-history"
-    TELR_PROMOTION_RETURN_URL: str = "http://localhost:5173/replace/promotion"
-    TELR_RESERVE_RETURN_URL: str = "http://localhost:5173/replace/reserve-history"
-    TELR_EMPLOYEE_PROCESS_RETURN_URL: str = "http://localhost:5173/replace/employee-process"
-    TELR_SPONSOR_EMPLOYEE_PROCESS_RETURN_URL: str = "http://localhost:5173/replace/Employee/reserves"
-    TELR_JOB_APPLICATION_RETURN_URL: str = "http://localhost:5173/replace/jobs"
+    TELR_RETURN_URL: str = "https://marrir.com/replace/payments"
+    TELR_TRANSFER_RETURN_URL: str = "https://marrir.com/replace/transfer-history"
+    TELR_PROMOTION_RETURN_URL: str = "https://marrir.com/replace/promotion"
+    TELR_RESERVE_RETURN_URL: str = "https://marrir.com/replace/reserve-history"
+    TELR_EMPLOYEE_PROCESS_RETURN_URL: str = "https://marrir.com/replace/employee-process"
+    TELR_SPONSOR_EMPLOYEE_PROCESS_RETURN_URL: str = "https://marrir.com/replace/Employee/reserves"
+    TELR_JOB_APPLICATION_RETURN_URL: str = "https://marrir.com/replace/jobs"
     TELR_AUTH_KEY: str = "Mvc2X~scT45#WsKF"
     TELR_STORE_ID: str = "31896"
     TELR_TEST_MODE: int = 1
-    FRONTEND_PUBLIC_CV_URL: str = "http://localhost:5173/public/cv"
-    BASE_URL: str = "http://localhost:8000"
+    FRONTEND_PUBLIC_CV_URL: str = "https://marrir.com/public/cv"
+    BASE_URL: str = "https://api.marrir.com"
+    # PROFILE_TRANSFER_PRICE: str
+
+    HYPERPAY_ENTITY_ID: str
+    HYPERPAY_ACCESS_TOKEN: str
+    HYPERPAY_JOB_RETURN_URL: str = "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper"
+    HYPERPAY_JOB_NOTIFY_URL: str = "https://marrir.com/api/v1/http://localhost:5173/recruitment/jobs/"
+    HYPERPAY_JOB_RETURN_URL: str = "https://api.marrir.com/api/v1/job/my-applications/status/callback/hyper"
+    HYPERPAY_JOB_NOTIFY_URL: str = "https://marrir.com//recruitment/transfer-history"
+
     # PROFILE_TRANSFER_PRICE: str
 
 

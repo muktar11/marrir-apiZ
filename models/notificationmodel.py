@@ -29,29 +29,18 @@ class NotificationModel(Base, EntityBaseModel):
 
 class Notifications(Base):
     __tablename__ = "notifications"
-
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), 
         primary_key=True,
         default=uuid.uuid4,
     )
-
     title: Mapped[str] = mapped_column(String, nullable=False)
-
     description: Mapped[str] = mapped_column(String, nullable=False)
-
     type: Mapped[str] = mapped_column(String, nullable=False)
-
     object_id = mapped_column(JSONB, nullable=True)
-
     extra_data = mapped_column(JSONB, nullable=True)
-
     unread = mapped_column(Boolean, default=True)
-
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("table_users.id"), nullable=False)
-    
     user = relationship("UserModel", backref="notifications", foreign_keys=[user_id])
-
     created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
-
     updated_at: Mapped[datetime] = mapped_column(default=None, onupdate=datetime.utcnow, nullable=True)

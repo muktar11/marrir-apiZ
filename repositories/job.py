@@ -1,4 +1,5 @@
 from datetime import datetime
+import json
 from operator import or_
 from typing import Any, Dict, Optional, Union, Generic, List
 from fastapi import File, UploadFile
@@ -42,6 +43,7 @@ class JobRepository(BaseRepository[JobModel, JobCreateSchema, JobUpdateSchema]):
         end_date: Optional[str],
         filters: FilterSchemaType,
     ) -> List[EntityType]:
+        
         return super().get_some(
             db,
             skip,
@@ -56,11 +58,19 @@ class JobRepository(BaseRepository[JobModel, JobCreateSchema, JobUpdateSchema]):
     def get_all(self, db: Session, filters: FilterSchemaType) -> List[EntityType]:
         return super().get_all(db, filters)
 
+    
     def create(self, db: Session, *, obj_in: JobCreateSchema) -> EntityType | None:
         user = context_actor_user_data.get().id
         obj_in.posted_by = user
+
         obj_in_data = jsonable_encoder(obj_in)
+
+        # ✅ store as string
+        if obj_in_data.get("employment_types") is not None:
+            obj_in_data["employment_types"] = json.dumps(obj_in_data["employment_types"])
+
         db_obj = self.entity(**obj_in_data)
+
         exists = self.check_conflict(db, entity=db_obj)
         if exists:
             context_set_response_code_message.set(
@@ -71,19 +81,26 @@ class JobRepository(BaseRepository[JobModel, JobCreateSchema, JobUpdateSchema]):
                 )
             )
             return None
-        
+
         db.add(db_obj)
         db.commit()
         db.refresh(db_obj)
 
-        if db_obj is not None:
-            context_set_response_code_message.set(
-                BaseGenericResponse(
-                    error=False,
-                    message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
-                    status_code=201,
-                )
+        # ✅🔥 CRITICAL FIX: convert back to list for response
+        if db_obj.employment_types:
+            try:
+                db_obj.employment_types = json.loads(db_obj.employment_types)
+            except:
+                db_obj.employment_types = []
+
+        context_set_response_code_message.set(
+            BaseGenericResponse(
+                error=False,
+                message=f"{self.entity.get_resource_name(self.entity.__name__)} created successfully",
+                status_code=201,
             )
+        )
+
         return db_obj
 
     def bulk_upload(self, db: Session, *, file: UploadFile = File(...)):

@@ -1,5 +1,7 @@
+from typing import Optional
 import uuid
-from sqlalchemy import ForeignKey, Integer, String, Enum, DECIMAL, DateTime
+
+from sqlalchemy import ForeignKey, Integer, String, Enum, DECIMAL, DateTime, Boolean
 from models.base import EntityBaseModel
 from models.db import Base
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -28,25 +30,90 @@ class ReserveModel(Base, EntityBaseModel):
     reserver = relationship("UserModel", backref="reserve", lazy="select", foreign_keys=[reserver_id])
     owner = relationship("UserModel", backref="owned_reserve", lazy="select", foreign_keys=[owner_id])
 
+
+class RecruitmentSetReserveModel(Base):
+    __tablename__ = "table_recruitment_reserves_set"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    recruitment_id = mapped_column(String, nullable=True)
+    promoter_id = mapped_column(String, nullable=True)
+    cv_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_users.id"), primary_key=True, nullable=False
+    )
+    buyer_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String)
+    requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    approved: Mapped[bool] = mapped_column(default=False)
+    rejected: Mapped[bool] = mapped_column(default=False)
+    selfsponsor: Mapped[bool] = mapped_column(default=False)
+    comment: Mapped[Optional[str]] = mapped_column(nullable=True)
+
 class RecruitmentReserveModel(Base, EntityBaseModel):
     __tablename__ = "table_recruitment_reserves"
     recruitment_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("table_users.id"), primary_key=True, nullable=False
     )
-    
     sponsor_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("table_users.id"), primary_key=True, nullable=False
     )
-
     employee_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("table_users.id"), nullable=True
     )
-
     status: Mapped[str] = mapped_column(String, default=TransferStatusSchema.PENDING)
-
     recruitment = relationship("UserModel", backref="recruitment_reserve", lazy="select", foreign_keys=[recruitment_id])
-
     sponsor = relationship("UserModel", backref="sponsor_reserve", lazy="select", foreign_keys=[sponsor_id])
-
     employee = relationship("UserModel", backref="employee_reserve", lazy="select", foreign_keys=[employee_id])
 
+from sqlalchemy.dialects.postgresql import UUID as pgUUID
+import uuid
+
+class RecruitmentAgentPrivateReserveModel(Base, EntityBaseModel):
+    __tablename__ = "table_recruitment_agent_private_reserves"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+
+    recruitment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    agent_id: Mapped[uuid.UUID] = mapped_column(
+        pgUUID(as_uuid=True),
+        ForeignKey("table_users.id"),
+        nullable=True
+    )
+    sponsor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    selfsponsor_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    employee_id: Mapped[str | None] = mapped_column(String, nullable=True)
+    price: Mapped[int] = mapped_column(
+        Integer,
+        nullable=False,
+        default=110
+    )
+    status: Mapped[str] = mapped_column(String, default=TransferStatusSchema.PENDING)
+    accepted_by: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    recruitment = relationship("UserModel", backref="recruitment_agent_private_reserve", lazy="select", foreign_keys=[recruitment_id])
+    agent = relationship("UserModel", backref="agent_agent_private_reserve", lazy="select", foreign_keys=[agent_id])
+    sponsor = relationship("UserModel", backref="sponsor_agent_private_reserve", lazy="select", foreign_keys=[sponsor_id])
+    selfsponsor = relationship("UserModel", backref="selfsponsor_agent_private_reserve", lazy="select", foreign_keys=[selfsponsor_id])
+    with_passport: Mapped[bool] = mapped_column(Boolean, default=False) 
+    passport_number: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+    is_reserved: Mapped[bool] = mapped_column(Boolean, default=False) 
+    is_paid: Mapped[bool] = mapped_column(Boolean, default=False)    
+    cv_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("table_users.id"), unique=True, nullable=True
+    )
+    is_transferred: Mapped[bool] = mapped_column(Boolean, default=False)
+    transfer_recruitment_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    transfer_employee_id: Mapped[Optional[uuid.UUID]] = mapped_column(
+        ForeignKey("table_users.id"), nullable=True
+    )
+    is_transfer_requested: Mapped[bool] = mapped_column(Boolean, default=False)
+    is_transfer_approved: Mapped[bool] = mapped_column(Boolean, default=False)
+   

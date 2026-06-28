@@ -113,6 +113,21 @@ class UserModel(Base, EntityBaseModel):
     job_applications = relationship(
         JobApplicationModel, cascade="all, delete", back_populates="user", lazy="select"
     )
+    # All recruitments this agent is linked to
+    agent_recruitments = relationship(
+        "AgentRecruitmentModel",
+        foreign_keys="AgentRecruitmentModel.agent_id",
+        back_populates="agent",
+        lazy="select"
+    )
+
+    # All agents this recruitment is linked to
+    recruitment_agents = relationship(
+        "AgentRecruitmentModel",
+        foreign_keys="AgentRecruitmentModel.recruitment_id",
+        back_populates="recruitment",
+        lazy="select"
+    )
     employees = relationship(
         "EmployeeModel",
         back_populates="employee",
@@ -145,3 +160,16 @@ def after_insert_trigger(mapper, connection, target: UserModel):
         print(f"Error committing notification: {e}")
     finally:
         session.close()
+
+
+class UserAgentRecruitment(Base):
+    __tablename__ = "user_agent_recruitments"
+    id: Mapped[uuid.UUID] = mapped_column(pgUUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    agent_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("table_users.id"))
+    recruitment_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("table_users.id"))
+    document_url: Mapped[str] = mapped_column(String(512), nullable=True)
+    status: Mapped[str] = mapped_column(String(50), default="pending")
+    created_at: Mapped[datetime] = mapped_column(default=datetime.utcnow)
+
+    agent = relationship("UserModel", foreign_keys=[agent_id], backref="assigned_recruitments")
+    recruitment = relationship("UserModel", foreign_keys=[recruitment_id], backref="assigned_agents")

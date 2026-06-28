@@ -2,12 +2,13 @@ import json
 import pprint
 from typing import Any, Optional
 import uuid
+from  models.reservemodel import RecruitmentSetReserveModel
 from fastapi import APIRouter, Depends, Response, BackgroundTasks
 from starlette.requests import Request
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
 from models.companyinfomodel import CompanyInfoModel
 from models.cvmodel import CVModel
-from models.db import authentication_context, build_request_context, get_db_session
+from models.db import authentication_context, build_request_context, get_db_session, get_db_sessions
 from models.employeemodel import EmployeeModel
 from models.invoicemodel import InvoiceModel
 from models.notificationmodel import Notifications
@@ -20,6 +21,7 @@ from schemas.base import GenericMultipleResponse, GenericSingleResponse
 from schemas.cvschema import CVSearchSchema
 from schemas.promotionschema import (
     BuyPromotionPackage,
+    CategoryEnum,
     PromotionCreate,
     PromotionCreateSchema,
     PromotionFilterSchema,
@@ -33,6 +35,7 @@ from datetime import datetime, timedelta, timezone
 from telr_payment.api import Telr
 from core.security import settings
 import logging
+from models.db import SessionLocal, authentication_context, build_request_context, get_db_session, get_db_sessions
 
 from schemas.transferschema import TransferRequestPaymentCallback
 from schemas.userschema import UserTokenSchema
@@ -245,10 +248,21 @@ def create_invoice(db, ref: str, amount: float, user_id: int, subscription_id: i
     db.add(invoice)
     return invoice
 
+def create_invoice_hyper(db, reference, amount, buyer_id, object_id):
+    invoice = InvoiceModel(
+        reference=reference,
+        amount=amount,
+        buyer_id=buyer_id,
+        object_id=object_id,
+        status="pending",
+        type="promotion"
+    )
+    return invoice
+
 def update_invoice(invoice: InvoiceModel, ref: str) -> None:
     invoice.stripe_session_id = ref
 
-
+'''
 @promotion_router.get("/packages")
 async def get_all_promotion_packages(
     _=Depends(authentication_context),
@@ -259,7 +273,7 @@ async def get_all_promotion_packages(
 
     promotions = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.role == user.role, PromotionPackagesModel.category == "promotion").all()
 
-    print(PromotionPackagesModel.category == "promotion")
+    
 
     promotion_data = []
 
@@ -278,6 +292,37 @@ async def get_all_promotion_packages(
 
     return {"data": promotion_data}
 
+'''
+@promotion_router.get("/packages")
+async def get_all_promotion_packages(
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    promotions = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == CategoryEnum.promotion.value
+        )
+        .all()
+    )
+
+    promotion_data = [
+        {
+            "id": p.id,
+            "role": p.role.value if p.role else None,
+            "duration": p.duration.value if p.duration else None,
+            "profile_count": p.profile_count,
+            "price": float(p.price),
+            "category": p.category.value if hasattr(p.category, "value") else p.category
+        }
+        for p in promotions
+    ]
+
+    return {"data": promotion_data}
 
 @promotion_router.post("/packages")
 async def buy_promotion_package(
@@ -389,67 +434,793 @@ async def buy_promotion_package(
         },
     }
 
-
-@promotion_router.post("/packages/callback")
-async def buy_promotion_package_callback(data: TransferRequestPaymentCallback, background_tasks: BackgroundTasks, _=Depends(authentication_context),__=Depends(build_request_context)):
+@promotion_router.get("/packages")
+async def get_all_promotion_packages(
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
     db = get_db_session()
-
     user = context_actor_user_data.get()
-    status_response = telr.status(
-            order_reference = data.ref
+
+    promotions = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.role == user.role, PromotionPackagesModel.category == "promotion").all()
+
+    print(PromotionPackagesModel.category == "promotion")
+
+    promotion_data = []
+
+    for promotion in promotions:
+        promotion_data.append(
+            {
+                "id": promotion.id,
+                "role": promotion.role,
+                "duration": promotion.duration,
+                "profile_count": promotion.profile_count,
+                "price": promotion.price,
+                "category": promotion.category
+            }
+        )
+    
+
+    return {"data": promotion_data}
+
+
+
+'''
+@promotion_router.post("/packages/hyper")
+async def buy_promotion_package(
+    data: BuyPromotionPackage,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    package = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.id == data.id,
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == "promotion",
+        )
+        .first()
     )
-    
-    state = status_response.get("order").get("status").get("text")
+    if not package:
+        return {"message": "Invalid package"}
 
-    card_type = status_response.get("order", {}).get("card", {}).get("type")
+    # ---- Duration ----
+    duration_days = {
+        "1 month": 30, "3 months": 90,
+        "6 months": 180, "12 months": 365
+    }
+    if package.duration.value not in duration_days:
+        return {"message": "Invalid duration"}
 
-    description = status_response.get("order", {}).get("description")
+    end_date = datetime.now(timezone.utc) + timedelta(days=duration_days[package.duration.value])
+
+    # ---- Subscription ----
+    subscription = (
+        db.query(PromotionSubscriptionModel)
+        .filter(PromotionSubscriptionModel.user_id == user.id)
+        .filter(PromotionSubscriptionModel.status == "active")
+        .first()
+    )
+
+    if not subscription:
+        subscription = PromotionSubscriptionModel(
+            user_id=user.id,
+            package_id=package.id,
+            current_profile_count=package.profile_count,
+            status="inactive",
+            start_date=datetime.now(timezone.utc),
+            end_date=end_date,
+        )
+        db.add(subscription)
+        db.commit()
+    else:
+        subscription.current_profile_count = package.profile_count
+        subscription.package_id = package.id
+        subscription.status = "inactive"
+        subscription.start_date = datetime.now(timezone.utc)
+        subscription.end_date = end_date
+        db.commit()
+
+    # -------------- HyperPay Checkout --------------
+    import requests
+    HYPERPAY_BASE_URL = "https://test.oppwa.com/v1"
+    ENTITY_ID = settings.HYPERPAY_ENTITY_ID
+    ACCESS_TOKEN = settings.HYPERPAY_ACCESS_TOKEN
+
+    payload = {
+        "entityId": ENTITY_ID,
+        "amount": f"{package.price:.2f}",
+        "currency": "AED",
+        "paymentType": "DB",
+        "merchantTransactionId": str(subscription.id),
+        "notificationUrl": "http://localhost:8000/api/v1/promotion/packages/callback/hyper",
+        "shopperResultUrl": "http://localhost:8000/api/v1/promotion/packages/callback/hyper",
+    }
+
+    headers = {
+        "Authorization": f"Bearer {ACCESS_TOKEN}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    res = requests.post(f"{HYPERPAY_BASE_URL}/checkouts", data=payload, headers=headers)
+    checkout = res.json()
+
+    if "id" not in checkout:
+        return {"message": "Payment initialization failed"}
+
+    checkout_id = checkout["id"]
+
+    # ---- Invoice ----
+    invoice = create_invoice_hyper(
+         db=db,
+        reference=checkout_id,
+        amount=package.price,
+        buyer_id=user.id,
+        object_id=subscription.id
+    )
+    db.add(invoice)
+    db.commit()
+
+    return {
+        "checkoutId": checkout_id,
+        "redirectUrl": f"https://test.oppwa.com/v1/paymentWidgets.js?checkoutId={checkout_id}"
+    }
+
+
+'''
+
+
+from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.orm import Session
+from datetime import datetime, timezone, timedelta
+import requests
+import logging
+
+
+
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+import httpx
+import os
+import base64
+from pydantic import BaseModel
+
+def get_hyperpay_auth_header() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
+
+
+class PaymentRequest(BaseModel):
+    amount: float
+    currency: str = "AED"
+
+
+
+
+
+
+
+
+from fastapi import Request, status
+from fastapi import Header, HTTPException
+from starlette.responses import JSONResponse
+
+
+def get_hyperpay_auth_header_promotion():
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
+HYPERPAY_BASE_URL = "https://eu-test.oppwa.com"
+
+
+# ------------------------------------------------------------------
+# INITIATE PAYMENT (ONLY ENTRY FROM FRONTEND)
+# ------------------------------------------------------------------
+
+@promotion_router.post("/packages/hyper")
+async def buy_promotion_package(
+    data: BuyPromotionPackage,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db: Session = get_db_session()
+    user = context_actor_user_data.get()
+
+    # ---------------- FIND PACKAGE ----------------
+    package = (
+        db.query(PromotionPackagesModel)
+        .filter(
+            PromotionPackagesModel.id == data.id,
+            PromotionPackagesModel.role == user.role,
+            PromotionPackagesModel.category == "promotion",
+        )
+        .first()
+    )
+
+    if not package:
+        raise HTTPException(status_code=400, detail="Invalid package")
+
+    # ---------------- SAFE DURATION ----------------
+    duration_days = {
+        "1 month": 30,
+        "3 months": 90,
+        "6 months": 180,
+        "12 months": 365,
+    }
+
+    duration = duration_days.get(package.duration.value, 30)
+
+    end_date = datetime.now(timezone.utc) + timedelta(days=duration)
+
+    # ---------------- CREATE / UPDATE SUBSCRIPTION ----------------
+    subscription = (
+        db.query(PromotionSubscriptionModel)
+        .filter(
+            PromotionSubscriptionModel.user_id == user.id,
+            PromotionSubscriptionModel.status == "active",
+        )
+        .first()
+    )
+
+    if not subscription:
+        subscription = PromotionSubscriptionModel(
+            user_id=user.id,
+            package_id=package.id,
+            current_profile_count=package.profile_count,
+            status="inactive",
+            start_date=datetime.now(timezone.utc),
+            end_date=end_date,
+        )
+        db.add(subscription)
+        db.commit()
+        db.refresh(subscription)
+    else:
+        subscription.package_id = package.id
+        subscription.current_profile_count = package.profile_count
+        subscription.status = "inactive"
+        subscription.start_date = datetime.now(timezone.utc)
+        subscription.end_date = end_date
+        db.commit()
+
+    merchant_tx_id = str(subscription.id)
+
+    # ---------------- USER INFO ----------------
+    user_email = user.email
+    user_first = getattr(user, "first_name", "User")
+    user_last = getattr(user, "last_name", "User")
+
+    # ---------------- BILLING (SAFE ACCESS) ----------------
+    billing = data.billing
+
+    # ---------------- HYPERPAY PAYLOAD ----------------
+    payload = {
+        "entityId": settings.HYPERPAY_ENTITY_ID,
+        "amount": f"{package.price:.2f}",
+        "currency": "AED",
+        "paymentType": "DB",
+
+        "merchantTransactionId": merchant_tx_id,
+        "customParameters[3DS2_enrolled]": "true",
+
+        "customer.email": user_email,
+        "customer.givenName": user_first,
+        "customer.surname": user_last,
+
+        # ✅ BILLING DATA FROM FRONTEND
+        "billing.street1": billing.street1,
+        "billing.city": billing.city,
+        "billing.state": billing.state or "",
+        "billing.country": billing.country,
+        "billing.postcode": billing.postcode,
+    }
+
+    headers = {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}",
+        "Content-Type": "application/x-www-form-urlencoded",
+    }
+
+    # ---------------- CALL HYPERPAY ----------------
+    try:
+        response = requests.post(
+            f"{HYPERPAY_BASE_URL}/v1/checkouts",
+            data=payload,
+            headers=headers,
+            timeout=30,
+        )
+
+        res = response.json()
+
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="HyperPay connection failed")
+
+    checkout_id = res.get("id")
+
+    if not checkout_id:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Payment initialization failed: {res}",
+        )
+
+    # ---------------- CREATE INVOICE ----------------
+    invoice = InvoiceModel(
+        reference=merchant_tx_id,
+        checkout_id=checkout_id,
+        amount=package.price,
+        buyer_id=user.id,
+        object_id=subscription.id,
+        status="pending",
+        type="promotion",
+    )
+
+    db.add(invoice)
+    db.commit()
+
+    # ---------------- RESPONSE ----------------
+    return {
+        "checkoutId": checkout_id,
+        "merchantTransactionId": merchant_tx_id,
+    }
+
+
+from Crypto.Cipher import AES
+from Crypto.Util.Padding import unpad
+import binascii
+import json
+
+HYPERPAY_ENCRYPTION_KEY="52C78392A3658DEC1CAA6AD8D98B1B78EE3FEB1CA7369FA3531E67FEDF9B0EBE"
+def decrypt_hyperpay_payload(encrypted_hex: str) -> dict:
+    encrypted_bytes = binascii.unhexlify(encrypted_hex)
+
+    iv = encrypted_bytes[:16]          # First 16 bytes
+    ciphertext = encrypted_bytes[16:]  # Rest is payload
+
+    cipher = AES.new(
+        HYPERPAY_ENCRYPTION_KEY,
+        AES.MODE_CBC,
+        iv
+    )
+
+    decrypted = unpad(cipher.decrypt(ciphertext), AES.block_size)
+    return json.loads(decrypted.decode("utf-8"))
+
+from fastapi import Query
+
+# ------------------------------------------------------------------
+# CALLBACK (ONLY CALLED BY HYPERPAY)
+# ------------------------------------------------------------------
+'''
+@promotion_router.post("/packages/callback/hyper")
+async def promotion_hyperpay_callback(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    background_tasks: BackgroundTasks = None
+
+):
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
     
-    if state.lower()  == "pending":
-        return Response(status_code=400, content=json.dumps({"message": "Payment is still pending"}), media_type="application/json")
+    db = SessionLocal()
+
+    res = requests.get(
+        f"{HYPERPAY_BASE_URL}{resourcePath}",
+        params={"entityId": settings.HYPERPAY_ENTITY_ID},
+        headers=get_hyperpay_auth_header(),
+        timeout=30,
+    ).json()
+    code = res.get("result", {}).get("code", "")
+    success = (
+        code.startswith("000.")
+        or code.startswith("000.100.1")
+        or code.startswith("000.36")
+    )
+    merchant_tx_id = res.get("merchantTransactionId")
+    payment_id = res.get("id")
+
+    if not success:
+        return {"status": "failed"}
 
     invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.stripe_session_id == data.ref,
-        InvoiceModel.buyer_id == user.id,
-        InvoiceModel.status == "pending",
-        InvoiceModel.type == "promotion"
+        InvoiceModel.reference == merchant_tx_id
     ).first()
 
-    subscription = db.query(PromotionSubscriptionModel).filter(PromotionSubscriptionModel.id == invoice.object_id, PromotionSubscriptionModel.status == "inactive", PromotionSubscriptionModel.user_id == user.id).first()
-
-    invoice.status = "paid"
-    invoice.card = card_type
-    invoice.description = description
-    subscription.status = "active"
+    if not invoice:
+        return {"status": "failed"}
     
-    title = "Promotion package purchased"
+    if invoice.status != "paid":
 
-    description = f"You've successfully bought a {subscription.package.duration.value.replace(' ', '-')} promotion package for {subscription.package.price} AED. You can now promote up to {subscription.current_profile_count} profiles until {subscription.end_date.strftime('%d %B %Y')}. Start promoting now."
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
 
-    background_tasks.add_task(send_notification, db, user.id, title, description, "package")
+        db.commit()
 
-    _user = db.query(UserModel).filter(UserModel.id == user.id).first()
+    if background_tasks:
+        background_tasks.add_task(process_promotion_payment_by_payment_id)
 
-    admins = db.query(UserModel).filter(UserModel.role == "admin").all()
+    return {
+        "status": "paid",
+        "payment_id": payment_id
+    }
+    
+    
 
-    email = _user.email or _user.company.alternative_email
 
-    background_tasks.add_task(send_email, email=email, title=title, description=description)
+def process_promotion_payment_by_payment_id(payment_id: str):
+    db = SessionLocal()
+    try:
+        res = requests.get(
+            f"https://test.oppwa.com/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
 
-    for admin in admins:
-        title = "Package purchased"
-        description = f"{_user.role}: {_user.first_name} {_user.last_name} has successfully purchased a {subscription.package.duration.value.replace(' ', '-')} promotion package for {subscription.package.price} AED. The promotion will be valid until {subscription.end_date.strftime('%d %B %Y')}."
-        background_tasks.add_task(send_notification, db, admin.id, title, description, "package")
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            return
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.status != "paid",
+            InvoiceModel.type == "promotion",
+        ).first()
+
+        if not invoice:
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        subscription = db.query(PromotionSubscriptionModel).get(
+            invoice.object_id
+        )
+        if subscription:
+            subscription.status = "active"
+
+        db.commit()
+
+    except Exception:
+        logger.exception("Promotion payment verification failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+
+def poll_pending_promotion_payments():
+    db = SessionLocal()
+    try:
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "promotion",
+        ).all()
+
+        for invoice in invoices:
+            res = requests.get(
+                "https://test.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            for p in res.get("payments", []):
+                code = p.get("result", {}).get("code", "")
+                if not code.startswith(("000.000", "000.100", "000.200")):
+                    continue
+
+                if invoice.status == "paid":
+                    continue
+
+                invoice.status = "paid"
+                invoice.payment_id = p.get("id")
+
+                subscription = db.query(PromotionSubscriptionModel).get(
+                    invoice.object_id
+                )
+                if subscription:
+                    subscription.status = "active"
+
+                db.commit()
+
+    except Exception:
+        logger.exception("Promotion polling failed")
+        db.rollback()
+    finally:
+        db.close()
+'''
+
+'''
+@promotion_router.get("/packages/callback/hyper/verify")
+async def verify_payment(
+    id: str,
+    resourcePath: str,
+):
+    try:
+        url = f"{HYPERPAY_BASE_URL}{resourcePath}"
+
+        response = requests.get(
+            url,
+            headers={
+                "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+            },
+        )
+
+        res = response.json()
+        print("VERIFY RESPONSE:", res)
+
+        result_code = res.get("result", {}).get("code", "")
+
+        # ✅ SUCCESS PATTERN
+        if result_code.startswith("000") or result_code.startswith("100.1"):
+            return {"status": "paid"}
+
+        return {"status": "failed"}
+
+    except Exception as e:
+        print("VERIFY ERROR:", str(e))
+        return {"status": "failed"}
+    
+
+@promotion_router.post("/packages/callback/hyper/verify")
+async def promotion_hyperpay_callback(
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    background_tasks: BackgroundTasks = BackgroundTasks(),
+):
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    db = SessionLocal()
 
     try:
+
+        res = requests.get(
+            f"{HYPERPAY_BASE_URL}{resourcePath}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+
+        success = (
+            code.startswith("000.")
+            or code.startswith("000.100.1")
+            or code.startswith("000.36")
+        )
+
+        if not success:
+            return {"status": "failed"}
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        payment_id = res.get("id")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id
+        ).first()
+
+        if not invoice:
+            return {"status": "failed"}
+
+        if invoice.status != "paid":
+
+            invoice.status = "paid"
+            invoice.payment_id = payment_id
+            db.commit()
+
+        background_tasks.add_task(
+            process_promotion_payment_by_payment_id,
+            payment_id
+        )
+
+        return {
+            "status": "paid",
+            "payment_id": payment_id
+        }
+
+    finally:
+        db.close()
+
+def process_promotion_payment_by_payment_id(payment_id: str):
+
+    db = SessionLocal()
+
+    try:
+
+        res = requests.get(
+            f"{HYPERPAY_BASE_URL}/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+
+        success = (
+            code.startswith("000.")
+            or code.startswith("000.100.1")
+            or code.startswith("000.36")
+        )
+
+        if not success:
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.type == "promotion",
+        ).first()
+
+        if not invoice:
+            return
+
+        if invoice.status == "paid":
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        subscription = db.get(PromotionSubscriptionModel, invoice.object_id)
+
+        if subscription:
+            subscription.status = "active"
+
         db.commit()
-        return {"status": "success", "message": "Payment successful"}
-    except Exception as e:
-        print(e)
+
+    except Exception:
+        logger.exception("Promotion payment verification failed")
         db.rollback()
-        return Response(status_code=500, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
+
+    finally:
+        db.close()
+   '''
+@promotion_router.get("/packages/callback/hyper/verify")
+async def promotion_hyperpay_callback(
+    id: str,
+    resourcePath: str,
+    background_tasks: BackgroundTasks,
+):
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    db = SessionLocal()
+
+    try:
+        res = requests.get(
+            f"{HYPERPAY_BASE_URL}{resourcePath}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        print("VERIFY RESPONSE:", res)
+
+        code = res.get("result", {}).get("code", "")
+
+        success = (
+            code.startswith("000.")
+            or code.startswith("000.100.1")
+            or code.startswith("000.36")
+        )
+
+        if not success:
+            return {"status": "failed"}
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        payment_id = res.get("id")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id
+        ).first()
+
+        if not invoice:
+            return {"status": "failed"}
+
+        # ✅ IMPORTANT FIX
+        if invoice.status != "paid":
+            invoice.status = "paid"
+            invoice.payment_id = payment_id
+            db.commit()
+
+        # ✅ Activate subscription HERE (no need background task)
+        subscription = db.get(PromotionSubscriptionModel, invoice.object_id)
+
+        if subscription:
+            subscription.status = "active"
+            db.commit()
+
+        return {
+            "status": "paid",
+            "payment_id": payment_id
+        }
+
+    except Exception as e:
+        print("VERIFY ERROR:", str(e))
+        return {"status": "failed"}
+
+    finally:
+        db.close()     
+'''
+@promotion_router.api_route("/packages/callback/hyper", methods=["GET", "POST"])
+async def buy_promotion_package_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    data = await request.json() if request.method == "POST" else None
+    query = dict(request.query_params)
+
+    # Extract values
+    resource_path = (data["resourcePath"] if data else query.get("resourcePath"))
+    ref = (data["id"] if data else query.get("id"))
+
+    if not resource_path or not ref:
+        return {"status": "failed", "message": "Missing data"}
+
+    import requests
+
+    HYPERPAY_BASE_URL = "https://test.oppwa.com"
+    ENTITY_ID = settings.HYPERPAY_ENTITY_ID
+    ACCESS_TOKEN = settings.HYPERPAY_ACCESS_TOKEN
+
+    url = f"{HYPERPAY_BASE_URL}{resource_path}?entityId={ENTITY_ID}"
+    headers = {"Authorization": f"Bearer {ACCESS_TOKEN}"}
+
+    hp_res = requests.get(url, headers=headers).json()
+    result_code = hp_res.get("result", {}).get("code", "")
+
+    if not result_code.startswith("000."):
+        return {"status": "failed", "message": "Payment failed"}
+
+    # ---- Get invoice ----
+    invoice = (
+        db.query(InvoiceModel)
+        .filter(InvoiceModel.reference == ref)
+        .filter(InvoiceModel.buyer_id == user.id)
+        .filter(InvoiceModel.status == "pending")
+        .first()
+    )
+    if not invoice:
+        return {"message": "Invoice not found"}
+
+    subscription = (
+        db.query(PromotionSubscriptionModel)
+        .filter(PromotionSubscriptionModel.id == invoice.object_id)
+        .first()
+    )
+    if not subscription:
+        return {"message": "Subscription not found"}
+
+    # ---- Activate subscription ----
+    invoice.status = "paid"
+    subscription.status = "active"
+    db.commit()
+
+    return {"status": "successful", "message": "Package activated"}
+
+'''
 
 
+'''
 @promotion_router.patch("/admin/packages")
 async def update_promotion_package(
     data: PromotionPackageUpdateSchema,
@@ -466,19 +1237,14 @@ async def update_promotion_package(
 
     if data.category:
         promotion.category = data.category.name
-    
     if data.role:
         promotion.role = data.role.name
-    
     if data.duration:
         promotion.duration = data.duration.name
-    
     if data.profile_count:
         promotion.profile_count = data.profile_count
-    
     if data.price:
         promotion.price = data.price
-
     try:
         db.add(promotion)
         db.commit()
@@ -487,7 +1253,7 @@ async def update_promotion_package(
         print(e)
         db.rollback()
         return Response(status_code=400, content=json.dumps({"message": "Failed to update promotion package"}), media_type="application/json")
-
+'''
 @promotion_router.get("/packages/subscriptions")
 async def get_user_promotion_subscriptions(
     _=Depends(authentication_context),
@@ -573,20 +1339,54 @@ async def create_promotion(
         _users = db.query(UserModel).filter(UserModel.role != "employee", UserModel.id != user.id).all()
 
         for employee in employees:
+            # Find the CV associated with this employee
+            cv = db.query(CVModel).filter(CVModel.user_id == employee.user_id).first()
+            if not cv:
+                print(f"⚠️ No CV found for user {employee.user_id}, skipping reserve creation.")
+                return  # Skip this employee if they don’t have a CV
+            # Create promotion record
             promotion = PromotionModel(
                 user_id=employee.user_id,
                 promoted_by_id=user.id,
                 status="active",
                 start_date=subscription.start_date,
-                end_date=subscription.end_date
+                end_date=subscription.end_date,
             )
             db.add(promotion)
-                
-        subscription.current_profile_count -= len(data.user_ids)
 
-        db.add(subscription)
-        
-        db.commit()
+            # Check if a recruitment reserve already exists for this recruiter and CV
+
+
+            # Correct filter for existing reserve
+            existing_reserve = (
+                db.query(RecruitmentSetReserveModel)
+                .filter(
+                    RecruitmentSetReserveModel.recruitment_id == str(user.id),  # cast UUID -> string
+                    RecruitmentSetReserveModel.cv_id == cv.user_id             # cv_id can remain UUID
+                )
+                .first()
+            )
+
+
+            if existing_reserve:
+                print(f"ℹ️ Reserve already exists for recruiter {user.id} and CV {cv.user_id}, skipping.")
+                continue
+
+            # ✅ Create recruitment set reserve record automatically
+            reserve = RecruitmentSetReserveModel(
+#    recruitment_id=str(user.id),  # cast UUID -> string
+    cv_id=cv.user_id,
+    promoter_id=str(user.id),
+    buyer_id=None,
+    status="promoted",
+    requested=False,
+    approved=False,
+    rejected=False,
+    selfsponsor=True,
+    comment=f"Automatically created when {company.company_name if company else 'employer'} promoted CV.",
+)
+            db.add(reserve)
+
 
     
         for _user in _users:
@@ -625,6 +1425,26 @@ async def create_promotion(
         return Response(status_code=400, content=json.dumps({"message": "Failed to create promotion"}), media_type="application/json")
 
 
+'''
+ROLE_DISPLAY_MAP = {
+    "recruitment": "RECRUITMENT FIRMS",
+    "agent": "FOREIGN EMPLOYMENT AGENCIES",
+    "sponsor": "EMPLOYER",
+    "employee": "EMPLOYEE"
+}
+
+CATEGORY_DISPLAY_MAP = {
+    "promotion": "Promote Profile",
+    "reservation": "Reserve Profile",
+    "transfer": "Transfer Profile",
+    "job_application": "Post Jobs",
+    "employee_process": "Accept Employeer Request"
+}
+
+# Sort categories by this custom order
+CATEGORY_SORT_ORDER = ["promotion", "reservation", "transfer",  "job_application", "employee_process",]
+CATEGORY_PRIORITY = {cat: idx for idx, cat in enumerate(CATEGORY_SORT_ORDER)}
+
 @promotion_router.get("/admin/packages")
 async def get_all_promotion_packages_admin(
     __=Depends(build_request_context),
@@ -632,29 +1452,126 @@ async def get_all_promotion_packages_admin(
     db = get_db_session()
     user = context_actor_user_data.get()
 
-    # if user.role != "admin":
-    #     return Response(status_code=403, content=json.dumps({"message": "You are not authorized to view this page"}), media_type="application/json")
-
     promotions = db.query(PromotionPackagesModel).all()
-
     promotion_data = []
 
     for promotion in promotions:
+        clean_role = promotion.role.value.strip().lower() if promotion.role else ""
+        clean_category = promotion.category.value.strip().lower().replace(" ", "_") if promotion.category else ""
+
         promotion_data.append(
             {
                 "id": promotion.id,
-                "category": promotion.category,
-                "role": promotion.role,
+                "category": CATEGORY_DISPLAY_MAP.get(clean_category, clean_category.replace("_", " ").capitalize()),
+                "raw_category": clean_category,  # used only for sorting
+                "role": ROLE_DISPLAY_MAP.get(clean_role, clean_role.upper()),
                 "duration": promotion.duration,
                 "profile_count": promotion.profile_count,
                 "price": promotion.price,
             }
         )
-    
+
+    # Sort based on custom category order
+    promotion_data.sort(
+        key=lambda item: CATEGORY_PRIORITY.get(item["raw_category"], len(CATEGORY_SORT_ORDER))
+    )
+
+    # Remove raw_category before returning
+    for item in promotion_data:
+        item.pop("raw_category")
 
     return {"data": promotion_data}
 
+'''
+import re
+ROLE_DISPLAY_MAP = {
+    "recruitment": "RECRUITMENT FIRMS",
+    "agent": "FOREIGN EMPLOYMENT AGENCIES",
+    "sponsor": "EMPLOYER",
+    "employee": "EMPLOYEE"
+}
 
+CATEGORY_DISPLAY_MAP = {
+    "promotion": "Promote Profile",
+    "reservation": "Reserve Profile",
+    "transfer": "Transfer Profile",
+    "job_application": "Post Jobs",
+    "employee_process": "Assigning Recruitment Firms to Import Workers"
+}
+
+# Sort categories by this custom order
+CATEGORY_SORT_ORDER = ["promotion", "reservation", "transfer",  "job_application", "employee_process",]
+CATEGORY_PRIORITY = {cat: idx for idx, cat in enumerate(CATEGORY_SORT_ORDER)}
+
+
+DURATION_SORT_ORDER = {
+    "1 Month": 2,
+    "3 Months": 1,
+    "6 Months": 0
+}
+
+
+@promotion_router.get("/admin/packages")
+async def get_all_promotion_packages_admin(
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    promotions = db.query(PromotionPackagesModel).all()
+
+    # Preprocess and normalize data
+    promotion_data = []
+    for promotion in promotions:
+        clean_role = promotion.role.value.strip().lower() if promotion.role else ""
+        clean_category = promotion.category.value.strip().lower().replace(" ", "_") if promotion.category else ""
+
+        # Safely extract and normalize duration from Enum
+        duration = promotion.duration.value if promotion.duration else None
+        if duration:
+            # Make sure "month"/"months" starts with capital M
+            duration = re.sub(r"\b(months?)\b", lambda m: m.group(1).capitalize(), duration.lower())
+
+        promotion_data.append({
+            "id": promotion.id,
+            "category": CATEGORY_DISPLAY_MAP.get(clean_category, clean_category.replace("_", " ").capitalize()),
+            "raw_category": clean_category,
+            "role": ROLE_DISPLAY_MAP.get(clean_role, clean_role.upper()),
+            "raw_role": clean_role,
+            "duration": duration,
+            "profile_count": promotion.profile_count,
+            "price": promotion.price,
+        })
+
+    # Organize data
+    final_result = []
+
+    for category_key in CATEGORY_SORT_ORDER:
+        category_items = [item for item in promotion_data if item["raw_category"] == category_key]
+
+        if not category_items:
+            continue
+
+        # Get unique roles in this category
+        roles_in_category = sorted(set(item["raw_role"] for item in category_items))
+
+        for role_key in roles_in_category:
+            role_items = [item for item in category_items if item["raw_role"] == role_key]
+
+            # Sort by duration using custom order
+            role_items.sort(
+                key=lambda x: DURATION_SORT_ORDER.get(x["duration"], 99)  # unknown durations go last
+            )
+
+            for item in role_items:
+                clean_item = item.copy()
+                clean_item.pop("raw_category", None)
+                clean_item.pop("raw_role", None)
+                final_result.append(clean_item)
+
+    return {"data": final_result}
+ 
+'''
 @promotion_router.post("/admin/packages")
 async def create_promotion_package(
     data: PromotionPackageCreateSchema,
@@ -684,6 +1601,82 @@ async def create_promotion_package(
         print(e)
         db.rollback()
         return Response(status_code=400, content=json.dumps({"message": "Failed to create promotion package"}), media_type="application/json")
+'''
+
+
+import json
+import traceback
+
+@promotion_router.patch("/admin/packages")
+async def update_promotion_package(
+    data: PromotionPackageUpdateSchema,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db: Session = get_db_session()
+    user = context_actor_user_data.get()
+
+    # DEBUG: print incoming request data
+    print("Incoming update data:", data.dict())
+
+    try:
+        promotion = db.query(PromotionPackagesModel).filter(PromotionPackagesModel.id == data.id).first()
+
+        if not promotion:
+            print(f"Promotion package with ID {data.id} not found.")
+            return Response(
+                status_code=404,
+                content=json.dumps({"message": "Promotion package not found"}),
+                media_type="application/json"
+            )
+
+        # DEBUG: Print current values before update
+        print("Current promotion values:", {
+            "category": promotion.category,
+            "role": promotion.role,
+            "duration": promotion.duration,
+            "profile_count": promotion.profile_count,
+            "price": promotion.price
+        })
+
+        # Update fields if provided
+        if data.category:
+            promotion.category = data.category.name
+        if data.role:
+            promotion.role = data.role.name
+        if data.duration:
+            promotion.duration = data.duration.name
+        if data.profile_count is not None:
+            promotion.profile_count = data.profile_count
+        if data.price is not None:
+            promotion.price = data.price
+
+        # DEBUG: Print updated values before commit
+        print("Updated promotion values:", {
+            "category": promotion.category,
+            "role": promotion.role,
+            "duration": promotion.duration,
+            "profile_count": promotion.profile_count,
+            "price": promotion.price
+        })
+
+        db.add(promotion)
+        db.commit()
+
+        return {"message": "Promotion package updated successfully"}
+
+    except Exception as e:
+        db.rollback()
+        # Print stack trace for full debug info
+        traceback.print_exc()
+        return Response(
+            status_code=400,
+            content=json.dumps({
+                "message": "Failed to update promotion package",
+                "error": str(e)
+            }),
+            media_type="application/json"
+        )
 
 @promotion_router.delete("/admin/packages")
 async def delete_promotion_package(
@@ -780,3 +1773,34 @@ async def get_employee_promotion(
         })
 
     return {"data": employee_data}
+
+
+@promotion_router.post("/admin/packages")
+async def create_promotion_package(
+    data: PromotionPackageCreateSchema,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    db = get_db_session()
+    user = context_actor_user_data.get()
+
+    if user.role != "admin":
+        return Response(status_code=403, content=json.dumps({"message": "You are not authorized to view this page"}), media_type="application/json")
+
+    try:
+        promotion = PromotionPackagesModel(
+            category=data.category.name,
+            role=data.role.name,
+            duration=data.duration.name,
+            profile_count=data.profile_count,
+            price=data.price
+        )
+
+        db.add(promotion)
+        db.commit()
+        return {"message": "Promotion package created successfully"}
+
+    except Exception as e:
+        print(e)
+        db.rollback()
+        return Response(status_code=400, content=json.dumps({"message": "Failed to create promotion package"}), media_type="application/json")

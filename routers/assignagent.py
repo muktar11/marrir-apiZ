@@ -1,4 +1,5 @@
 from typing import Any, Optional
+from models.usermodel import UserModel
 from fastapi import APIRouter, Depends, HTTPException, Response, BackgroundTasks
 from fastapi.security import HTTPBearer
 from starlette.requests import Request
@@ -252,45 +253,83 @@ async def update_assign_agent_request(
         "error": res_data.error,
         "data": assign_agent_updated,
     }
-
+from fastapi import Depends, Response, Request
+from fastapi.security import HTTPBearer
 
 @assign_agent_router.get("/admin/agent-recruitment")
 async def get_agent_recruitment_requests(
-    *,
+    request: Request,
     _=Depends(HTTPBearer(scheme_name="bearer")),
     __=Depends(build_request_context),
-
 ):
     db = get_db_session()
-
     user = context_actor_user_data.get()
-
     role = user.role
 
     if role != "admin":
-        return Response(status_code=403, content="You are not authorized to perform this action")
-
-    agent_recruitment = db.query(AgentRecruitmentModel).all()
-
-    agent_recruitment_data = []
-
-    for agent in agent_recruitment:
-        agent_company = db.query(CompanyInfoModel).filter(CompanyInfoModel.user_id == agent.agent_id).first()
-
-        recruitment_company = db.query(CompanyInfoModel).filter(CompanyInfoModel.user_id == agent.recruitment_id).first()
-
-        agent_recruitment_data.append(
-            {
-                "id": agent.id,
-                "agent_id": agent.agent_id,
-                "agent_name": agent_company.company_name,
-                "recruitment_id": agent.recruitment_id,
-                "recruitment_name": recruitment_company.company_name,
-                "status": agent.status,
-                "document_url": agent.document_url,
-            }
+        return Response(
+            status_code=403,
+            content="You are not authorized to perform this action"
         )
 
+    base_url = str(request.base_url)  # e.g. http://localhost:8000
+
+    agent_recruitments = db.query(AgentRecruitmentModel).all()
+    agent_recruitment_data = []
+
+    for agent in agent_recruitments:
+        # Fetch company info for both agent and recruitment sides
+        agent_company = (
+            db.query(CompanyInfoModel)
+            .filter(CompanyInfoModel.user_id == agent.agent_id)
+            .first()
+        )
+        recruitment_company = (
+            db.query(CompanyInfoModel)
+            .filter(CompanyInfoModel.user_id == agent.recruitment_id)
+            .first()
+        )
+
+        # Skip invalid data safely
+        if not agent_company or not recruitment_company:
+            continue
+
+        # Build full document URL if available
+        document_url = (
+            f"{base_url}{agent.document_url}"
+            if agent.document_url and not agent.document_url.startswith("http")
+            else agent.document_url
+        )
+
+        agent_recruitment_data.append({
+            "id": agent.id,
+            "agent_id": agent.agent_id,
+            "agent_name": agent_company.company_name,
+            "recruitment_id": agent.recruitment_id,
+            "recruitment_name": recruitment_company.company_name,
+
+            "agent_details": {
+                "company_name": agent_company.company_name,
+                "alternative_email": agent_company.alternative_email,
+                "alternative_phone": agent_company.alternative_phone,
+                "location": agent_company.location,
+                "year_established": agent_company.year_established,
+                "ein_tin": agent_company.ein_tin,
+                "company_license": agent_company.company_license,
+            },
+            "recruitment_details": {
+                "company_name": recruitment_company.company_name,
+                "alternative_email": recruitment_company.alternative_email,
+                "alternative_phone": recruitment_company.alternative_phone,
+                "location": recruitment_company.location,
+                "year_established": recruitment_company.year_established,
+                "ein_tin": recruitment_company.ein_tin,
+                "company_license": recruitment_company.company_license,
+            },
+
+            "status": agent.status,
+            "document_url": document_url,
+        })
 
     return {"status": "success", "data": agent_recruitment_data}
 

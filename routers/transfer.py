@@ -1,19 +1,20 @@
-from datetime import datetime
+from datetime import datetime, timezone
 import json
 from typing import Any, Optional
-import uuid
+import uuid 
 from fastapi import APIRouter, Depends, Query, Response, BackgroundTasks
 from fastapi.security import HTTPBearer
 from sqlalchemy import UUID
 from starlette.requests import Request
 from stripe import Webhook
-import stripe
+import stripe 
 from core.auth import RBACAccessType, RBACResource, rbac_access_checker
 from models.agentrecruitmentmodel import AgentRecruitmentModel
 from models.batchtransfermodel import BatchTransferModel
 from models.companyinfomodel import CompanyInfoModel
 from models.cvmodel import CVModel
-from models.db import authentication_context, build_request_context, get_db_session
+from models.db import SessionLocal, authentication_context, build_request_context, get_db, get_db_session, get_db_sessions
+
 from models.employeemodel import EmployeeModel
 from models.invoicemodel import InvoiceModel
 from models.notificationmodel import Notifications
@@ -31,8 +32,11 @@ from schemas.transferschema import (
     AllTransfersReadSchema,
     BatchTransferFilterSchema,
     BatchTransferReadSchema,
+    BillingInfoSchema,
     TransferBaseSchema,
     TransferCreateSchema,
+    TransferInfoSchema,
+    TransferPaySchema,
     TransferReadSchema,
     TransferRequest,
     TransferRequestBaseSchema,
@@ -152,89 +156,6 @@ async def view_transfers(
         "data": transfers_read,
         "count": res_data.count,
     }
-
-'''
-@transfer_router.post(
-    "/employee/paginated",
-    response_model=None,
-    status_code=200,
-)
-@rbac_access_checker(
-    resource=RBACResource.cv, rbac_access_type=RBACAccessType.read_multiple
-)
-async def view_filtered_employee_cvs(
-    *,
-    search: str = None,
-    filters: Optional[ReserveCVFilterSchema] = None,
-    _=Depends(authentication_context),
-    __=Depends(build_request_context),
-    skip: int = 0,
-    limit: int = 10,
-    request: Request,
-    response: Response
-) -> Any:
-    """
-    view filtered employee cvs
-    """
-    db = get_db_session()
-    transfer_repo = TransferRepository(entity=TransferModel)
-    filtered_transfers = transfer_repo.get_filtered_employee_cvs(
-        db,
-        skip=skip,
-        limit=limit,
-        filters=filters,
-        search=search,
-        search_schema=CVSearchSchema,
-    )
-    res_data = context_set_response_code_message.get()
-    response.status_code = res_data.status_code
-    return {
-        "status_code": res_data.status_code,
-        "message": res_data.message,
-        "error": res_data.error,
-        "data": filtered_transfers,
-        "count": res_data.count,
-    }
-'''
-    
-'''
-@transfer_router.post(
-    "/requests/paginated",
-    response_model=GenericMultipleResponse[BatchTransferReadSchema],
-    status_code=200,
-)
-@rbac_access_checker(
-    resource=RBACResource.transfer, rbac_access_type=RBACAccessType.read_multiple
-)
-async def view_sent_transfer_requests(
-    *,
-    filters: Optional[BatchTransferFilterSchema] = None,
-    _=Depends(authentication_context),
-    __=Depends(build_request_context),
-    skip: int = 0,
-    limit: int = 10,
-    request: Request,
-    response: Response
-) -> Any:
-    """
-    View paginated transfer requests sent
-    """
-    db = get_db_session()
-    transfer_repo = TransferRepository(entity=TransferModel)
-    transfers_read = transfer_repo.get_transfer_requests_sent(
-        db, skip=skip, limit=limit, filters=filters
-    )
-    res_data = context_set_response_code_message.get()
-    response.status_code = res_data.status_code
-    return {
-        "status_code": res_data.status_code,
-        "message": res_data.message,
-        "error": res_data.error,
-        "data": transfers_read,
-        "count": res_data.count,
-    }
-
-'''
 
 @transfer_router.post(
     "/employee/paginated",
@@ -526,17 +447,26 @@ async def get_agency_recruitment(
                 related_data.append({"user_id": r.id, "name": company_info.company_name})
 
         # Unrelated = all valid users - related users
-        unrelated_users = [u for u in all_users if u.id not in related_user_ids]
+        #unrelated_users = [u for u in all_users if u.id not in related_user_ids]
         #unrelated_users = [u for u in all_users if u.id not in related_user_ids and u.id != user.id]
 
-        logger.debug(f"Unrelated user IDs: {[u.id for u in unrelated_users]}")
+        #logger.debug(f"Unrelated user IDs: {[u.id for u in unrelated_users]}")
 
+        # Unrelated = all valid users - related users - current user
+        unrelated_users = [u for u in all_users if u.id not in related_user_ids and u.id != user.id]
+
+        logger.debug(f"Unrelated user IDs (excluding current user): {[u.id for u in unrelated_users]}")
+        '''
         for u in unrelated_users:
             company_info = db.query(CompanyInfoModel).filter(CompanyInfoModel.user_id == u.id).first()
             if company_info:
                 unrelated_data.append({"user_id": u.id, "name": company_info.company_name})
-
-        logger.debug(f"Returning related: {len(related_data)}, unrelated: {len(unrelated_data)}")
+        '''
+        for u in unrelated_users:
+            company_info = db.query(CompanyInfoModel).filter(CompanyInfoModel.user_id == u.id).first()
+            if company_info:
+                unrelated_data.append({"user_id": u.id, "name": company_info.company_name}) 
+                logger.debug(f"Returning related: {len(related_data)}, unrelated: {len(unrelated_data)}")
 
         return {
             "related": related_data,
@@ -815,53 +745,80 @@ async def transfer_employee(data: TransferRequest,background_tasks: BackgroundTa
         print(e)
 
 @transfer_router.post("/request/status")
-async def update_transfer_request_status(data: TransferRequestStatusSchema, background_tasks: BackgroundTasks, _=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(build_request_context)):
+async def update_transfer_request_status(data: TransferRequestUpdateSchema, background_tasks: BackgroundTasks, _=Depends(HTTPBearer(scheme_name="bearer")), __=Depends(build_request_context)):
     db = get_db_session()
 
     user = context_actor_user_data.get()
     try:
-        transfer_requests = db.query(TransferRequestModel).filter(TransferRequestModel.id.in_(data.transfer_request_id), TransferRequestModel.requester_id == user.id, TransferRequestModel.status == "pending").all()
+        transfer_requests = db.query(TransferRequestModel).filter(TransferRequestModel.id.in_(data.filter.ids), TransferRequestModel.requester_id == user.id, TransferRequestModel.status == "pending").all()
 
         if not transfer_requests:
-            return Response(status_code=404, content=json.dumps({"message": "Transfer requests not found"}), media_type="application/json")  
+            return Response(status_code=404, content=json.dumps({"message": "Transfer requests not found"}), media_type="application/json")
+
+        has_agreement = False
+        if data.update.status == "accepted":
+            manager_id = transfer_requests[0].manager_id
+            has_agreement = db.query(AgentRecruitmentModel).filter(
+                (
+                    (AgentRecruitmentModel.agent_id == user.id) &
+                    (AgentRecruitmentModel.recruitment_id == manager_id)
+                ) | (
+                    (AgentRecruitmentModel.agent_id == manager_id) &
+                    (AgentRecruitmentModel.recruitment_id == user.id)
+                ),
+                AgentRecruitmentModel.status == "approved"
+            ).first() is not None
 
         for transfer_request in transfer_requests:
-            transfer_request.status = data.status
-            transfer_request.reason = data.reason
-            db.add(transfer_request)
-
+            if has_agreement:
+                transfer_request.status = "done"
+                db.add(transfer_request)
+                update_employee_manager(db, transfer_request.user_id, user.id)
+            else:
+                transfer_request.status = data.update.status
+                transfer_request.reason = data.update.reason
+                db.add(transfer_request)
 
         db.commit()
-        background_tasks.add_task(send_notification, db, transfer_requests[0].manager_id, "Transfer Request", f"Transfer requests has been {data.status}", "transfer")
 
-        _user = db.query(UserModel).filter(UserModel.id == transfer_requests[0].manager_id).first() 
-
+        _user = db.query(UserModel).filter(UserModel.id == transfer_requests[0].manager_id).first()
         email = _user.email or _user.company.alternative_email
 
-        background_tasks.add_task(send_email, email=email, title="Transfer Request", description=f"Transfer requests has been {data.status}")
-
-        return {"status": "success", "message": "Transfer request status updated"}
+        if has_agreement:
+            background_tasks.add_task(send_notification, db, transfer_requests[0].manager_id, "Transfer", f"Transfer has been completed", "transfer")
+            background_tasks.add_task(send_email, email=email, title="Transfer", description=f"Transfer has been completed")
+            return {"status": "success", "message": "Transfer completed without payment (agreement exists)"}
+        else:
+            background_tasks.add_task(send_notification, db, transfer_requests[0].manager_id, "Transfer Request", f"Transfer requests has been {data.update.status}", "transfer")
+            background_tasks.add_task(send_email, email=email, title="Transfer Request", description=f"Transfer requests has been {data.update.status}")
+            return {"status": "success", "message": "Transfer request status updated"}
 
     except Exception as e:
         print(e)
         db.rollback()
         return Response(status_code=400, content=json.dumps({"message": "Failed to update transfer request status"}), media_type="application/json")
 
-def create_invoice(db, ref: str, amount: float, user_id: int, transfer_request_id: int) -> InvoiceModel:
+
+
+def create_invoice(
+    db, reference: str, amount: float, user_id: uuid.UUID, 
+) -> InvoiceModel:
     invoice = InvoiceModel(
-        stripe_session_id=ref,
+        reference=reference,       # <-- SAVE checkout_id HERE
         status="pending",
         amount=amount,
-        created_at=datetime.now(),
+        created_at=datetime.now(timezone.utc),
         type="transfer",
         buyer_id=user_id,
-        object_id=transfer_request_id,
+        
     )
     db.add(invoice)
     return invoice
 
-def update_invoice(invoice: InvoiceModel, ref: str) -> None:
-    invoice.stripe_session_id = ref
+def update_invoice(invoice: InvoiceModel, reference: str) -> None:
+    invoice.reference = reference   # <-- UPDATE checkout_id here
+
+
 
 
 @transfer_router.post("/pay")
@@ -934,105 +891,602 @@ async def pay_transfer(
     }
 
 
-@transfer_router.post("/pay/callback")
-async def pay_transfer_callback(data: TransferRequestPaymentCallback, background_tasks: BackgroundTasks, _=Depends(HTTPBearer (scheme_name="bearer")),__=Depends(build_request_context)):
-    db = get_db_session()
+from pydantic import BaseModel, EmailStr
+class TransferRequestPaymentSchema(BaseModel):
+    transfer_request_ids: list[int]
+    billing: BillingInfoSchema
 
-    user = context_actor_user_data.get()
-    status_response = telr.status(
-            order_reference = data.ref
+
+from fastapi import Depends
+from sqlalchemy.orm import Session
+import requests
+import logging
+logger = logging.getLogger("hyperpay")
+from pydantic import BaseModel
+
+import json
+import secrets
+import logging
+import requests
+
+
+
+def get_hyperpay_auth_header() -> dict:
+    return {
+        "Authorization": f"Bearer {settings.HYPERPAY_ACCESS_TOKEN}"
+    }
+
+
+
+class PaymentRequest(BaseModel):
+    amount: float
+    currency: str = "AED"
+
+logger = logging.getLogger("hyperpay")
+
+HYPERPAY_BASE_URL = "https://eu-prod.oppwa.com"
+
+from decimal import Decimal
+@transfer_router.post("/pay/hyper")
+async def pay_transfer(
+    data: TransferPaySchema,
+    db: Session = Depends(get_db),
+    _=Depends(HTTPBearer(scheme_name="bearer")),
+    __=Depends(build_request_context),
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        package = (
+            db.query(PromotionPackagesModel)
+            .filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "transfer",
+            )
+            .first()
+        )
+        if not package:
+            return Response(status_code=404, content="Package not found")
+
+        transfers = (
+            db.query(TransferRequestModel)
+            .filter(
+                TransferRequestModel.id.in_(data.transfer_request_ids),
+                TransferRequestModel.manager_id == user.id,
+                TransferRequestModel.status == "accepted",
+            )
+            .all()
+        )
+
+        if not transfers:
+            return Response(status_code=404, content="Transfer requests not found")
+
+        amount = package.price * len(transfers)
+        merchant_tx_id = secrets.token_hex(6)
+        b = data.billing
+
+        payload = {
+            "entityId": settings.HYPERPAY_ENTITY_ID,
+            "amount": f"{amount:.2f}",
+            "currency": "AED",
+            "paymentType": "DB",
+
+            "merchantTransactionId": merchant_tx_id,
+            "customParameters[3DS2_enrolled]": "true",
+
+            "customer.email": b.email,
+            "customer.givenName": b.given_name,
+            "customer.surname": b.surname,
+
+            "billing.street1": b.street1,
+            "billing.city": b.city,
+            "billing.state": b.state,
+            "billing.country": b.country.upper(),
+            "billing.postcode": b.postcode,
+
+        }
+
+        res = requests.post(
+            f"{HYPERPAY_BASE_URL}/v1/checkouts",
+            data=payload, 
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        checkout_id = res.get("id")
+        if not checkout_id:
+            return Response(status_code=400, content=json.dumps(res))
+        vat_amount = Decimal(str(amount)) * Decimal("0.05")
+        subtotal = Decimal(str(amount)) - vat_amount
+        invoice = InvoiceModel(
+            reference=merchant_tx_id,
+            checkout_id=checkout_id,
+            buyer_id=user.id,
+            amount=amount,
+            subtotal=subtotal,
+            vat_amount=vat_amount,
+            status="pending",
+            type="transfer",
+            object_id=",".join(str(t.id) for t in transfers),
+            billing_email=b.email,
+            billing_country=b.country.upper(),
+            billing_street=b.street1,
+            billing_city=b.city,
+            billing_state=b.state,
+            billing_postcode=b.postcode,
+        )
+        db.add(invoice)
+        db.commit()
+        db.refresh(invoice)
+
+        return {
+            "checkoutId": checkout_id,
+            "merchantTransactionId": merchant_tx_id,
+            "amount": amount,
+        }
+
+    except Exception as e:
+        return Response(status_code=500, content=str(e))
+
+
+
+
+
+def verify_hyperpay_payment(payment_id: str) -> bool:
+    url = f"https://eu-prod.oppwa.com/v1/payments/{payment_id}"
+    params = {"entityId": settings.HYPERPAY_ENTITY_ID}
+    headers = get_hyperpay_auth_header()
+
+    res = requests.get(url, params=params, headers=headers).json()
+    logger.info(f"HyperPay verify response: {res}")
+
+    code = res.get("result", {}).get("code", "")
+    return code.startswith(("000.000", "000.100", "000.200"))
+
+
+from fastapi import Header, HTTPException
+from starlette.responses import JSONResponse
+
+#HYPERPAY_WEBHOOK_KEY = "CAF9E1160305904826E5F2258199C59845E06A55617E2D5807616C840A014B1F"
+
+
+from datetime import datetime
+import uuid
+
+def generate_invoice_number():
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+import os
+
+from datetime import datetime
+import uuid
+import os
+from reportlab.lib.pagesizes import A4
+from reportlab.pdfgen import canvas
+from sqlalchemy.orm import Session
+
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+#from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+import os
+
+TEMPLATE_DIR = "templates"
+INVOICE_DIR = "media/invoices"
+os.makedirs(INVOICE_DIR, exist_ok=True)
+
+from decimal import Decimal, ROUND_HALF_UP
+
+env = Environment(loader=FileSystemLoader(TEMPLATE_DIR))
+'''
+def generate_invoice_pdf(invoice):
+    template = env.get_template("invoice.html")
+
+    vat = round(invoice.amount * 0.05, 2)
+    total = invoice.amount + vat
+
+    html_content = template.render(
+        invoice={
+            "invoice_number": invoice.invoice_number,
+            "payment_id": invoice.payment_id,
+            "vat_amount": f"{invoice.vat_amount:.2f}",
+            "amount": f"{invoice.amount:.2f}",
+            "sub_total": f"{invoice.subtotal:.2f}",
+            "total": f"{total:.2f}",
+            "description": invoice.description or "Service",
+            "billing_email": invoice.billing_email,
+            "billing_country": invoice.billing_country,
+            "card_holder": invoice.card_holder,
+            "date": invoice.created_at.strftime("%d %B %Y"),
+        }
     )
-        
-    state = status_response.get("order", {}).get("status", {}).get("text", "")
 
-    error = status_response.get("error", {})
-    
-    card_type = status_response.get("order", {}).get("card", {}).get("type")
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+    HTML(string=html_content).write_pdf(file_path)
 
-    description = status_response.get("order", {}).get("description")
-    
-    if error:
-        return Response(status_code=400, content=json.dumps({"message": error.get("note", "Failed to process payment")}), media_type="application/json")
+    return file_path
+'''
 
-    if state.lower()  == "pending":
-        return Response(status_code=400, content=json.dumps({"message": "Payment is pending"}), media_type="application/json")
+def generate_invoice_pdf(invoice):
+    print("DEBUG subtotal:", invoice.subtotal)
+    print("DEBUG vat_amount:", invoice.vat_amount)
+    print("DEBUG amount:", invoice.amount)
+    template = env.get_template("invoice.html")
 
+    amount   = Decimal(str(invoice.amount or 0))
+    subtotal = Decimal(str(invoice.subtotal)) if invoice.subtotal is not None \
+               else (amount / Decimal("1.05")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    vat      = Decimal(str(invoice.vat_amount)) if invoice.vat_amount is not None \
+               else (amount - subtotal).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    total    = (subtotal + vat).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+    # Hard confirm before render
+    print(f"PDF → amount={amount} subtotal={subtotal} vat={vat} total={total}")
+
+    html_content = template.render(
+        invoice={
+            "invoice_number":  invoice.invoice_number,
+            "payment_id":      invoice.payment_id,
+            "sub_total":       f"{subtotal:.2f}",   # ← matches {{ invoice.sub_total }}
+            "vat_amount":      f"{vat:.2f}",         # ← matches {{ invoice.vat_amount }}
+            "amount":          f"{amount:.2f}",
+            "total":           f"{total:.2f}",       # ← matches {{ invoice.total }}
+            "description":     invoice.description or "Service",
+            "billing_email":   invoice.billing_email,
+            "billing_country": invoice.billing_country,
+            "card_holder":     invoice.card_holder,
+            "date":            invoice.created_at.strftime("%d %B %Y"),
+        }
+    )
+
+    file_path = f"{INVOICE_DIR}/{invoice.invoice_number}.pdf"
+    HTML(string=html_content).write_pdf(file_path)
+    return file_path
+
+def generate_invoice_number():
+    return f"INV-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+
+
+
+
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    amount = invoice.amount or 0
+
+    if invoice.subtotal is None:
+        invoice.subtotal = round(amount / Decimal("1.05"), 2)
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = round(amount - invoice.subtotal, 2)
+
+    db.commit()        # ← commit FIRST so values are persisted
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)  # ← now subtotal/vat are set
+        db.commit()    # ← commit the file path too
+
+
+from decimal import Decimal, ROUND_HALF_UP
+'''
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    # Normalize amount to Decimal safely regardless of DB type
+    amount = Decimal(str(invoice.amount or 0))
+
+    if invoice.subtotal is None:
+        invoice.subtotal = float(
+            (amount / Decimal("1.05")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = float(
+            (amount - Decimal(str(invoice.subtotal))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    db.commit()
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
+        db.commit()
+'''
+
+
+def finalize_invoice(db, invoice):
+    if not invoice.invoice_number:
+        invoice.invoice_number = generate_invoice_number()
+
+    # Normalize amount to Decimal safely regardless of DB type
+    amount = Decimal(str(invoice.amount or 0))
+
+    if invoice.subtotal is None:
+        invoice.subtotal = float(
+            (amount / Decimal("1.05")).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    if invoice.vat_amount is None:
+        invoice.vat_amount = float(
+            (amount - Decimal(str(invoice.subtotal))).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        )
+
+    db.commit()
+    db.refresh(invoice)
+
+    if not invoice.invoice_file:
+        invoice.invoice_file = generate_invoice_pdf(invoice)
+        db.commit()
+
+from fastapi import Depends, HTTPException
+from fastapi.responses import FileResponse
+from sqlalchemy.orm import Session
+
+@transfer_router.get("/invoice/{merchantTransactionId}")
+def view_invoice(
+    merchantTransactionId: str,
+    db: Session = Depends(get_db),
+):
     invoice = db.query(InvoiceModel).filter(
-        InvoiceModel.stripe_session_id == data.ref,
-        InvoiceModel.buyer_id == user.id,
-        InvoiceModel.status == "pending",
+        InvoiceModel.reference == merchantTransactionId,
+        InvoiceModel.status == "paid",
+    ).first()
+
+    if not invoice or not invoice.invoice_file:
+        raise HTTPException(status_code=404, detail="Invoice not found")
+
+    return FileResponse(
+        path=invoice.invoice_file,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'inline; filename="{invoice.invoice_number}.pdf"'
+        },
+    )
+
+
+
+'''
+@transfer_router.get("/hyper/payment/verify")
+async def pay_transfer_callback(
+    request: Request,
+    background_tasks: BackgroundTasks,
+m):
+    data = {}
+
+    try:
+        form = await request.form()
+        data.update(form)
+    except Exception:
+        pass
+    try:
+        body = await request.json()
+        if isinstance(body, dict):
+            data.update(body)
+    except Exception:
+        pass
+    logger.info("HyperPay webhook received: %s", data)
+    # 🔐 Encrypted callback → poll payments
+    if "encryptedBody" in data:
+        logger.info("Encrypted webhook received — starting polling")
+        background_tasks.add_task(poll_pending_transfer_payments)
+        return JSONResponse(status_code=200, content={"status": "received"})
+    payment_id = data.get("id")
+    if payment_id:
+        background_tasks.add_task(process_transfer_payment_by_payment_id, payment_id)
+    return JSONResponse(status_code=200, content={"status": "received"})
+
+'''
+os.makedirs(INVOICE_DIR, exist_ok=True)
+from weasyprint import HTML
+from jinja2 import Environment, FileSystemLoader
+import os
+import re
+
+
+@transfer_router.get("/hyper/payment/verify")
+def verify_transfer_payment(
+    background_tasks: BackgroundTasks,
+    id: str = Query(None),
+    resourcePath: str = Query(None),
+    db: Session = Depends(get_db),
+):
+    logger.info("Verifying transfer payment...")
+
+    if not id or not resourcePath:
+        return {"status": "failed"}
+
+    try:
+        response = requests.get(
+            f"{HYPERPAY_BASE_URL}{resourcePath}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30
+        )
+
+        res = response.json()
+
+        result_code = res.get("result", {}).get("code", "")
+        description = res.get("result", {}).get("description", "")
+        logger.info("=== TRANSFER DEBUG ===")
+        logger.info(f"DB: {db.bind}")
+        logger.info(f"Transfer count: {db.query(TransferModel).count()}")
+        logger.info(f"Transfer 15 exists: {db.query(TransferModel).filter(TransferModel.id == 15).first()}")
+        logger.info("======================")
+        logger.info(f"Result code: {result_code}")
+        logger.info(f"Description: {description}")
+
+        merchant_tx_id = res.get("merchantTransactionId")
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id
+        ).first()
+
+        if not invoice:
+            return {"status": "not_found"}
+
+        SUCCESS_CODES = [
+            "000.000.000",
+            "000.000.100",
+            "000.000.110",
+            "000.100.110"
+        ]
+
+        if result_code in SUCCESS_CODES:
+
+            if invoice.status == "paid":
+                return {"status": "already_paid"}
+
+            invoice.status = "paid"
+            invoice.payment_id = res.get("id")
+
+            # 🔥 generate invoice
+            file_path = generate_invoice_pdf(invoice)
+            invoice.invoice_file = file_path
+
+            # ===============================
+            # 🔥 TRANSFER BUSINESS LOGIC
+            # ===============================
+
+            if invoice.type == "transfer":
+
+                transfer_ids = [int(t.strip()) for t in invoice.object_id.split(",") if t.strip()]
+
+                logger.info(f"Parsed transfer_ids: {transfer_ids}")
+
+                transfers = db.query(TransferRequestModel).filter(
+                    TransferRequestModel.id.in_(transfer_ids)
+                ).all()
+
+                if not transfers:
+                    raise HTTPException(status_code=404, detail="Transfers not found")
+
+                for transfer in transfers:
+                    transfer.status = "completed"
+                    transfer.is_paid = True
+                    db.add(transfer)
+
+            db.commit()
+            return {
+                "status": "paid",
+                "type": invoice.type
+            }
+
+        else:
+            invoice.status = "failed"
+            db.commit()
+
+            return {
+                "status": "failed",
+                "code": result_code,
+                "description": description
+            }
+
+    except Exception as e:
+        logger.exception("Error verifying transfer payment")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+def poll_pending_transfer_payments():
+    db = SessionLocal()
+    try:
+        invoices = db.query(InvoiceModel).filter(
+            InvoiceModel.status == "pending",
+            InvoiceModel.type == "transfer",
+        ).all()
+
+        for invoice in invoices:
+            res = requests.get(
+                "https://eu-prod.oppwa.com/v1/payments",
+                params={
+                    "entityId": settings.HYPERPAY_ENTITY_ID,
+                    "merchantTransactionId": invoice.reference,
+                },
+                headers=get_hyperpay_auth_header(),
+                timeout=30,
+            ).json()
+
+            for p in res.get("payments", []):
+                code = p.get("result", {}).get("code", "")
+                if code.startswith(("000.000", "000.100", "000.200")):
+                    if invoice.status == "paid":
+                        continue
+
+                    invoice.status = "paid"
+                    invoice.payment_id = p.get("id")
+
+                    finalize_invoice(db, invoice)
+                    db.commit()
+    except Exception:
+        logger.exception("Polling failed")
+        db.rollback()
+    finally:
+        db.close()
+
+def process_transfer_payment_by_payment_id(payment_id: str):
+    db = SessionLocal()
+    try:
+        res = requests.get(
+            f"https://eu-prod.oppwa.com/v1/payments/{payment_id}",
+            params={"entityId": settings.HYPERPAY_ENTITY_ID},
+            headers=get_hyperpay_auth_header(),
+            timeout=30,
+        ).json()
+
+        code = res.get("result", {}).get("code", "")
+        if not code.startswith(("000.000", "000.100", "000.200")):
+            return
+
+        merchant_tx_id = res.get("merchantTransactionId")
+        if not merchant_tx_id:
+            return
+
+        invoice = db.query(InvoiceModel).filter(
+            InvoiceModel.reference == merchant_tx_id,
+            InvoiceModel.status != "paid",
+        ).first()
+
+        if not invoice:
+            return
+
+        invoice.status = "paid"
+        invoice.payment_id = payment_id
+
+        finalize_invoice(db, invoice)
+        db.commit()
+
+    except Exception:
+        logger.exception("Payment processing failed")
+        db.rollback()
+    finally:
+        db.close()
+
+
+
+@transfer_router.get("/pay/status")
+async def pay_status(
+    merchantTransactionId: str,
+    db: Session = Depends(get_db_sessions),
+):
+    invoice = db.query(InvoiceModel).filter(
+        InvoiceModel.reference == merchantTransactionId,
         InvoiceModel.type == "transfer"
     ).first()
 
     if not invoice:
-        return Response(status_code=404, content=json.dumps({"message": "Invoice not found"}), media_type="application/json")
+        return {"status": "not_found"}
 
-    transfer_requests = db.query(TransferRequestModel).filter(
-            TransferRequestModel.id.in_(map(int, invoice.object_id.split(','))),
-            TransferRequestModel.manager_id == user.id,
-            TransferRequestModel.status == "accepted"
-    ).all()
+    return {
+        "status": invoice.status,  # pending | paid
+        "amount": invoice.amount
+    }
 
-    if not transfer_requests:
-        return Response(status_code=404, content=json.dumps({"message": "Transfer requests not found"}), media_type="application/json")
-
-    try:
-        employee = None  # Define employee before the loop
-        for transfer_request in transfer_requests:
-            employee = db.query(EmployeeModel).filter(EmployeeModel.user_id == transfer_request.user_id).first()
-            if employee:
-                employee.manager_id = transfer_request.requester_id
-                db.add(employee)
-
-            transfer_request.status = "done"
-
-            db.add(transfer_request)
-
-        invoice.status = "paid"
-        invoice.description = description
-        invoice.card = card_type
-        db.add(invoice)
-        manager_user = db.query(UserModel).filter(UserModel.id == user.id).first()
-    
-        name = ""
-
-        if employee and not employee.employee.first_name and not employee.employee.last_name:
-            name = employee.employee.cv.english_full_name
-        elif employee:
-            name = f"{employee.employee.first_name} {employee.employee.last_name}"
-
-        db.commit()
-
-        manager_email = manager_user.email or manager_user.company.alternative_email
-
-        requester_user = db.query(UserModel).filter(UserModel.id == transfer_requests[0].requester_id).first()
-
-        requester_email = requester_user.email or requester_user.company.alternative_email
-
-        title = "Transfer"
-
-        description = (
-            f"{manager_user.company.company_name} has transferred {name} to you. "
-            f"The contact information for {manager_user.company.company_name} are: {manager_email}, {manager_user.phone_number}, {manager_user.company.location}."
-        )
-
-        background_tasks.add_task(send_notification, db, requester_user.id, title, description, "transfer")
-
-        background_tasks.add_task(send_email, email=requester_email, title=title, description=description)
-
-        title = "Transfer Finished"
-
-        description = f"The contact information for {requester_user.company.company_name} are: {requester_email}, {requester_user.phone_number}, {requester_user.company.location}."
-
-        background_tasks.add_task(send_notification, db, manager_user.id, title, description, "transfer")
-
-        background_tasks.add_task(send_email, email=manager_email, title=title, description=description)
-
-        return {"status": "success", "message": "Payment successful"}
-    except Exception as e:
-        print(e)
-        db.rollback()
-        return Response(status_code=400, content=json.dumps({"message": "Failed to process payment"}), media_type="application/json")
 
 @transfer_router.post("/return")
 async def transfer_return_employee(data: TransferRequestReturn, background_tasks: BackgroundTasks, _=Depends(authentication_context), __=Depends(build_request_context)):
@@ -1154,6 +1608,53 @@ async def get_process_transfer(_=Depends(HTTPBearer(scheme_name="bearer")), __
 
 @transfer_router.post("/info")
 async def transfer_pay_info(
+    data: TransferInfoSchema,
+    _=Depends(authentication_context),
+    __=Depends(build_request_context),
+):
+    try:
+        db = get_db_session()
+        user = context_actor_user_data.get()
+
+        package = (
+            db.query(PromotionPackagesModel)
+            .filter(
+                PromotionPackagesModel.role == user.role,
+                PromotionPackagesModel.category == "transfer",
+            )
+            .first()
+        )
+        if not package:
+            return Response(status_code=404, content="Package not found")
+
+        transfers = (
+            db.query(TransferRequestModel)
+            .filter(
+                TransferRequestModel.id.in_(data.transfer_request_ids),
+                TransferRequestModel.manager_id == user.id,
+                TransferRequestModel.status == "accepted",
+            )
+            .all()
+        )
+
+        if not transfers:
+            return Response(status_code=404, content="Transfer request not found")
+
+        total_amount = package.price * len(transfers)
+
+        return {
+            "price": package.price,
+            "profile": len(transfers),
+            "total_amount": total_amount,
+        }
+
+    except Exception as e:
+        return Response(status_code=400, content="Failed to get transfer info")
+
+
+'''
+@transfer_router.post("/info")
+async def transfer_pay_info(
     data: TransferRequestPaymentSchema,
     _=Depends(authentication_context),
     __=Depends(build_request_context)
@@ -1185,3 +1686,4 @@ async def transfer_pay_info(
     except Exception as e:
         print(e)
         return Response(status_code=400, content=json.dumps({"message": "Failed to get transfer pay info"}), media_type="application/json")
+        '''

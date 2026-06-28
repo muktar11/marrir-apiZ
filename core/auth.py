@@ -47,6 +47,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read: [
@@ -54,6 +55,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read_multiple: [
@@ -61,12 +63,14 @@ RBAC_MAPPER = {
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
         ],
         RBACAccessType.update: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.delete: [
@@ -74,6 +78,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.soft_delete: [
@@ -90,6 +95,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read: [
@@ -97,6 +103,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read_multiple: [
@@ -104,6 +111,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.update: [
@@ -111,6 +119,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.delete: [
@@ -118,6 +127,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.soft_delete: [
@@ -125,6 +135,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
     },
@@ -132,12 +143,14 @@ RBAC_MAPPER = {
         RBACAccessType.create: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -146,6 +159,7 @@ RBAC_MAPPER = {
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.update: [
@@ -153,6 +167,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.delete: [
@@ -160,6 +175,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.soft_delete: [
@@ -167,6 +183,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
     },
@@ -176,6 +193,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.delete: [
@@ -190,6 +208,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.read: [
@@ -197,6 +216,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.read_multiple: [
@@ -204,12 +224,14 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.update: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
             UserRoleSchema.SPONSOR,
         ],
@@ -218,6 +240,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
     },
@@ -227,6 +250,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.read: [
@@ -234,6 +258,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.read_multiple: [
@@ -241,6 +266,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.update: [
@@ -248,6 +274,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.delete: [
@@ -255,6 +282,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
     },
@@ -313,6 +341,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read_multiple: [
@@ -333,6 +362,7 @@ RBAC_MAPPER = {
         RBACAccessType.create: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read: [
@@ -340,6 +370,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read_multiple: [
@@ -347,6 +378,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.update: [
@@ -357,6 +389,7 @@ RBAC_MAPPER = {
         RBACAccessType.delete: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
     },
@@ -366,6 +399,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read_multiple: [
@@ -373,6 +407,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.update: [
@@ -380,6 +415,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
     },
@@ -388,6 +424,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read_multiple: [
@@ -395,12 +432,14 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.update: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -410,6 +449,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -417,6 +457,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -424,6 +465,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -433,6 +475,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -440,6 +483,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -447,6 +491,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -454,6 +499,7 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
@@ -463,6 +509,8 @@ RBAC_MAPPER = {
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+            
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read: [
@@ -470,12 +518,14 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.update: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.SPONSOR,
+             UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
     },
@@ -521,6 +571,7 @@ RBAC_MAPPER = {
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.SPONSOR,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
         RBACAccessType.read: [
@@ -528,6 +579,7 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.read_multiple: [
@@ -535,12 +587,14 @@ RBAC_MAPPER = {
             UserRoleSchema.EMPLOYEE,
             UserRoleSchema.AGENT,
             UserRoleSchema.RECRUITMENT,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
         ],
         RBACAccessType.update: [
             UserRoleSchema.ADMIN,
             UserRoleSchema.AGENT,
             UserRoleSchema.EMPLOYEE,
+            UserRoleSchema.SELFSPONSOR,
             UserRoleSchema.SPONSOR,
             UserRoleSchema.RECRUITMENT,
         ],
